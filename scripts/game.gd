@@ -170,6 +170,7 @@ func _build_showroom() -> void:
 		m.build(car.shape, Color(car.color), Color("#b5322a"), car.style)
 		add_child(m)
 		m.position = Vector3(-5.4 + (i % 4) * 3.6, 0, -float(i / 4) * 9.0 - 4.0)
+		m.build_interior()
 		if i == 0:
 			m.set_brake(true)
 
@@ -901,8 +902,11 @@ func _process(delta: float) -> void:
 		scenery.update_view(0.0, -1.0, 0.0)
 		var front := showroom == "front"
 		cam.fov = 55.0
-		cam.global_transform = Transform3D(Basis(), Vector3(-9.5, 2.4, 6.0) if not front else Vector3(9.0, 2.2, -24.0))
-		cam.look_at(Vector3(-1.0, 0.6, -6.0) if not front else Vector3(-1.0, 0.6, -9.0))
+		var views := {"rear": [Vector3(-9.5, 2.4, 6.0), Vector3(-1.0, 0.6, -6.0)], "front": [Vector3(9.0, 2.2, -24.0), Vector3(-1.0, 0.6, -9.0)],
+			"close": [Vector3(-7.6, 1.5, 2.2), Vector3(-5.4, 0.7, -2.0)]}
+		var v: Array = views.get(showroom, views.rear)
+		cam.global_transform = Transform3D(Basis(), v[0])
+		cam.look_at(v[1])
 		hud.set_play_visible(false)
 		_check_shots()
 		return

@@ -30,11 +30,11 @@ const PROFILES := {
 		"wheel": [0.38, 0.92, 3.85], "exhaust": 1},
 	"muscle": {
 		"body": [[0.0, 0.8, 0.92], [0.18, 0.86, 0.98], [1.2, 0.87, 1.0], [3.2, 0.86, 1.0], [4.35, 0.78, 0.98], [4.72, 0.62, 0.92], [4.8, 0.5, 0.88]],
-		"gh": [1.2, 3.3, 1.78, 2.86, 0.87, 1.32, 0.92, 0.76], "pillars": [[0.0, 0.2], [0.9, 1.0]],
+		"gh": [1.2, 3.3, 1.55, 2.86, 0.87, 1.32, 0.92, 0.76], "pillars": [[0.0, 0.2], [0.9, 1.0]],
 		"wheel": [0.35, 0.95, 3.85], "exhaust": 2, "spoiler": "lip"},
 	"super": {
 		"body": [[0.0, 0.7, 0.92], [0.18, 0.77, 0.98], [1.0, 0.81, 1.0], [2.2, 0.75, 1.0], [3.4, 0.66, 1.0], [4.2, 0.52, 0.96], [4.5, 0.4, 0.9]],
-		"gh": [0.95, 3.3, 1.62, 2.6, 0.78, 1.14, 0.88, 0.7], "pillars": [[0.0, 0.25], [0.9, 1.0]],
+		"gh": [0.95, 3.3, 1.4, 2.6, 0.78, 1.14, 0.88, 0.7], "pillars": [[0.0, 0.25], [0.9, 1.0]],
 		"wheel": [0.35, 0.9, 3.6], "exhaust": 4, "spoiler": "wing", "diffuser": true},
 	"van": {
 		"body": [[0.0, 2.15, 0.97], [0.08, 2.22, 0.99], [4.05, 2.25, 1.0], [4.3, 2.16, 1.0], [4.62, 1.38, 1.0], [5.05, 1.08, 0.97], [5.2, 0.72, 0.92]],
@@ -472,10 +472,23 @@ static func _car_kit(id: String, style := {}) -> Dictionary:
 		# third brake light at the top of the rear glass
 		var cb: Vector3 = BRL.lerp(BRR, 0.5).lerp(RRL.lerp(RRR, 0.5), 0.86) + n_rear * 0.02
 		_box(tails, cb, Vector3(0.36, 0.04, 0.03))
-		# mirrors
+		# wing mirrors: base, body-coloured housing, mirror glass and an indicator repeater
 		for s in [-1.0, 1.0]:
-			_box(paint_st, Vector3(s * (hb + 0.1), yb + 0.1, -g[1] + 0.22), Vector3(0.14, 0.11, 0.08))
-			_box(dark, Vector3(s * (hb + 0.03), yb + 0.08, -g[1] + 0.24), Vector3(0.06, 0.04, 0.05))
+			var mz: float = -g[1] + 0.26
+			var mx: float = s * (hb + 0.14)
+			_box(dark, Vector3(s * (hb + 0.05), yb + 0.06, mz + 0.02), Vector3(0.1, 0.05, 0.1))
+			_box(paint_st, Vector3(mx, yb + 0.115, mz), Vector3(0.18, 0.11, 0.07))
+			_box(paint_st, Vector3(mx, yb + 0.115, mz - 0.045), Vector3(0.155, 0.09, 0.03))
+			_quad(glass, Vector3(mx - 0.08, yb + 0.068, mz + 0.036), Vector3(mx + 0.08, yb + 0.068, mz + 0.036),
+				Vector3(mx + 0.08, yb + 0.162, mz + 0.036), Vector3(mx - 0.08, yb + 0.162, mz + 0.036), Vector3.BACK)
+			_box(sig_l if s < 0 else sig_r, Vector3(mx + s * 0.065, yb + 0.085, mz - 0.055), Vector3(0.05, 0.016, 0.02))
+		# windscreen wipers parked at the base of the glass
+		var up_glass := (RFL - BFL).normalized()
+		var left := (BFL - BFR).normalized()
+		for k in 2:
+			var piv: Vector3 = BFL.lerp(BFR, 0.3 + k * 0.42) + n_front * 0.014 + up_glass * 0.035
+			_strap(dark, piv, piv + left * (0.52 - k * 0.04) + up_glass * 0.05, 0.016, 0.012)
+			_cyl(dark, piv - n_front * 0.004, 0.02, 0.025, n_front, 8)
 
 	if pr.get("van", false):
 		var hw2 := w / 2.0
@@ -549,6 +562,7 @@ static func _car_kit(id: String, style := {}) -> Dictionary:
 
 	var r: float = pr.wheel[0]
 	_style_extras(id, style, pr, stations, w, l, sill, rear_top, front_top, paint_st, dark, chrome, accent, glass)
+	_details(id, pr, stations, w, l, sill, dark, paint_st, chrome, head)
 	for s in [-1.0, 1.0]:
 		var n := Vector3(s, 0, 0)
 		for ax in [pr.wheel[1], pr.wheel[2]]:
@@ -578,6 +592,54 @@ static func _car_kit(id: String, style := {}) -> Dictionary:
 		"wheels": [[-(w / 2.0 - 0.11), -pr.wheel[1]], [w / 2.0 - 0.11, -pr.wheel[1]], [-(w / 2.0 - 0.11), -pr.wheel[2]], [w / 2.0 - 0.11, -pr.wheel[2]]],
 		"r": r, "ww": 0.24, "plate_y": bumper_y + 0.2,
 	}
+
+
+## Details every car has: bonnet and boot shut lines, fuel filler, roof rails,
+## fog lights and the number-plate light.
+static func _details(id: String, pr: Dictionary, stations: Array, w: float, l: float, sill: float,
+		dark: SurfaceTool, paint_st: SurfaceTool, chrome: SurfaceTool, head: SurfaceTool) -> void:
+	var g: Array = pr.get("gh", [])
+	var fz := -l - 0.012
+	var front_hw: float = w / 2.0 * stations[stations.size() - 1][2]
+	for s in [-1.0, 1.0]:
+		_box(head, Vector3(s * front_hw * 0.72, sill + 0.1, fz + 0.012), Vector3(0.12, 0.045, 0.02))  # fog lights
+	_box(head, Vector3(0, sill + 0.36, 0.03), Vector3(0.12, 0.012, 0.02))  # plate light
+	if not g.is_empty():
+		var lines := func(d0: float, d1: float, across: float) -> void:
+			for i in stations.size() - 1:
+				var a: Array = stations[i]
+				var b: Array = stations[i + 1]
+				if b[0] < d0 or a[0] > d1:
+					continue
+				var za: float = -maxf(a[0], d0)
+				var zb: float = -minf(b[0], d1)
+				for sx in [-1.0, 1.0]:
+					var x: float = sx * w / 2.0 * a[2] * 0.78
+					var y0: float = _station_at(stations, -za, 1) + 0.006
+					var y1: float = _station_at(stations, -zb, 1) + 0.006
+					_quad(dark, Vector3(x - 0.004, y0, za), Vector3(x + 0.004, y0, za), Vector3(x + 0.004, y1, zb), Vector3(x - 0.004, y1, zb), Vector3.UP)
+			var ty: float = _station_at(stations, across, 1) + 0.015
+			var hw: float = w / 2.0 * _station_at(stations, across, 2) * 0.78
+			_quad(dark, Vector3(-hw, ty, -across - 0.004), Vector3(hw, ty, -across - 0.004), Vector3(hw, ty, -across + 0.004), Vector3(-hw, ty, -across + 0.004), Vector3.UP)
+		lines.call(g[1] + 0.06, l - 0.24, l - 0.24)   # bonnet
+		if g[0] > 0.5:
+			lines.call(0.14, g[0] - 0.06, 0.14)        # boot lid
+		# fuel filler on the right rear quarter
+		var fd: float = pr.wheel[1] + pr.wheel[0] + 0.3
+		var fx: float = w / 2.0 * _station_at(stations, fd, 2)
+		_box(dark, Vector3(fx + 0.004, g[4] - 0.17, -fd), Vector3(0.01, 0.15, 0.15))
+		_box(paint_st, Vector3(fx + 0.008, g[4] - 0.17, -fd), Vector3(0.01, 0.135, 0.135))
+		if id == "suv":
+			var hr: float = w / 2.0 * g[7]
+			for sx in [-1.0, 1.0]:
+				_box(dark, Vector3(sx * (hr - 0.08), g[5] + 0.08, -(g[2] + g[3]) / 2.0), Vector3(0.04, 0.035, g[3] - g[2] - 0.1))
+				for t in 3:
+					_box(dark, Vector3(sx * (hr - 0.08), g[5] + 0.035, -lerpf(g[2] + 0.1, g[3] - 0.1, t / 2.0)), Vector3(0.05, 0.07, 0.06))
+	elif pr.get("van", false):
+		for sx in [-1.0, 1.0]:
+			_box(dark, Vector3(sx * w * 0.4, 2.33, -2.2), Vector3(0.05, 0.04, 3.6))
+			for t in 4:
+				_box(dark, Vector3(sx * w * 0.4, 2.28, -0.6 - t * 1.1), Vector3(0.06, 0.08, 0.08))
 
 
 ## Geometry for a car's styling kit: racing stripes, bonnet scoop, side
@@ -703,6 +765,8 @@ var _body: Node3D
 var _wheels: Array[Node3D] = []
 var _wheel_r := 0.32
 var _spin := 0.0
+var _road := 0.0
+var _phase := randf() * TAU
 var _braking := false
 var _shape_id := ""
 var _needles: Array[Node3D] = []
@@ -885,6 +949,10 @@ func set_pitch(p: float) -> void:
 ## Turn the wheels for a car travelling at v m/s.
 func spin(v: float, dt: float) -> void:
 	_spin = fmod(_spin - v / _wheel_r * dt, TAU)
+	if _body:
+		_road += v * dt
+		var k := minf(v / 30.0, 1.0)
+		_body.position.y = (0.005 * sin(_road * 1.3 + _phase) + 0.0025 * sin(_road * 4.1 + _phase * 2.0)) * k
 	for wn in _wheels:
 		wn.rotation.x = _spin
 
@@ -953,8 +1021,7 @@ func build_interior() -> void:
 	# --- shell: floor, firewall, rear wall, door cards
 	_quad(S.carpet, Vector3(-hb, floor_y, zr), Vector3(hb, floor_y, zr), Vector3(hb, floor_y, dz + 0.15), Vector3(-hb, floor_y, dz + 0.15), Vector3.UP)
 	_quad(S.carpet, Vector3(-hb, floor_y, dz + 0.15), Vector3(hb, floor_y, dz + 0.15), Vector3(hb, yb - 0.2, dz + 0.15), Vector3(-hb, yb - 0.2, dz + 0.15), Vector3.BACK)
-	_quad(S.trim, Vector3(-hb, floor_y, zr + 0.01), Vector3(hb, floor_y, zr + 0.01), Vector3(hb, yb + 0.02, zr + 0.01), Vector3(-hb, yb + 0.02, zr + 0.01), Vector3.FORWARD)
-	_box(S.trim, Vector3(0, yb - 0.01, zr + 0.25), Vector3(hb * 2.0, 0.03, 0.5))  # parcel shelf
+	_quad(S.trim, Vector3(-hb, floor_y, zr - 0.01), Vector3(hb, floor_y, zr - 0.01), Vector3(hb, yb + 0.02, zr - 0.01), Vector3(-hb, yb + 0.02, zr - 0.01), Vector3.FORWARD)
 	for sd in [-1.0, 1.0]:
 		var x: float = sd * hb
 		var inward := Vector3(-sd, 0, 0)
@@ -1025,6 +1092,11 @@ func build_interior() -> void:
 
 	# --- front seats
 	var cushion_top: float = floor_y + 0.27
+	# height of the roof or the rear window at a distance d from the rear bumper
+	var roof_line := func(d: float) -> float:
+		if d >= g[2]:
+			return yr
+		return yb + (yr - yb) * clampf((d - g[0]) / maxf(g[2] - g[0], 0.01), 0.0, 1.0)
 	for sx in [ex, -ex]:
 		_box(S.dash, Vector3(sx, floor_y + 0.06, ez + 0.05), Vector3(0.4, 0.06, 0.45))                      # rails and base
 		_box(S.leather, Vector3(sx, cushion_top - 0.07, ez + 0.03), Vector3(0.46, 0.14, 0.5))
@@ -1034,29 +1106,42 @@ func build_interior() -> void:
 		for sd in [-1.0, 1.0]:
 			_box(S.leather, Vector3(sx + sd * 0.21, cushion_top - 0.01, ez + 0.03), Vector3(0.07, 0.12, 0.48))  # cushion bolster
 		var back := Basis(Vector3.RIGHT, 0.2)
-		var bc := Vector3(sx, cushion_top + 0.3, ez + 0.34)
-		_box(S.leather, bc, Vector3(0.48, 0.62, 0.12), back)
-		_box(S.cloth, bc + back.z * -0.065, Vector3(0.28, 0.5, 0.01), back)
+		# fit the seat under the roof or rear window: the backrest and headrest shrink on low cars
+		var room: float = minf(yr - 0.08, roof_line.call(-(ez + 0.46)) - 0.05) - cushion_top
+		var hh: float = clampf(room * 0.27, 0.1, 0.19)
+		var bh: float = clampf(room - hh - 0.08, 0.3, 0.62)
+		var bc := Vector3(sx, cushion_top + bh / 2.0 - 0.01, ez + 0.3)
+		_box(S.leather, bc, Vector3(0.48, bh, 0.12), back)
+		_box(S.cloth, bc + back.z * -0.065, Vector3(0.28, bh - 0.12, 0.01), back)
 		for q in 6:
-			_box(S.stitch, bc + back.z * -0.071 + back.y * (-0.22 + q * 0.088), Vector3(0.28, 0.006, 0.002), back)
+			_box(S.stitch, bc + back.z * -0.071 + back.y * (-bh / 2.0 + 0.08 + q * (bh - 0.16) / 5.0), Vector3(0.28, 0.006, 0.002), back)
 		for sd in [-1.0, 1.0]:
-			_box(S.leather, bc + back.x * sd * 0.22 + back.z * -0.05, Vector3(0.07, 0.56, 0.1), back)       # back bolster
-		var top: Vector3 = bc + back.y * 0.31
+			_box(S.leather, bc + back.x * sd * 0.22 + back.z * -0.05, Vector3(0.07, bh - 0.06, 0.1), back)  # back bolster
+		var top: Vector3 = bc + back.y * (bh / 2.0)
 		for sd in [-1.0, 1.0]:
-			_box(S.chrome, top + back.y * 0.05 + Vector3(sd * 0.07, 0, 0), Vector3(0.012, 0.1, 0.012), back)
-		_box(S.leather, top + back.y * 0.15, Vector3(0.26, 0.19, 0.1), back)                                   # headrest
+			_box(S.chrome, top + back.y * 0.035 + Vector3(sd * 0.07, 0, 0), Vector3(0.012, 0.07, 0.012), back)
+		_box(S.leather, top + back.y * (0.06 + hh / 2.0), Vector3(0.26, hh, 0.1), back)                       # headrest
 	# seat belt across the (empty) driver seat, from the B-pillar to the buckle
 	_strap(S.dash, Vector3(signf(ex) * (hb - 0.08), yb + 0.32, ez + 0.4), Vector3(ex - signf(ex) * 0.22, cushion_top + 0.05, ez + 0.1), 0.045, 0.006)
 
-	# --- rear bench
-	var rear_room: float = absf((ez + 0.55) - zr)
-	if rear_room > 0.75:
-		var rz: float = zr + 0.55
-		_box(S.leather, Vector3(0, cushion_top - 0.09, rz - 0.1), Vector3(hb * 2.0 - 0.08, 0.14, 0.45))
-		var rb := Basis(Vector3.RIGHT, 0.25)
-		_box(S.leather, Vector3(0, cushion_top + 0.24, zr + 0.18), Vector3(hb * 2.0 - 0.08, 0.56, 0.12), rb)
+	# --- rear bench, tucked under the rear window (the cabin runs from zr forward to -z)
+	var glass_z := func(h: float) -> float:
+		return -(g[0] + (g[2] - g[0]) * clampf((h - yb) / (yr - yb), 0.0, 1.0))
+	var rb := Basis(Vector3.RIGHT, 0.22)
+	var back_top: float = cushion_top + 0.46
+	var back_z: float = minf(zr - 0.16, glass_z.call(back_top + 0.15) - 0.13)
+	var cush_z: float = back_z - 0.3
+	if cush_z - 0.2 > ez + 0.27:  # only if there is legroom behind the front seats
+		_box(S.leather, Vector3(0, cushion_top - 0.1, cush_z), Vector3(hb * 2.0 - 0.06, 0.14, 0.4))
+		_box(S.cloth, Vector3(0, cushion_top - 0.025, cush_z), Vector3(hb * 2.0 - 0.3, 0.01, 0.34))
+		_box(S.leather, Vector3(0, cushion_top + 0.2, back_z), Vector3(hb * 2.0 - 0.06, 0.46, 0.12), rb)
 		for k in 3:
-			_box(S.leather, Vector3((k - 1) * hb * 0.62, cushion_top + 0.58, zr + 0.24), Vector3(0.22, 0.15, 0.09), rb)
+			var hx: float = (k - 1) * hb * 0.62
+			_box(S.leather, Vector3(hx, back_top + 0.07, back_z + 0.06), Vector3(0.22, 0.12, 0.09), rb)
+		# parcel shelf behind the bench, at the base of the rear window
+		var shelf_len: float = absf(back_z - zr) - 0.02
+		if shelf_len > 0.06:
+			_box(S.trim, Vector3(0, yb - 0.01, (zr + back_z) / 2.0 + 0.01), Vector3(hb * 2.0, 0.03, shelf_len))
 
 	# --- headliner, visors, dome light, inner A-pillars
 	_quad(S.cloth, Vector3(-hr, yr - 0.02, -g[2]), Vector3(hr, yr - 0.02, -g[2]), Vector3(hr, yr - 0.02, -g[3]), Vector3(-hr, yr - 0.02, -g[3]), Vector3.DOWN)
@@ -1095,6 +1180,25 @@ func build_interior() -> void:
 		mi.set_surface_override_material(i, mats[order[i]])
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_body.add_child(mi)
+
+	# faint reflection on the inside of the windscreen
+	var sheen := StandardMaterial3D.new()
+	sheen.albedo_color = Color(0.85, 0.92, 1.0, 0.05)
+	sheen.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	sheen.roughness = 0.03
+	sheen.metallic_specular = 1.0
+	var ws := _new_st()
+	var wb0 := Vector3(-hb - 0.03, yb, -g[1])
+	var wb1 := Vector3(hb + 0.03, yb, -g[1])
+	var wr0 := Vector3(-hr, yr, -g[3])
+	var wr1 := Vector3(hr, yr, -g[3])
+	var wn := -_face_n(wb0, wb1, wr1, Vector3(0, 0.5, -1))
+	_quad(ws, wb0 + wn * 0.012, wb1 + wn * 0.012, wr1 + wn * 0.012, wr0 + wn * 0.012, wn)
+	var wsm := MeshInstance3D.new()
+	wsm.mesh = ws.commit()
+	wsm.material_override = sheen
+	wsm.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_body.add_child(wsm)
 
 	# rear-view mirror with stem
 	var stem := MeshInstance3D.new()

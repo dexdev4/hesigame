@@ -75,7 +75,6 @@ var player := Vehicle.new()
 var target_x := 0.0
 var on_shoulder := false
 var player_accel := 0.0   # smoothed longitudinal accel, for body pitch
-var player_slip := 0.0    # 0..1, drives tyre squeal
 var finish_z := -1.0
 var t := 0.0
 var st := {}
@@ -109,6 +108,8 @@ func _ready() -> void:
 	for a in args:
 		if a.begins_with("--quit-after="):
 			auto_quit = float(a.split("=")[1])
+		if a.begins_with("--cam="):  # chase, hood or cockpit (not saved)
+			Save.data.cam.mode = a.substr(6)
 		if a.begins_with("--shot="):
 			var parts := a.substr(7).split(":", true, 1)
 			shots.append([float(parts[0]), parts[1]])
@@ -119,7 +120,7 @@ func _ready() -> void:
 	cam = Camera3D.new()
 	cam.keep_aspect = Camera3D.KEEP_WIDTH
 	cam.near = 0.3
-	cam.far = 900.0
+	cam.far = 2400.0
 	add_child(cam)
 	cam.current = true
 	sparks = _make_sparks()
@@ -252,6 +253,7 @@ func _set_player_car() -> void:
 	player.model = CarModel.new()
 	player.model.build(c.shape, Color(c.color))
 	add_child(player.model)
+	player.model.build_interior()
 	if sound:
 		sound.set_car(c)
 
@@ -670,10 +672,6 @@ func _update_player(dt: float) -> void:
 	var desired := clampf((target_x - player.x) * 3.2, -lat_max, lat_max)
 	var grip: float = st.grip * (1.0 - 0.22 * clampf(vr, 0.0, 1.2)) * (0.6 if on_shoulder else 1.0)
 	player.vx += clampf(desired - player.vx, -grip * dt, grip * dt)
-	# tyre squeal: hard cornering past the grip limit, or heavy braking at speed
-	var corner := clampf((absf(desired - player.vx) / maxf(lat_max, 0.1) - 0.35) * 1.6, 0.0, 1.0) * clampf((player.v - 14.0) / 20.0, 0.0, 1.0)
-	var lock := (0.55 if brk and player.v > 16.0 else 0.0)
-	player_slip = maxf(corner, lock) * (0.4 if on_shoulder else 1.0)
 	player.x += player.vx * dt
 	player.z += player.v * dt
 	on_shoulder = absf(player.x) + player.w / 2.0 > Data.ROAD_HALF + 0.25
@@ -897,7 +895,7 @@ func _process(delta: float) -> void:
 	_update_hud()
 	var snd_gas := ((in_gas if _live() else ap_gas) if not autotest else ap_gas) and state != S.PAUSED
 	var snd_brake := (in_brake if _live() else ap_brake) if not autotest else ap_brake
-	sound.drive(player.v, st.top, snd_gas, snd_brake, player_slip if state == S.PLAY else 0.0, state == S.PLAY, delta)
+	sound.drive(player.v, st.top, snd_gas, snd_brake, state == S.PLAY, delta)
 	if autotest:
 		_log_t += delta
 		if _log_t > 3.0:
@@ -926,7 +924,7 @@ func _place(c: Vehicle, delta: float) -> void:
 
 
 func _sync_visuals(delta: float) -> void:
-	scenery.update_view(player.z, finish_z)
+	scenery.update_view(player.z, finish_z, delta)
 	for c in traffic:
 		_place(c, delta)
 	if boss:
@@ -934,20 +932,37 @@ func _sync_visuals(delta: float) -> void:
 	_place(player, delta)
 	player.model.set_roll(clampf(-player.vx * 0.025, -0.06, 0.06))
 	player.model.set_pitch(clampf(-player_accel * 0.0028, -0.022, 0.03))
-	player.model.visible = not (run and run.invuln > 0.0 and fmod(t * 10.0, 1.0) < 0.5)
+	var cam_mode: String = Save.data.cam.mode
+	player.model.visible = cam_mode != "chase" or not (run and run.invuln > 0.0 and fmod(t * 10.0, 1.0) < 0.5)
+	player.model.set_gauges(player.v * 3.6 / 300.0, sound.rpm / (sound.redline * 1.1))
+	player.model.set_steer(clampf(player.vx * 0.3, -1.4, 1.4))
 	dust.position = Vector3(player.x, 0.2, 0.0)
 	dust.emitting = on_shoulder and player.v > 8.0
-	# camera: high chase view so the next few cars are readable
-	cam_x = lerpf(cam_x, player.x * 0.62, minf(1.0, delta * 3.5))
+	_update_camera(delta, cam_mode)
+
+
+func _update_camera(delta: float, mode: String) -> void:
+	var cfg := Save.cam(mode)
 	var speed_k := clampf(player.v / 70.0, 0.0, 1.0)
-	cam.fov = 62.0 + 12.0 * speed_k
-	var back := 10.5 - 1.2 * speed_k
-	var height := 7.5 - 0.8 * speed_k
-	var jitter := Vector3.ZERO
-	if shake > 0.0:
-		jitter = Vector3(randf_range(-1, 1), randf_range(-1, 1), 0) * 0.35 * shake
-	cam.position = Vector3(cam_x, height, back) + jitter
-	cam.look_at(Vector3(cam_x * 0.7, 0.0, -18.0), Vector3.UP)
+	var pitch := Basis(Vector3.RIGHT, deg_to_rad(cfg.angle))
+	cam_x = lerpf(cam_x, player.x * 0.62, minf(1.0, delta * 3.5))
+	sound.set_interior(mode == "cockpit")
+	if mode == "chase":
+		# high chase view so the next few cars are readable
+		cam.near = 0.3
+		cam.fov = cfg.fov + 12.0 * speed_k
+		var jitter := Vector3.ZERO
+		if shake > 0.0:
+			jitter = Vector3(randf_range(-1, 1), randf_range(-1, 1), 0) * 0.35 * shake
+		cam.global_transform = Transform3D(pitch, Vector3(cam_x, cfg.height - 0.6 * speed_k, cfg.dist - 1.2 * speed_k) + jitter)
+		return
+	# hood and cockpit ride on the car body, so they lean and dip with it
+	cam.near = 0.05
+	cam.fov = cfg.fov + 8.0 * speed_k
+	var eye: Vector3 = player.model.cockpit_eye() if mode == "cockpit" else player.model.hood_eye()
+	eye += Vector3(0, cfg.height, -cfg.dist)
+	var buzz := Vector3(randf_range(-1, 1), randf_range(-1, 1), 0) * (0.003 * speed_k + 0.04 * shake)
+	cam.global_transform = player.model.body_node().global_transform * Transform3D(pitch, eye + buzz)
 
 
 func _update_hud() -> void:
@@ -1089,6 +1104,7 @@ func _pause() -> void:
 	key_brake = false
 	_refresh_inputs()
 	hud.show_pause(Fmt.num(run.score), Fmt.km(run.dist), str(run.stage))
+	hud.render_cam()
 
 
 func _resume() -> void:
@@ -1160,6 +1176,26 @@ func _on_act(action: String, arg: String) -> void:
 				_apply_boon(arg)
 		"pause":
 			_pause()
+		"cam_cycle":
+			var i: int = (Data.CAM_MODES.find(Save.data.cam.mode) + 1) % Data.CAM_MODES.size()
+			Save.data.cam.mode = Data.CAM_MODES[i]
+			Save.persist()
+			hud.pop(String(Data.CAM_NAMES[Save.data.cam.mode]).to_upper() + " VIEW", "small")
+			hud.render_cam()
+		"cam_mode":
+			Save.data.cam.mode = arg
+			Save.persist()
+			hud.render_cam()
+		"cam_set":
+			var kv := arg.split("=")
+			Save.cam(Save.data.cam.mode)[kv[0]] = float(kv[1])
+			hud.render_cam()
+		"cam_save":
+			Save.persist()
+		"cam_reset":
+			Save.data.cam[Save.data.cam.mode] = Data.CAM_DEFAULTS[Save.data.cam.mode].duplicate()
+			Save.persist()
+			hud.render_cam()
 		"resume":
 			_resume()
 		"quit":

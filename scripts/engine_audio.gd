@@ -8,7 +8,7 @@ extends Node
 ## timing and strength, so a V8 burbles and an I4 buzzes. The raw signal goes
 ## through an "Engine" bus (EQ for exhaust body, overdrive for grit, a
 ## low-pass that opens with throttle). Exhaust rasp, intake roar, lift-off
-## pops, turbo whine, tyre squeal, road and wind noise are mixed per sample.
+## pops, turbo whine, road and wind noise are mixed per sample.
 
 const RATE := 22050.0
 const TABLE := 2048
@@ -36,7 +36,7 @@ var _limiter_t := 0.0
 var _boost := 0.0
 var _live := false
 var _speed := 0.0
-var _slip := 0.0
+var _interior := false
 
 # synth state
 var _ph := 0.0
@@ -46,13 +46,9 @@ var _n3 := 0.0
 var _pop := 0.0
 var _pop_lp := 0.0
 var _tph := 0.0
-var _sv_low := 0.0
-var _sv_band := 0.0
-var _sq_ph := 0.0
 var _vol_s := 0.0
 var _load_s := 0.0
 var _rpm_s := 900.0
-var _slip_s := 0.0
 var _speed_s := 0.0
 var _decel := 0.0
 
@@ -176,13 +172,17 @@ func _rpm_for(v: float, top: float, g: int) -> float:
 	return v / maxf(top, 1.0) * redline * 0.93 * RATIOS[g - 1] / RATIOS[RATIOS.size() - 1]
 
 
-## Called every frame. slip 0..1 drives tyre squeal.
-func drive(v: float, top: float, gas: bool, brake: bool, slip: float, live: bool, dt: float) -> void:
+## Cockpit view: the engine is heard through the bulkhead, darker and closer.
+func set_interior(on: bool) -> void:
+	_interior = on
+
+
+## Called every frame with the player's speed and pedals.
+func drive(v: float, top: float, gas: bool, brake: bool, live: bool, dt: float) -> void:
 	if _eng.is_empty():
 		return
 	_live = live
 	_speed = v
-	_slip = slip
 	var idle := float(_eng.idle)
 	var n := RATIOS.size()
 	var prev_gear := gear
@@ -227,7 +227,7 @@ func drive(v: float, top: float, gas: bool, brake: bool, slip: float, live: bool
 	if _dist:
 		_dist.drive = 0.18 + 0.42 * _load * (0.4 + 0.6 * rr)
 	if _lp:
-		_lp.cutoff_hz = 700.0 + 5200.0 * (0.25 + 0.75 * _load) * (0.3 + 0.7 * rr)
+		_lp.cutoff_hz = (700.0 + 5200.0 * (0.25 + 0.75 * _load) * (0.3 + 0.7 * rr)) * (0.55 if _interior else 1.0)
 
 
 func _process(_delta: float) -> void:
@@ -256,7 +256,6 @@ func synth(n: int) -> PackedVector2Array:
 		_rpm_s = lerpf(rpm0, rpm, (i + 1) * step)
 		_load_s = lerpf(load0, _load, (i + 1) * step)
 		_vol_s += 0.0005 * (target_vol - _vol_s)
-		_slip_s += 0.002 * (_slip - _slip_s)
 		_speed_s += 0.001 * (_speed - _speed_s)
 		var ld := _load_s
 		_ph += (_rpm_s / 120.0) * TABLE / RATE  # four-stroke: one firing cycle per two revolutions
@@ -284,15 +283,6 @@ func synth(n: int) -> PackedVector2Array:
 		if turbo:
 			_tph = fmod(_tph + (900.0 + _boost * 2600.0) / RATE, 1.0)
 			out += sin(TAU * _tph) * _boost * 0.025
-		# tyre squeal: resonant band-pass on noise
-		if _slip_s > 0.02:
-			_sq_ph = fmod(_sq_ph + 7.0 / RATE, 1.0)
-			var fc := 1500.0 + 260.0 * sin(TAU * _sq_ph)
-			var f := 2.0 * sin(PI * fc / RATE)
-			_sv_low += f * _sv_band
-			var high := nz - _sv_low - 0.06 * _sv_band
-			_sv_band += f * high
-			out += _sv_band * 0.04 * _slip_s
 		# road and wind
 		var sp := _speed_s / 70.0
 		out += _n2 * sp * 0.5 + _n1 * sp * sp * 0.08

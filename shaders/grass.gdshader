@@ -1,21 +1,52 @@
 shader_type spatial;
-// Roadside grass with mown stripes so speed reads even off the road.
+// Roadside ground: mown stripes near the highway fading into patchy fields,
+// with dry dirt along the pavement edges. Periodic over the scroll period.
 
 uniform float scroll = 0.0;
 uniform vec3 grass_a : source_color = vec3(0.36, 0.46, 0.2);
 uniform vec3 grass_b : source_color = vec3(0.32, 0.42, 0.18);
+uniform vec3 field : source_color = vec3(0.48, 0.47, 0.24);
+uniform vec3 dirt : source_color = vec3(0.42, 0.37, 0.28);
+uniform float edge_r = 9.6;     // outer edge of our shoulder (world x)
+uniform float edge_l = -31.6;   // outer edge of the opposite carriageway
+
+const float PERIOD = 3600.0;
 
 varying vec3 wp;
+
+float hash(vec2 p) {
+	return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+
+float pnoise(vec2 p, float per) {
+	vec2 i = floor(p);
+	vec2 f = fract(p);
+	vec2 u = f * f * (3.0 - 2.0 * f);
+	float y0 = mod(i.y, per);
+	float y1 = mod(i.y + 1.0, per);
+	return mix(mix(hash(vec2(i.x, y0)), hash(vec2(i.x + 1.0, y0)), u.x),
+		mix(hash(vec2(i.x, y1)), hash(vec2(i.x + 1.0, y1)), u.x), u.y);
+}
 
 void vertex() {
 	wp = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 }
 
 void fragment() {
-	float z = scroll - wp.z;
+	float z = mod(scroll - wp.z, PERIOD);
+	float x = wp.x;
 	float band = mod(floor(z / 16.0), 2.0);
-	float n = fract(sin(dot(floor(vec2(wp.x, z) / 3.0), vec2(12.9898, 78.233))) * 43758.5453);
-	ALBEDO = mix(grass_a, grass_b, band) * (0.93 + 0.1 * n);
+	float n1 = pnoise(vec2(x * 0.08, z * 0.08), PERIOD * 0.08);
+	float n2 = pnoise(vec2(x * 0.9, z * 0.9), PERIOD * 0.9);
+	vec3 mown = mix(grass_a, grass_b, band);
+	// fields further out: large patches of dry grass and crops
+	float far_k = smoothstep(18.0, 40.0, min(abs(x - edge_r), abs(x - edge_l)));
+	vec3 fields = mix(grass_b, field, smoothstep(0.45, 0.6, n1));
+	vec3 col = mix(mown, fields, far_k) * (0.9 + 0.14 * n2);
+	// worn dirt strip along the pavement
+	float d = min(abs(x - edge_r), abs(x - edge_l));
+	col = mix(col, dirt, (1.0 - smoothstep(0.0, 1.4 + n2, d)) * 0.7);
+	ALBEDO = col;
 	ROUGHNESS = 1.0;
 	SPECULAR = 0.1;
 }

@@ -81,6 +81,22 @@ const TRUCK_BOX_COLORS := ["#d6d8d3", "#cfc8b8", "#b9c1c7", "#8e3b2f", "#2f4f7a"
 const TRUCK_CAB_COLORS := ["#b5322a", "#1f4e8c", "#2a2d33", "#d9a21b", "#3d6b3a"]
 const ROMAN := ["", "II", "III", "IV", "V", "VI", "VII", "VIII"]
 const MAX_LIVES := 6
+
+# Camera views. chase: height/dist in metres behind the car. hood and cockpit:
+# height/dist are offsets from the default eye point (dist > 0 moves forward).
+# angle is the pitch in degrees (negative looks down).
+const CAM_MODES := ["chase", "hood", "cockpit"]
+const CAM_NAMES := {"chase": "Chase", "hood": "Hood", "cockpit": "Cockpit"}
+const CAM_DEFAULTS := {
+	"chase": {"fov": 62.0, "height": 7.5, "dist": 10.5, "angle": -15.0},
+	"hood": {"fov": 75.0, "height": 0.0, "dist": 0.0, "angle": -3.0},
+	"cockpit": {"fov": 70.0, "height": 0.0, "dist": 0.0, "angle": -1.0},
+}
+const CAM_RANGES := {
+	"chase": {"fov": [45.0, 100.0], "height": [2.0, 14.0], "dist": [4.0, 22.0], "angle": [-45.0, 0.0]},
+	"hood": {"fov": [50.0, 110.0], "height": [-0.3, 1.0], "dist": [-1.0, 1.0], "angle": [-25.0, 15.0]},
+	"cockpit": {"fov": [50.0, 110.0], "height": [-0.25, 0.35], "dist": [-0.5, 0.6], "angle": [-25.0, 15.0]},
+}
 const BOSS_RACE_LENGTH := 2000.0
 
 ## Multiplies stage and boss targets. Only changed by the --fast test flag.

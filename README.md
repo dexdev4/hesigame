@@ -12,7 +12,7 @@ A roguelike traffic-weaving racer built in **Godot 4** (GDScript). You drive an 
 
 There are no asset files to download: the cars, road, trees, UI and sounds are all generated in code.
 
-Each car has its own engine sound, generated live from a small engine model: cylinder count (from the hatch's four to the Last Exit's twelve), RPM through six gears with real shift points, throttle load, pops when you lift off, turbo whine and blow-off on the turbo cars, and tyre squeal when you push past the grip limit. The HUD shows your gear and an RPM bar under the speedometer.
+Each car has its own engine sound, generated live from a small engine model: cylinder count (from the hatch's four to the Last Exit's twelve), RPM through six gears with real shift points, throttle load, pops when you lift off and turbo whine and blow-off on the turbo cars. The HUD shows your gear and an RPM bar under the speedometer.
 
 ### Controls
 
@@ -24,6 +24,10 @@ Each car has its own engine sound, generated live from a small engine model: cyl
 | Pause | Pause button, or Android Back | Esc / P |
 
 With **Lane assist** on (menu toggle), lifting your finger settles the car into the nearest lane.
+
+### Cameras
+
+Tap **CAM** (top right) to switch between **Chase**, **Hood** and **Cockpit** views. The cockpit has a working speedometer and rev counter and a steering wheel that turns. In the pause menu you can choose the view and adjust its **field of view**, **height**, **distance** (forward/back for hood and cockpit) and **angle**. The game keeps drawing behind the menu so you see each change live. Settings are saved per view, and **Reset this view** restores the defaults.
 
 ### How a run works
 
@@ -47,13 +51,13 @@ With **Lane assist** on (menu toggle), lifting your finger settles the car into 
 | `scenes/main.tscn` | Entry scene; it only holds `game.gd` |
 | `scripts/game.gd` | Driving physics, traffic AI, boss race, scoring, run flow, camera, input |
 | `scripts/hud.gd` | HUD, pedals and every menu screen, built in code |
-| `scripts/scenery.gd` | Endless road, guardrails, lamps, trees, km signs, finish gantry |
-| `scripts/car_model.gd` | Builds the low-poly car, truck and van models |
+| `scripts/scenery.gd` | Endless highway: both carriageways with oncoming traffic, overpasses, exit-sign gantries, billboards, farms, fences, power lines, trees, mountains and clouds |
+| `scripts/car_model.gd` | Builds the car, truck and van models and the player's cockpit interior |
 | `scripts/pedal.gd` | Draws the accelerator and brake pedals |
 | `scripts/engine_audio.gd` | Synthesised engine, wind and sound effects |
 | `scripts/data.gd` | Autoload `Data`: cars, bosses, upgrades, targets. Balance lives here |
 | `scripts/save.gd` | Autoload `Save`: persistent progress |
-| `shaders/` | Road markings and grass stripes |
+| `shaders/` | Road surface (markings, wear, rumble strips, reflectors), grass and fields, distant mountains and clouds |
 
 ### Test flags
 
@@ -64,6 +68,7 @@ Arguments placed after `--` on the command line:
 - `--quit-after=SECONDS`: exit after that many seconds.
 - `--open=garage` / `--open=garage:up`: open the Garage on start.
 - `--shot=SECONDS:PATH`: save a screenshot.
+- `--cam=chase|hood|cockpit`: start in that camera view (not saved).
 
 ```bash
 godot --headless --path . -- --autotest --fast --quit-after=90

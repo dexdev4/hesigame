@@ -17,7 +17,25 @@ func defaults() -> Dictionary:
 		"owned": ["kestrel"], "selected": "kestrel", "unlocked": [],
 		"perm": {"accel": 0, "brake": 0, "handling": 0, "top": 0, "lives": 0},
 		"sound": true, "assist": true,
+		"cam": _cam_defaults(),
 	}
+
+
+func _cam_defaults() -> Dictionary:
+	var c: Dictionary = Data.CAM_DEFAULTS.duplicate(true)
+	c["mode"] = "chase"
+	return c
+
+
+## Settings for one camera view, with defaults filled in.
+func cam(mode: String) -> Dictionary:
+	if not data.cam.has(mode) or not data.cam[mode] is Dictionary:
+		data.cam[mode] = Data.CAM_DEFAULTS[mode].duplicate()
+	var c: Dictionary = data.cam[mode]
+	for k in Data.CAM_DEFAULTS[mode]:
+		if not c.has(k):
+			c[k] = Data.CAM_DEFAULTS[mode][k]
+	return c
 
 
 func load_data() -> void:
@@ -31,8 +49,15 @@ func load_data() -> void:
 	if not parsed is Dictionary:
 		return
 	for k in parsed:
-		if k != "perm":
+		if k != "perm" and k != "cam":
 			data[k] = parsed[k]
+	if parsed.has("cam") and parsed.cam is Dictionary:
+		for k in parsed.cam:
+			if k == "mode" and Data.CAM_MODES.has(parsed.cam.mode):
+				data.cam.mode = parsed.cam.mode
+			elif data.cam.has(k) and parsed.cam[k] is Dictionary:
+				for kk in parsed.cam[k]:
+					data.cam[k][kk] = float(parsed.cam[k][kk])
 	if parsed.has("perm") and parsed.perm is Dictionary:
 		for k in parsed.perm:
 			data.perm[k] = int(parsed.perm[k])

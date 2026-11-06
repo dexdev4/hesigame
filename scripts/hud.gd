@@ -26,6 +26,7 @@ var screens := {}
 var gas: Pedal
 var brake: Pedal
 var pause_btn: Button
+var cam_btn: Button
 var _top_margin: MarginContainer
 var _score: Label
 var _mult: Label
@@ -356,6 +357,12 @@ func _build_play() -> void:
 	pause_btn.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 	pause_btn.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	pause_btn.pressed.connect(func() -> void: act.emit("pause", ""))
+	cam_btn = pause_btn.duplicate(0) as Button  # 0: copy looks, not the pause signal
+	cam_btn.text = "CAM"
+	cam_btn.add_theme_font_size_override("font_size", 22)
+	cam_btn.pressed.connect(func() -> void: act.emit("cam_cycle", ""))
+	right.add_theme_constant_override("separation", 12)
+	right.add_child(cam_btn)
 	right.add_child(pause_btn)
 
 	# goal sign
@@ -516,7 +523,7 @@ func role_at(pos: Vector2) -> String:
 		return "gas"
 	if brake.hit_rect().has_point(pos):
 		return "brake"
-	if pause_btn.get_global_rect().grow(12).has_point(pos):
+	if pause_btn.get_global_rect().grow(12).has_point(pos) or cam_btn.get_global_rect().grow(12).has_point(pos):
 		return "ui"
 	return ""
 
@@ -560,6 +567,9 @@ func pop(text: String, kind := "") -> void:
 	if kind == "hot":
 		size = 54
 		col = AMBER
+	elif kind == "small":
+		size = 30
+		col = MUTED
 	elif kind == "bad":
 		col = TAIL
 	var l := _label(text, size, col, display_font)
@@ -903,6 +913,89 @@ func _build_pause() -> void:
 	v.add_child(btns)
 	btns.add_child(_button("RESUME", "amber", "resume"))
 	btns.add_child(_button("END RUN", "ghost", "quit"))
+	# camera settings (the game keeps rendering underneath, so changes preview live)
+	v.add_child(_eyebrow("Camera"))
+	var modes := _row(8)
+	v.add_child(modes)
+	for m in Data.CAM_MODES:
+		var mb := _button(String(Data.CAM_NAMES[m]).to_upper(), "light", "cam_mode", m)
+		mb.add_theme_font_size_override("font_size", 26)
+		modes.add_child(mb)
+		_pause["mode_" + m] = mb
+	for key in ["fov", "height", "dist", "angle"]:
+		var r := _row(12)
+		v.add_child(r)
+		var nm := _label("", 22, LINE)
+		nm.custom_minimum_size.x = 170
+		r.add_child(nm)
+		var sl := HSlider.new()
+		sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		sl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		sl.custom_minimum_size.y = 48
+		var track := _flat(Color(0, 0, 0, 0.35), 6)
+		track.content_margin_top = 5
+		track.content_margin_bottom = 5
+		sl.add_theme_stylebox_override("slider", track)
+		sl.add_theme_stylebox_override("grabber_area", _flat(AMBER, 6))
+		sl.add_theme_stylebox_override("grabber_area_highlight", _flat(AMBER, 6))
+		sl.add_theme_icon_override("grabber", _knob())
+		sl.add_theme_icon_override("grabber_highlight", _knob())
+		var k: String = key
+		sl.value_changed.connect(func(val: float) -> void:
+			if not _cam_lock:
+				act.emit("cam_set", "%s=%s" % [k, val]))
+		sl.drag_ended.connect(func(_changed: bool) -> void: act.emit("cam_save", ""))
+		r.add_child(sl)
+		var val_l := _label("", 20, LINE, mono_font)
+		val_l.custom_minimum_size.x = 96
+		val_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		r.add_child(val_l)
+		_pause["n_" + key] = nm
+		_pause["s_" + key] = sl
+		_pause["v_" + key] = val_l
+	v.add_child(_button("RESET THIS VIEW", "ghost", "cam_reset"))
+	# lighter scrim so the camera preview is visible behind the sign
+	(screens.pause.get_child(0) as ColorRect).color = Color(0.03, 0.04, 0.05, 0.3)
+
+
+var _knob_tex: ImageTexture
+var _cam_lock := false  # set while render_cam rewrites slider ranges
+
+
+func _knob() -> ImageTexture:
+	if _knob_tex == null:
+		var img := Image.create(40, 40, false, Image.FORMAT_RGBA8)
+		for y in 40:
+			for x in 40:
+				var d := Vector2(x - 19.5, y - 19.5).length()
+				var a := clampf(18.0 - d, 0.0, 1.0)
+				var c := LINE if d < 11.0 else AMBER
+				img.set_pixel(x, y, Color(c, a))
+		_knob_tex = ImageTexture.create_from_image(img)
+	return _knob_tex
+
+
+## Shows the current camera view's settings in the pause menu.
+func render_cam() -> void:
+	var mode: String = Save.data.cam.mode
+	var cfg := Save.cam(mode)
+	var rng: Dictionary = Data.CAM_RANGES[mode]
+	for m in Data.CAM_MODES:
+		(_pause["mode_" + m] as Button).modulate = Color(1, 1, 1, 1) if m == mode else Color(1, 1, 1, 0.45)
+	var names := {"fov": "Field of view", "height": "Height", "dist": "Distance" if mode == "chase" else "Forward",
+		"angle": "Angle"}
+	_cam_lock = true
+	for key in ["fov", "height", "dist", "angle"]:
+		var sl: HSlider = _pause["s_" + key]
+		sl.min_value = rng[key][0]
+		sl.max_value = rng[key][1]
+		sl.step = 1.0 if key == "fov" or key == "angle" else 0.05
+		sl.set_value_no_signal(cfg[key])
+		_pause["n_" + key].text = names[key]
+		var unit := "°" if key == "fov" or key == "angle" else " m"
+		var fmt := "%d" if unit == "°" else "%.2f"
+		_pause["v_" + key].text = (fmt % cfg[key]) + unit
+	_cam_lock = false
 
 
 func show_pause(score: String, dist: String, stage: String) -> void:

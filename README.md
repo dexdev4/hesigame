@@ -49,10 +49,31 @@ Open **Settings** from the main menu or the pause menu. The game keeps drawing b
 
 ### Build for Android
 
-1. In Godot: **Editor > Manage Export Templates > Download and Install**.
-2. Install the Android SDK (Android Studio is the easiest way) and a JDK 17. Then in **Editor > Editor Settings > Export > Android**, set the SDK path. Godot's guide covers this step by step: https://docs.godotengine.org/en/stable/tutorials/export/exporting_for_android.html
-3. **Project > Export > Add... > Android**. Set a package name (for example `com.redlinerush.game`). Portrait orientation is already set in the project.
-4. With a phone connected over USB debugging, press the Android one-click deploy button in the editor's top-right corner, or click **Export Project** to get an `.apk`.
+The project includes an export preset (`export_presets.cfg`) for a standard APK. It doesn't need Gradle or Android Studio's build system.
+
+1. **Export templates:** in Godot, choose **Editor > Manage Export Templates > Download and Install**.
+2. **Java and the Android SDK:** install a JDK (17 or newer) and the Android SDK. Android Studio is the easiest way to get the SDK; you need **build-tools** and **platform-tools** from its SDK Manager.
+3. **Editor Settings > Export > Android:** set **Java SDK Path** and **Android SDK Path**. Godot creates the debug keystore itself the first time; if that field is empty, see the table below.
+4. **Project > Export:** select **Android** and click **Export Project** to get `build/redline-rush.apk`. Or plug in a phone with USB debugging on and press the Android button in the editor's top-right corner.
+
+Portrait orientation, immersive full screen and the vibration permission are already set.
+
+**If the export fails**, the message at the bottom of the Export window usually names the cause:
+
+| Message mentions | Fix |
+| --- | --- |
+| export templates / "No export template found" | Step 1, and make sure the templates match your Godot version exactly. |
+| Android build template / Gradle | Turn **Use Gradle Build** off in the Android preset (it is off in the included preset). |
+| Android SDK path / apksigner / build-tools | Step 3. The path must contain `build-tools/<version>/apksigner` and `platform-tools/adb`. |
+| Java / JDK | Point **Java SDK Path** at the JDK folder (the one containing `bin/java`). |
+| keystore | Leave the debug keystore fields empty so Godot creates one, or create one yourself: `keytool -genkeypair -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -validity 10000 -dname "CN=Android Debug"` |
+| ETC2 / ASTC texture compression | Already enabled in `project.godot`. If it was turned off, re-enable **Rendering > Textures > VRAM Compression > Import ETC2 ASTC**. |
+
+Command-line export, once the editor settings are in place:
+
+```bash
+godot --headless --path . --export-debug "Android" build/redline-rush.apk
+```
 
 ### Project layout
 

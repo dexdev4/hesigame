@@ -944,7 +944,7 @@ func build_interior() -> void:
 	# steering wheel: tilted column with a spinning rim, spokes, airbag hub and paddles
 	var tilt := Node3D.new()
 	tilt.position = Vector3(ex, yb - 0.1, dz + 0.8)
-	tilt.rotation.x = -1.15
+	tilt.rotation.x = 1.15  # wheel face points back at the driver and up
 	_body.add_child(tilt)
 	_steer_node = Node3D.new()
 	tilt.add_child(_steer_node)
@@ -957,7 +957,7 @@ func build_interior() -> void:
 	rim.mesh = wt
 	rim.material_override = mats.leather
 	_steer_node.add_child(rim)
-	for a in [0.0, PI, PI * 1.5]:
+	for a in [0.0, PI, PI * 0.5]:  # left, right and bottom spokes
 		var spoke := MeshInstance3D.new()
 		spoke.mesh = box_mesh(Vector3(0.13, 0.025, 0.045))
 		spoke.position = Vector3(cos(a) * 0.1, 0, sin(a) * 0.1)

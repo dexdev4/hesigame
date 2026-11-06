@@ -170,7 +170,7 @@ func _build_environment() -> void:
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	env.fog_enabled = true
 	env.fog_light_color = Color("#d9b48a")
-	env.fog_density = 0.0055
+	env.fog_density = 0.0075  # thick enough that traffic appears out of the haze, not out of nowhere
 	env.fog_sky_affect = 0.15
 	env.glow_enabled = true
 	env.glow_intensity = 0.7
@@ -417,7 +417,7 @@ func _update_traffic(dt: float) -> void:
 		if c.z > player.z:
 			ahead += 1
 	for k in 2:
-		if ahead < dens * 4.2 and _try_spawn(player.z + randf_range(320.0, 420.0)):
+		if ahead < dens * 4.2 and _try_spawn(player.z + randf_range(390.0, 450.0)):
 			ahead += 1
 	if player.v < 23.0 and randf() < dt * 0.6:
 		_try_spawn(player.z - 75.0, 0 if randf() < 0.6 else 1, randf_range(29.0, 33.0))

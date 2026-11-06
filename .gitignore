@@ -2,3 +2,4 @@
 .godot/
 *.apk
 *.aab
+build/

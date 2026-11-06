@@ -18,7 +18,22 @@ func defaults() -> Dictionary:
 		"perm": {"accel": 0, "brake": 0, "handling": 0, "top": 0, "lives": 0},
 		"sound": true, "assist": true,
 		"cam": _cam_defaults(),
+		"settings": SETTING_DEFAULTS.duplicate(true),
 	}
+
+
+## Gameplay settings. Pedal positions are screen fractions of the pedal centre;
+## an empty array means the default spot in the bottom corner.
+const SETTING_DEFAULTS := {
+	"steer_sens": 1.0, "pedal_scale": 1.0, "haptics": true, "shake": true, "units": "kmh",
+	"gas_pos": [], "brake_pos": [],
+}
+
+
+func setting(key: String) -> Variant:
+	if not data.settings.has(key):
+		data.settings[key] = SETTING_DEFAULTS[key] if not SETTING_DEFAULTS[key] is Array else []
+	return data.settings[key]
 
 
 func _cam_defaults() -> Dictionary:
@@ -49,7 +64,7 @@ func load_data() -> void:
 	if not parsed is Dictionary:
 		return
 	for k in parsed:
-		if k != "perm" and k != "cam":
+		if k != "perm" and k != "cam" and k != "settings":
 			data[k] = parsed[k]
 	if parsed.has("cam") and parsed.cam is Dictionary:
 		for k in parsed.cam:
@@ -58,6 +73,10 @@ func load_data() -> void:
 			elif data.cam.has(k) and parsed.cam[k] is Dictionary:
 				for kk in parsed.cam[k]:
 					data.cam[k][kk] = float(parsed.cam[k][kk])
+	if parsed.has("settings") and parsed.settings is Dictionary:
+		for k in parsed.settings:
+			if SETTING_DEFAULTS.has(k):
+				data.settings[k] = parsed.settings[k]
 	if parsed.has("perm") and parsed.perm is Dictionary:
 		for k in parsed.perm:
 			data.perm[k] = int(parsed.perm[k])

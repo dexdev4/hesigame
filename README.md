@@ -27,7 +27,17 @@ With **Lane assist** on (menu toggle), lifting your finger settles the car into 
 
 ### Cameras
 
-Tap **CAM** (top right) to switch between **Chase**, **Hood** and **Cockpit** views. The cockpit has a working speedometer and rev counter and a steering wheel that turns. In the pause menu you can choose the view and adjust its **field of view**, **height**, **distance** (forward/back for hood and cockpit) and **angle**. The game keeps drawing behind the menu so you see each change live. Settings are saved per view, and **Reset this view** restores the defaults.
+Tap **CAM** (top right) to switch between **Chase**, **Hood** and **Cockpit** views. The cockpit is a full interior:
+- **Instruments:** speedometer and rev counter with moving needles, a digital gear and speed readout, and a lit radio and trip screen.
+- **Controls:** a three-spoke steering wheel that turns, and a gear lever that moves through the gears.
+- **Cabin:** air vents, climate knobs, seats with headrests, a rear bench, door panels, sun visors and a mirror.
+
+### Settings
+
+Open **Settings** from the main menu or the pause menu. The game keeps drawing behind it, so camera changes preview live.
+- **Camera:** choose a view and set its field of view, height, distance (forward/back for hood and cockpit) and angle. **Reset this view** restores the defaults.
+- **Gameplay:** steering sensitivity, pedal size, lane assist, vibration, camera shake, engine sound, and speed in km/h or mph.
+- **Pedal layout:** **Edit pedal layout** lets you drag the gas and brake anywhere on screen. **Swap pedals** puts the gas on the left, and **Reset pedals** returns them to the bottom corners.
 
 ### How a run works
 
@@ -68,7 +78,8 @@ Arguments placed after `--` on the command line:
 - `--quit-after=SECONDS`: exit after that many seconds.
 - `--open=garage` / `--open=garage:up`: open the Garage on start.
 - `--shot=SECONDS:PATH`: save a screenshot.
-- `--cam=chase|hood|cockpit`: start in that camera view (not saved).
+- `--cam=chase|hood|cockpit`: start in that camera view (not saved). `--cam=inspect` looks across the cabin from the back seat.
+- `--open=settings` / `--open=pedal_edit`: open the settings screen or the pedal editor on start.
 
 ```bash
 godot --headless --path . -- --autotest --fast --quit-after=90

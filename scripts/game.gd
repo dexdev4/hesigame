@@ -539,7 +539,7 @@ func _end_battle() -> void:
 	else:
 		run.lives -= 1
 		run.combo = 0
-		Input.vibrate_handheld(200)
+		_vib(200)
 		if run.lives <= 0:
 			_end_run("Lost the race to " + bi.full)
 			return
@@ -639,7 +639,7 @@ func _hit(reason: String, other: Vehicle = null) -> void:
 	sparks.restart()
 	sparks.emitting = true
 	sound.play("crash")
-	Input.vibrate_handheld(180)
+	_vib(180)
 	if run.lives <= 0:
 		run.dying = 1.7
 		hud.pop(reason, "bad")
@@ -936,12 +936,37 @@ func _sync_visuals(delta: float) -> void:
 	player.model.visible = cam_mode != "chase" or not (run and run.invuln > 0.0 and fmod(t * 10.0, 1.0) < 0.5)
 	player.model.set_gauges(player.v * 3.6 / 300.0, sound.rpm / (sound.redline * 1.1))
 	player.model.set_steer(clampf(player.vx * 0.3, -1.4, 1.4))
+	player.model.set_gear(sound.gear, delta)
+	var sp := _speed_text()
+	player.model.set_display(sound.gear, sp[0], sp[1], "%.1f km" % ((run.dist if run else player.z) / 1000.0))
 	dust.position = Vector3(player.x, 0.2, 0.0)
 	dust.emitting = on_shoulder and player.v > 8.0
 	_update_camera(delta, cam_mode)
 
 
+func _speed_text() -> Array:
+	if Save.setting("units") == "mph":
+		return [str(roundi(player.v * 2.23694)), "MPH"]
+	return [str(roundi(player.v * 3.6)), "KM/H"]
+
+
+func _shake_k() -> float:
+	return 1.0 if Save.setting("shake") else 0.0
+
+
+func _vib(ms: int) -> void:
+	if Save.setting("haptics"):
+		Input.vibrate_handheld(ms)
+
+
 func _update_camera(delta: float, mode: String) -> void:
+	if mode == "inspect":  # test view (--cam=inspect): looks across the cabin from the back seat
+		var e: Vector3 = player.model.cockpit_eye()
+		var from := Vector3(-e.x + 0.15, e.y + 0.05, e.z + 0.75)
+		cam.near = 0.02
+		cam.fov = 75.0
+		cam.global_transform = player.model.body_node().global_transform * Transform3D(Basis.looking_at(Vector3(e.x * 0.6, e.y - 0.35, e.z - 0.7) - from), from)
+		return
 	var cfg := Save.cam(mode)
 	var speed_k := clampf(player.v / 70.0, 0.0, 1.0)
 	var pitch := Basis(Vector3.RIGHT, deg_to_rad(cfg.angle))
@@ -953,7 +978,7 @@ func _update_camera(delta: float, mode: String) -> void:
 		cam.fov = cfg.fov + 12.0 * speed_k
 		var jitter := Vector3.ZERO
 		if shake > 0.0:
-			jitter = Vector3(randf_range(-1, 1), randf_range(-1, 1), 0) * 0.35 * shake
+			jitter = Vector3(randf_range(-1, 1), randf_range(-1, 1), 0) * 0.35 * shake * _shake_k()
 		cam.global_transform = Transform3D(pitch, Vector3(cam_x, cfg.height - 0.6 * speed_k, cfg.dist - 1.2 * speed_k) + jitter)
 		return
 	# hood and cockpit ride on the car body, so they lean and dip with it
@@ -961,7 +986,7 @@ func _update_camera(delta: float, mode: String) -> void:
 	cam.fov = cfg.fov + 8.0 * speed_k
 	var eye: Vector3 = player.model.cockpit_eye() if mode == "cockpit" else player.model.hood_eye()
 	eye += Vector3(0, cfg.height, -cfg.dist)
-	var buzz := Vector3(randf_range(-1, 1), randf_range(-1, 1), 0) * (0.003 * speed_k + 0.04 * shake)
+	var buzz := Vector3(randf_range(-1, 1), randf_range(-1, 1), 0) * (0.003 * speed_k + 0.04 * shake) * _shake_k()
 	cam.global_transform = player.model.body_node().global_transform * Transform3D(pitch, eye + buzz)
 
 
@@ -975,7 +1000,8 @@ func _update_hud() -> void:
 		"combo_frac": run.combo_t / run.combo_time if run.combo > 0 else 0.0,
 		"lives": run.lives,
 		"max_lives": maxi(3 + Save.perm_level("lives"), run.lives),
-		"kmh": str(roundi(player.v * 3.6)),
+		"kmh": _speed_text()[0],
+		"unit": _speed_text()[1],
 		"gear": sound.gear,
 		"rpm": sound.rpm / sound.redline,
 		"fast": player.v > 33.0,
@@ -1046,7 +1072,7 @@ func _input(event: InputEvent) -> void:
 		tt.x = e.position.x
 		if tt.role == "steer" and _live():
 			var vw := get_viewport().get_visible_rect().size
-			var sens := 16.0 if vw.y > vw.x else 13.0
+			var sens: float = (16.0 if vw.y > vw.x else 13.0) * float(Save.setting("steer_sens"))
 			target_x = clampf(target_x + dx / vw.x * sens, -(Data.RAIL + 1.0), Data.RAIL + 1.0)
 	elif event is InputEventKey:
 		var k := event as InputEventKey
@@ -1078,7 +1104,11 @@ func _notification(what: int) -> void:
 			if state == S.PLAY and not autotest:
 				_pause()
 		NOTIFICATION_WM_GO_BACK_REQUEST:
-			if state == S.PLAY:
+			if hud.screens.pedals.visible:
+				_on_act("pedal_done", "")
+			elif hud.screens.settings.visible:
+				_on_act("settings_back", "")
+			elif state == S.PLAY:
 				_pause()
 			elif state == S.PAUSED:
 				_resume()
@@ -1157,6 +1187,53 @@ func _on_act(action: String, arg: String) -> void:
 						_compute_stats()
 						sound.play("ding", 1.3 + lv * 0.08)
 			hud.render_garage()
+		"settings":
+			hud.render_settings()
+			hud.show_screen("settings")
+		"settings_back":
+			Save.persist()
+			if state == S.PAUSED:
+				hud.show_screen("pause")
+			else:
+				_go_menu()
+		"set":
+			var kv := arg.split("=")
+			Save.data.settings[kv[0]] = float(kv[1])
+			if kv[0] == "pedal_scale":
+				hud.layout_pedals()
+			hud.render_settings()
+		"save":
+			Save.persist()
+		"toggle":
+			match arg:
+				"sound":
+					Save.data.sound = not Save.data.sound
+					sound.set_enabled(Save.data.sound)
+				"assist":
+					Save.data.assist = not Save.data.assist
+				"units":
+					Save.data.settings.units = "kmh" if Save.setting("units") == "mph" else "mph"
+				_:
+					Save.data.settings[arg] = not Save.setting(arg)
+			Save.persist()
+			hud.render_settings()
+		"pedal_edit":
+			hud.begin_pedal_edit()
+		"pedal_done":
+			hud.end_pedal_edit()
+			Save.persist()
+			hud.render_settings()
+			hud.show_screen("settings")
+		"pedal_moved":
+			Save.persist()
+		"pedal_swap":
+			hud.swap_pedals()
+			Save.persist()
+		"pedal_reset":
+			Save.data.settings.gas_pos = []
+			Save.data.settings.brake_pos = []
+			hud.layout_pedals()
+			Save.persist()
 		"sound":
 			Save.data.sound = not Save.data.sound
 			Save.persist()

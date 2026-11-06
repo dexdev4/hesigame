@@ -58,6 +58,11 @@ var _garage := {}
 var _boss := {}
 var _pick := {}
 var _pause := {}
+var _set := {}
+var _bottom := 0.0
+var _play_on := false
+var _editing := false
+var _drag := {}
 var _over := {}
 var garage_tab := "cars"
 
@@ -93,6 +98,8 @@ func _ready() -> void:
 	_build_pick()
 	_build_pause()
 	_build_over()
+	_build_settings()
+	_build_pedal_editor()
 	get_viewport().size_changed.connect(_apply_safe_area)
 	_apply_safe_area()
 
@@ -276,10 +283,8 @@ func _apply_safe_area() -> void:
 		bottom = maxf(0.0, win.y - safe.end.y) * k
 	_top_margin.add_theme_constant_override("margin_top", int(18 + top))
 	_goal.offset_top = 160 + top
-	gas.offset_bottom = -(30 + bottom)
-	gas.offset_top = gas.offset_bottom - 262
-	brake.offset_bottom = -(30 + bottom)
-	brake.offset_top = brake.offset_bottom - 176
+	_bottom = bottom
+	layout_pedals()
 	_kmh.get_parent().offset_bottom = -(26 + bottom)
 	# menu panels fill the width on phones and stay readable on wide screens
 	for k in screens:
@@ -474,19 +479,9 @@ func _build_play() -> void:
 
 	brake = Pedal.new()
 	brake.kind = "brake"
-	brake.anchor_top = 1.0
-	brake.anchor_bottom = 1.0
-	brake.offset_left = 26
-	brake.offset_right = 26 + 210
 	play_layer.add_child(brake)
 	gas = Pedal.new()
 	gas.kind = "gas"
-	gas.anchor_left = 1.0
-	gas.anchor_right = 1.0
-	gas.anchor_top = 1.0
-	gas.anchor_bottom = 1.0
-	gas.offset_left = -26 - 140
-	gas.offset_right = -26
 	play_layer.add_child(gas)
 	play_layer.visible = false
 
@@ -512,7 +507,9 @@ func _draw_lives() -> void:
 
 
 func set_play_visible(on: bool) -> void:
-	play_layer.visible = on
+	_play_on = on
+	if not _editing:
+		play_layer.visible = on
 
 
 ## Which on-screen control a touch at `pos` lands on: "gas", "brake", "ui" or "".
@@ -543,7 +540,7 @@ func update_play(d: Dictionary) -> void:
 		_max_lives = d.max_lives
 		_lives_ctrl.queue_redraw()
 	_kmh.text = d.kmh
-	_unit.text = "KM/H  ·  GEAR %d" % d.gear
+	_unit.text = "%s  ·  GEAR %d" % [d.unit, d.gear]
 	_rpm.value = clampf(d.rpm, 0.0, 1.0)
 	_rpm.add_theme_stylebox_override("fill", _fill_red if d.rpm > 0.9 else (_fill_amber if d.rpm > 0.75 else _fill_white))
 	_kmh.add_theme_color_override("font_color", AMBER if d.fast else LINE)
@@ -635,12 +632,7 @@ func _build_menu() -> void:
 	v.add_child(btns)
 	btns.add_child(_button("START RUN  →", "amber", "start"))
 	btns.add_child(_button("GARAGE", "light", "garage"))
-	var tg := _row(12)
-	v.add_child(tg)
-	_menu["sound"] = _toggle("Engine sound", "sound")
-	_menu["assist"] = _toggle("Lane assist", "assist")
-	tg.add_child(_menu["sound"])
-	tg.add_child(_menu["assist"])
+	v.add_child(_button("SETTINGS", "ghost", "settings"))
 	var how := RichTextLabel.new()
 	how.bbcode_enabled = true
 	how.fit_content = true
@@ -676,8 +668,6 @@ func render_menu() -> void:
 	_menu.cash.text = "$" + Fmt.num(Save.data.cash)
 	_menu.best.text = Fmt.num(Save.data.best)
 	_menu.car.text = Data.car_by_id(Save.data.selected).name
-	_menu.sound.text = "%s:  %s" % [_menu.sound.get_meta("base"), "ON" if Save.data.sound else "OFF"]
-	_menu.assist.text = "%s:  %s" % [_menu.assist.get_meta("base"), "ON" if Save.data.assist else "OFF"]
 
 
 func _build_garage() -> void:
@@ -913,49 +903,7 @@ func _build_pause() -> void:
 	v.add_child(btns)
 	btns.add_child(_button("RESUME", "amber", "resume"))
 	btns.add_child(_button("END RUN", "ghost", "quit"))
-	# camera settings (the game keeps rendering underneath, so changes preview live)
-	v.add_child(_eyebrow("Camera"))
-	var modes := _row(8)
-	v.add_child(modes)
-	for m in Data.CAM_MODES:
-		var mb := _button(String(Data.CAM_NAMES[m]).to_upper(), "light", "cam_mode", m)
-		mb.add_theme_font_size_override("font_size", 26)
-		modes.add_child(mb)
-		_pause["mode_" + m] = mb
-	for key in ["fov", "height", "dist", "angle"]:
-		var r := _row(12)
-		v.add_child(r)
-		var nm := _label("", 22, LINE)
-		nm.custom_minimum_size.x = 170
-		r.add_child(nm)
-		var sl := HSlider.new()
-		sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		sl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		sl.custom_minimum_size.y = 48
-		var track := _flat(Color(0, 0, 0, 0.35), 6)
-		track.content_margin_top = 5
-		track.content_margin_bottom = 5
-		sl.add_theme_stylebox_override("slider", track)
-		sl.add_theme_stylebox_override("grabber_area", _flat(AMBER, 6))
-		sl.add_theme_stylebox_override("grabber_area_highlight", _flat(AMBER, 6))
-		sl.add_theme_icon_override("grabber", _knob())
-		sl.add_theme_icon_override("grabber_highlight", _knob())
-		var k: String = key
-		sl.value_changed.connect(func(val: float) -> void:
-			if not _cam_lock:
-				act.emit("cam_set", "%s=%s" % [k, val]))
-		sl.drag_ended.connect(func(_changed: bool) -> void: act.emit("cam_save", ""))
-		r.add_child(sl)
-		var val_l := _label("", 20, LINE, mono_font)
-		val_l.custom_minimum_size.x = 96
-		val_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		r.add_child(val_l)
-		_pause["n_" + key] = nm
-		_pause["s_" + key] = sl
-		_pause["v_" + key] = val_l
-	v.add_child(_button("RESET THIS VIEW", "ghost", "cam_reset"))
-	# lighter scrim so the camera preview is visible behind the sign
-	(screens.pause.get_child(0) as ColorRect).color = Color(0.03, 0.04, 0.05, 0.3)
+	v.add_child(_button("SETTINGS", "light", "settings"))
 
 
 var _knob_tex: ImageTexture
@@ -975,26 +923,26 @@ func _knob() -> ImageTexture:
 	return _knob_tex
 
 
-## Shows the current camera view's settings in the pause menu.
+## Shows the current camera view's settings.
 func render_cam() -> void:
 	var mode: String = Save.data.cam.mode
 	var cfg := Save.cam(mode)
 	var rng: Dictionary = Data.CAM_RANGES[mode]
 	for m in Data.CAM_MODES:
-		(_pause["mode_" + m] as Button).modulate = Color(1, 1, 1, 1) if m == mode else Color(1, 1, 1, 0.45)
+		(_set["mode_" + m] as Button).modulate = Color(1, 1, 1, 1) if m == mode else Color(1, 1, 1, 0.45)
 	var names := {"fov": "Field of view", "height": "Height", "dist": "Distance" if mode == "chase" else "Forward",
 		"angle": "Angle"}
 	_cam_lock = true
 	for key in ["fov", "height", "dist", "angle"]:
-		var sl: HSlider = _pause["s_" + key]
+		var sl: HSlider = _set["s_" + key]
 		sl.min_value = rng[key][0]
 		sl.max_value = rng[key][1]
 		sl.step = 1.0 if key == "fov" or key == "angle" else 0.05
 		sl.set_value_no_signal(cfg[key])
-		_pause["n_" + key].text = names[key]
+		_set["n_" + key].text = names[key]
 		var unit := "°" if key == "fov" or key == "angle" else " m"
 		var fmt := "%d" if unit == "°" else "%.2f"
-		_pause["v_" + key].text = (fmt % cfg[key]) + unit
+		_set["v_" + key].text = (fmt % cfg[key]) + unit
 	_cam_lock = false
 
 
@@ -1040,3 +988,207 @@ func show_over(reason: String, score: String, dist: String, bosses: String, cash
 	_over.cash.text = cash
 	_over.note.text = note
 	show_screen("over")
+
+
+
+# ---------------------------------------------------------------- settings
+
+func _slider_row(parent: Control, key: String, action: String, save_action: String) -> void:
+	var r := _row(12)
+	parent.add_child(r)
+	var nm := _label("", 22, LINE)
+	nm.custom_minimum_size.x = 165
+	nm.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	r.add_child(nm)
+	var sl := HSlider.new()
+	sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	sl.custom_minimum_size.y = 48
+	var track := _flat(Color(0, 0, 0, 0.35), 6)
+	track.content_margin_top = 5
+	track.content_margin_bottom = 5
+	sl.add_theme_stylebox_override("slider", track)
+	sl.add_theme_stylebox_override("grabber_area", _flat(AMBER, 6))
+	sl.add_theme_stylebox_override("grabber_area_highlight", _flat(AMBER, 6))
+	sl.add_theme_icon_override("grabber", _knob())
+	sl.add_theme_icon_override("grabber_highlight", _knob())
+	sl.value_changed.connect(func(val: float) -> void:
+		if not _cam_lock:
+			act.emit(action, "%s=%s" % [key, val]))
+	sl.drag_ended.connect(func(_changed: bool) -> void: act.emit(save_action, ""))
+	r.add_child(sl)
+	var val_l := _label("", 20, LINE, mono_font)
+	val_l.custom_minimum_size.x = 96
+	val_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	r.add_child(val_l)
+	_set["n_" + key] = nm
+	_set["s_" + key] = sl
+	_set["v_" + key] = val_l
+
+
+func _build_settings() -> void:
+	var v := _screen("settings", SIGN, 700)
+	v.add_child(_eyebrow("Glovebox · Owner's manual"))
+	v.add_child(_label("SETTINGS", 84, LINE, display_font))
+	# camera (the game keeps drawing underneath, so changes preview live)
+	v.add_child(_eyebrow("Camera"))
+	var modes := _row(8)
+	v.add_child(modes)
+	for m in Data.CAM_MODES:
+		var mb := _button(String(Data.CAM_NAMES[m]).to_upper(), "light", "cam_mode", m)
+		mb.add_theme_font_size_override("font_size", 26)
+		modes.add_child(mb)
+		_set["mode_" + m] = mb
+	for key in ["fov", "height", "dist", "angle"]:
+		_slider_row(v, key, "cam_set", "cam_save")
+	v.add_child(_button("RESET THIS VIEW", "ghost", "cam_reset"))
+	# gameplay
+	v.add_child(_eyebrow("Gameplay"))
+	_slider_row(v, "steer_sens", "set", "save")
+	_slider_row(v, "pedal_scale", "set", "save")
+	var toggles := [["assist", "Lane assist"], ["haptics", "Vibration"], ["shake", "Camera shake"],
+		["sound", "Engine sound"], ["units", "Speed units"]]
+	var grid := GridContainer.new()
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", 12)
+	grid.add_theme_constant_override("v_separation", 12)
+	v.add_child(grid)
+	for t in toggles:
+		var b := _toggle(t[1], "toggle")
+		var key: String = t[0]
+		for c in b.pressed.get_connections():
+			b.pressed.disconnect(c.callable)
+		b.pressed.connect(func() -> void: act.emit("toggle", key))
+		grid.add_child(b)
+		_set["t_" + key] = b
+	v.add_child(_button("EDIT PEDAL LAYOUT", "amber", "pedal_edit"))
+	var pr := _row(12)
+	v.add_child(pr)
+	for b in [_button("SWAP PEDALS", "ghost", "pedal_swap"), _button("RESET PEDALS", "ghost", "pedal_reset")]:
+		b.add_theme_font_size_override("font_size", 26)
+		pr.add_child(b)
+	v.add_child(_button("BACK", "light", "settings_back"))
+	(screens.settings.get_child(0) as ColorRect).color = Color(0.03, 0.04, 0.05, 0.3)
+
+
+func render_settings() -> void:
+	render_cam()
+	_cam_lock = true
+	var sliders := {"steer_sens": ["Steering sensitivity", 0.4, 2.0], "pedal_scale": ["Pedal size", 0.7, 1.4]}
+	for key in sliders:
+		var sl: HSlider = _set["s_" + key]
+		sl.min_value = sliders[key][1]
+		sl.max_value = sliders[key][2]
+		sl.step = 0.05
+		var val := float(Save.setting(key))
+		sl.set_value_no_signal(val)
+		_set["n_" + key].text = sliders[key][0]
+		_set["v_" + key].text = "x%.2f" % val
+	_cam_lock = false
+	var states := {
+		"assist": "ON" if Save.data.assist else "OFF", "haptics": "ON" if Save.setting("haptics") else "OFF",
+		"shake": "ON" if Save.setting("shake") else "OFF", "sound": "ON" if Save.data.sound else "OFF",
+		"units": "MPH" if Save.setting("units") == "mph" else "KM/H",
+	}
+	for key in states:
+		var b: Button = _set["t_" + key]
+		b.text = "%s:  %s" % [b.get_meta("base"), states[key]]
+
+
+# ---------------------------------------------------------------- pedal layout
+
+func layout_pedals() -> void:
+	if gas == null:
+		return
+	var vp := get_viewport().get_visible_rect().size
+	var k := float(Save.setting("pedal_scale"))
+	var gsz := Vector2(140, 262) * k
+	var bsz := Vector2(210, 176) * k
+	_place_pedal(gas, gsz, Save.setting("gas_pos"), Vector2(vp.x - 26 - gsz.x / 2.0, vp.y - _bottom - 30 - gsz.y / 2.0), vp)
+	_place_pedal(brake, bsz, Save.setting("brake_pos"), Vector2(26 + bsz.x / 2.0, vp.y - _bottom - 30 - bsz.y / 2.0), vp)
+
+
+func _place_pedal(p: Pedal, sz: Vector2, pos: Variant, fallback: Vector2, vp: Vector2) -> void:
+	var c := fallback
+	if pos is Array and pos.size() == 2:
+		c = Vector2(float(pos[0]) * vp.x, float(pos[1]) * vp.y)
+	p.size = sz
+	p.position = (c - sz / 2.0).clamp(Vector2(4, 4), vp - sz - Vector2(4, 28))
+	p.queue_redraw()
+
+
+func _store_pedal(p: Pedal) -> void:
+	var vp := get_viewport().get_visible_rect().size
+	var c := p.position + p.size / 2.0
+	Save.data.settings["gas_pos" if p == gas else "brake_pos"] = [c.x / vp.x, c.y / vp.y]
+
+
+func swap_pedals() -> void:
+	var vp := get_viewport().get_visible_rect().size
+	var cg := gas.position + gas.size / 2.0
+	var cb := brake.position + brake.size / 2.0
+	Save.data.settings.gas_pos = [cb.x / vp.x, cb.y / vp.y]
+	Save.data.settings.brake_pos = [cg.x / vp.x, cg.y / vp.y]
+	layout_pedals()
+
+
+func _build_pedal_editor() -> void:
+	var v := _screen("pedals", SIGN, 620)
+	v.add_child(_eyebrow("Pedal layout"))
+	v.add_child(_wrap("Drag the gas and brake pedals to where your thumbs rest. Change their size with Pedal size in Settings.", 22))
+	var r := _row(12)
+	v.add_child(r)
+	r.add_child(_button("DONE", "amber", "pedal_done"))
+	r.add_child(_button("SWAP", "ghost", "pedal_swap"))
+	r.add_child(_button("RESET", "ghost", "pedal_reset"))
+	var scr: Control = screens.pedals
+	(scr.get_child(0) as ColorRect).color = Color(0, 0, 0, 0.15)
+	var column := v.get_parent().get_parent() as VBoxContainer
+	column.alignment = BoxContainer.ALIGNMENT_BEGIN
+	scr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	(scr.get_child(1) as ScrollContainer).mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+
+func begin_pedal_edit() -> void:
+	_editing = true
+	play_layer.visible = true
+	for c in play_layer.get_children():
+		c.visible = c == gas or c == brake
+	set_pedals(false, false)
+	show_screen("pedals")
+
+
+func end_pedal_edit() -> void:
+	_editing = false
+	_drag = {}
+	for c in play_layer.get_children():
+		c.visible = true
+	_hint.modulate.a = 0.0
+	play_layer.visible = _play_on
+
+
+func _input(event: InputEvent) -> void:
+	if not _editing:
+		return
+	if event is InputEventScreenTouch:
+		var e := event as InputEventScreenTouch
+		if e.pressed:
+			for p in [gas, brake]:
+				if (p as Pedal).get_global_rect().has_point(e.position):
+					_drag = {"p": p, "off": p.position - e.position, "i": e.index}
+					p.pressed = true
+					get_viewport().set_input_as_handled()
+					return
+		elif not _drag.is_empty() and e.index == _drag.i:
+			_drag.p.pressed = false
+			_store_pedal(_drag.p)
+			_drag = {}
+			act.emit("pedal_moved", "")
+			get_viewport().set_input_as_handled()
+	elif event is InputEventScreenDrag and not _drag.is_empty():
+		var e := event as InputEventScreenDrag
+		if e.index == _drag.i:
+			var vp := get_viewport().get_visible_rect().size
+			var p: Pedal = _drag.p
+			p.position = (e.position + _drag.off).clamp(Vector2(4, 4), vp - p.size - Vector2(4, 28))
+			get_viewport().set_input_as_handled()

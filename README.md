@@ -101,6 +101,7 @@ Arguments placed after `--` on the command line:
 - `--shot=SECONDS:PATH`: save a screenshot.
 - `--cam=chase|hood|cockpit`: start in that camera view (not saved). `--cam=inspect` looks across the cabin from the back seat.
 - `--open=settings` / `--open=pedal_edit`: open the settings screen or the pedal editor on start.
+- `--burst=SECONDS:COUNT:DIR`: save COUNT consecutive frames from SECONDS onwards (for checking flicker).
 - `--showroom` / `--showroom=front` / `--showroom=close`: park every player and boss car in a row with the game frozen, to inspect the models.
 
 ```bash

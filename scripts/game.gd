@@ -97,7 +97,9 @@ var ap_brake := false
 var autotest := false
 var auto_quit := 0.0
 var showroom := ""  # --showroom=rear|front: every player car parked in a row, simulation frozen (test view)
-var shots: Array = []  # [[seconds, path], ...] from --shot=SEC:PATH
+var shots: Array = []
+var burst: Array = []  # --burst=START:COUNT:DIR saves COUNT consecutive frames (test aid)
+var _burst_i := 0  # [[seconds, path], ...] from --shot=SEC:PATH
 var _log_t := 0.0
 
 
@@ -113,6 +115,9 @@ func _ready() -> void:
 			showroom = a.substr(11) if a.length() > 11 else "rear"
 		if a.begins_with("--cam="):  # chase, hood or cockpit (not saved)
 			Save.data.cam.mode = a.substr(6)
+		if a.begins_with("--burst="):
+			var bp := a.substr(8).split(":", true, 2)
+			burst = [float(bp[0]), int(bp[1]), bp[2]]
 		if a.begins_with("--shot="):
 			var parts := a.substr(7).split(":", true, 1)
 			shots.append([float(parts[0]), parts[1]])
@@ -122,8 +127,8 @@ func _ready() -> void:
 	add_child(scenery)
 	cam = Camera3D.new()
 	cam.keep_aspect = Camera3D.KEEP_WIDTH
-	cam.near = 0.3
-	cam.far = 2400.0
+	cam.near = 0.5
+	cam.far = 1000.0  # mountains and clouds are drawn closer and scaled down, so a short range loses nothing
 	add_child(cam)
 	cam.current = true
 	sparks = _make_sparks()
@@ -176,39 +181,64 @@ func _build_showroom() -> void:
 
 
 func _build_environment() -> void:
+	# Late-afternoon light: a low warm sun, a deep blue sky fading to a hazy
+	# horizon, ACES tone mapping with a mild grade, and haze that takes its
+	# colour from the sky so distance reads naturally.
 	var env := Environment.new()
 	env.background_mode = Environment.BG_SKY
 	var sky := Sky.new()
 	var sm := ProceduralSkyMaterial.new()
-	sm.sky_top_color = Color("#3d5f88")
-	sm.sky_horizon_color = Color("#e9bb86")
-	sm.ground_horizon_color = Color("#c9a27a")
-	sm.ground_bottom_color = Color("#4a5a33")
-	sm.sun_angle_max = 20.0
+	sm.sky_top_color = Color("#2b5c96")
+	sm.sky_horizon_color = Color("#d9d2c2")
+	sm.sky_curve = 0.11
+	sm.sky_energy_multiplier = 1.05
+	sm.ground_horizon_color = Color("#c4b69c")
+	sm.ground_bottom_color = Color("#3b4a2b")
+	sm.ground_curve = 0.06
+	sm.sun_angle_max = 26.0
+	sm.sun_curve = 0.12
 	sky.sky_material = sm
+	sky.radiance_size = Sky.RADIANCE_SIZE_128
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.ambient_light_energy = 0.9
-	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	env.ambient_light_sky_contribution = 0.9
+	env.ambient_light_energy = 0.75
+	env.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
+	env.tonemap_mode = Environment.TONE_MAPPER_ACES
+	env.tonemap_exposure = 1.05
+	env.tonemap_white = 6.0
+	env.adjustment_enabled = true
+	env.adjustment_contrast = 1.08
+	env.adjustment_saturation = 1.12
 	env.fog_enabled = true
-	env.fog_light_color = Color("#d9b48a")
-	env.fog_density = 0.0075  # thick enough that traffic appears out of the haze, not out of nowhere
-	env.fog_sky_affect = 0.15
+	env.fog_light_color = Color("#cdc6b6")
+	env.fog_light_energy = 1.0
+	env.fog_sun_scatter = 0.3
+	env.fog_density = 0.0052          # ~95% haze at the 560 m car draw distance
+	env.fog_aerial_perspective = 0.55
+	env.fog_sky_affect = 0.25
 	env.glow_enabled = true
-	env.glow_intensity = 0.7
-	env.glow_bloom = 0.04
-	env.glow_hdr_threshold = 1.1
+	env.glow_intensity = 0.45
+	env.glow_strength = 0.9
+	env.glow_bloom = 0.0
+	env.glow_hdr_threshold = 1.25
 	env.glow_blend_mode = Environment.GLOW_BLEND_MODE_SOFTLIGHT
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
 	var sun := DirectionalLight3D.new()
-	sun.light_color = Color("#ffe2b8")
-	sun.light_energy = 1.25
-	sun.rotation_degrees = Vector3(-24, -35, 0)
+	sun.light_color = Color("#fff0d8")
+	sun.light_energy = 1.4
+	sun.rotation_degrees = Vector3(-32, -40, 0)
 	sun.shadow_enabled = true
-	sun.directional_shadow_max_distance = 70.0
-	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_ORTHOGONAL
+	sun.shadow_bias = 0.04
+	sun.shadow_normal_bias = 1.2
+	sun.shadow_blur = 1.3
+	sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS
+	sun.directional_shadow_split_1 = 0.22
+	sun.directional_shadow_blend_splits = true
+	sun.directional_shadow_max_distance = 90.0
+	sun.directional_shadow_fade_start = 0.65
 	add_child(sun)
 
 
@@ -943,6 +973,10 @@ func _process(delta: float) -> void:
 
 
 func _check_shots() -> void:
+	if burst.size() == 3 and Time.get_ticks_msec() / 1000.0 > burst[0] and burst[1] > 0:
+		get_viewport().get_texture().get_image().save_png("%s/f%04d.png" % [burst[2], _burst_i])
+		_burst_i += 1
+		burst[1] -= 1
 	for sh in shots:
 		if sh[0] > 0.0 and Time.get_ticks_msec() / 1000.0 > sh[0]:
 			sh[0] = -1.0
@@ -1014,7 +1048,7 @@ func _update_camera(delta: float, mode: String) -> void:
 	sound.set_interior(mode == "cockpit")
 	if mode == "chase":
 		# high chase view so the next few cars are readable
-		cam.near = 0.3
+		cam.near = 0.5
 		cam.fov = cfg.fov + 12.0 * speed_k
 		var jitter := Vector3.ZERO
 		if shake > 0.0:

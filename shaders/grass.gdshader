@@ -3,9 +3,9 @@ shader_type spatial;
 // with dry dirt along the pavement edges. Periodic over the scroll period.
 
 uniform float scroll = 0.0;
-uniform vec3 grass_a : source_color = vec3(0.36, 0.46, 0.2);
-uniform vec3 grass_b : source_color = vec3(0.32, 0.42, 0.18);
-uniform vec3 field : source_color = vec3(0.48, 0.47, 0.24);
+uniform vec3 grass_a : source_color = vec3(0.32, 0.45, 0.17);
+uniform vec3 grass_b : source_color = vec3(0.28, 0.4, 0.15);
+uniform vec3 field : source_color = vec3(0.56, 0.5, 0.26);
 uniform vec3 dirt : source_color = vec3(0.42, 0.37, 0.28);
 uniform float edge_r = 9.6;     // outer edge of our shoulder (world x)
 uniform float edge_l = -31.6;   // outer edge of the opposite carriageway

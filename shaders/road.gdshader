@@ -58,6 +58,8 @@ void fragment() {
 	float lane_x = mod(x + road_half, 3.6) - 1.8;
 	float track = exp(-pow((abs(lane_x) - 0.78) / 0.3, 2.0)) * on_road;
 	col *= 1.0 - 0.14 * track;
+	// oil drip line down the middle of each lane
+	col *= 1.0 - 0.07 * exp(-pow(lane_x / 0.22, 2.0)) * on_road;
 	// crack sealant
 	float crack = pnoise(vec2(x * 0.9, z * 0.11), PERIOD * 0.11);
 	float tar = 1.0 - smoothstep(0.0, 0.008, abs(crack - 0.5));

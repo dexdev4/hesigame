@@ -89,7 +89,10 @@ func _ready() -> void:
 	var rails := [Data.RAIL, -Data.RAIL, OPP_X + Data.RAIL, OPP_X - Data.RAIL]
 	var static_parts := {M.steel: [], M.wire: [], M.wood: []}
 	for x in rails:
-		static_parts[M.steel].append([Vector3(x, 0.64, mid_z), Vector3(0.1, 0.34, length)])
+		var face: float = -0.04 * signf(x)  # lobes sit on the road side of the posts
+		static_parts[M.steel].append([Vector3(x + face, 0.71, mid_z), Vector3(0.1, 0.13, length)])
+		static_parts[M.steel].append([Vector3(x + face, 0.55, mid_z), Vector3(0.1, 0.13, length)])
+		static_parts[M.wire].append([Vector3(x, 0.63, mid_z), Vector3(0.07, 0.05, length)])
 	for x in [Data.RAIL + 14.0, OPP_X - Data.RAIL - 12.0]:
 		for y in [0.55, 1.05]:
 			static_parts[M.wood].append([Vector3(x, y, mid_z), Vector3(0.05, 0.1, length)])
@@ -228,6 +231,11 @@ func _build_trees() -> void:
 	var crowns: Array = []
 	var pines: Array = []
 	var bushes: Array = []
+	var tufts: Array = []
+	var rocks: Array = []
+	var shadows: Array = []
+	var vr := RandomNumberGenerator.new()
+	vr.seed = 31
 	for it in items:
 		var s: float = it.s
 		var pos := Vector3(it.x, 0, it.z)
@@ -237,19 +245,60 @@ func _build_trees() -> void:
 				Color("#3b5a2b").lerp(Color("#56703a"), it.k)])
 			continue
 		var pine: bool = it.k > 0.5
+		var birch: bool = not pine and vr.randf() < 0.18
 		var trunk_h := (1.6 if pine else 2.6) * s
-		trunks.append([Transform3D(Basis().scaled(Vector3(s, trunk_h, s)), pos + Vector3(0, trunk_h / 2.0, 0)), Color("#4f3d2a")])
+		var bark := Color("#d9d6cc") if birch else Color("#4f3d2a").lerp(Color("#3a2d20"), vr.randf())
+		trunks.append([Transform3D(Basis().scaled(Vector3(s, trunk_h, s)), pos + Vector3(0, trunk_h / 2.0, 0)), bark])
+		var tint := vr.randf_range(-0.06, 0.06)
 		if pine:
+			# tiered spruce: three stacked cones
 			var h: float = (6.0 + it.k * 6.0) * s
 			var r: float = (1.6 + it.k) * s
-			pines.append([Transform3D(Basis().scaled(Vector3(r, h, r)), pos + Vector3(0, trunk_h + h / 2.0 - 0.3, 0)),
-				Color("#24402a") if it.k > 0.75 else Color("#2c4a2c")])
+			var green := (Color("#24402a") if it.k > 0.75 else Color("#2c4a2c")).lightened(tint) if tint > 0 else (Color("#24402a") if it.k > 0.75 else Color("#2c4a2c")).darkened(-tint)
+			for t in 3:
+				var f := 1.0 - t * 0.28
+				pines.append([Transform3D(Basis().scaled(Vector3(r * f, h * 0.5 * f, r * f)), pos + Vector3(0, trunk_h + h * (0.12 + t * 0.26), 0)),
+					green.lightened(t * 0.04)])
+			shadows.append(Transform3D(Basis().scaled(Vector3(r * 2.6, 1, r * 2.6)), pos + Vector3(0.6, 0.03, 0.3)))
 		else:
 			var r2: float = (2.0 + it.k * 3.0) * s
-			crowns.append([Transform3D(Basis().scaled(Vector3(r2, r2 * 0.9, r2)), pos + Vector3(0, trunk_h + r2 * 0.55, 0)),
-				Color("#3e5a2e") if it.k > 0.25 else Color("#4c6a35")])
-			crowns.append([Transform3D(Basis().scaled(Vector3(r2, r2, r2) * 0.6), pos + Vector3(r2 * 0.45, trunk_h + r2 * 0.9, r2 * 0.2)),
-				Color("#4a6a33")])
+			var leaf_c := (Color("#3e5a2e") if it.k > 0.25 else Color("#4c6a35")).lerp(Color("#6b7a3a"), vr.randf() * 0.35)
+			if birch:
+				leaf_c = Color("#6f8a3e")
+			crowns.append([Transform3D(Basis().scaled(Vector3(r2, r2 * 0.9, r2)), pos + Vector3(0, trunk_h + r2 * 0.55, 0)), leaf_c])
+			crowns.append([Transform3D(Basis().scaled(Vector3(r2, r2, r2) * 0.6), pos + Vector3(r2 * 0.45, trunk_h + r2 * 0.9, r2 * 0.2)), leaf_c.lightened(0.08)])
+			crowns.append([Transform3D(Basis().scaled(Vector3(r2, r2, r2) * 0.55), pos + Vector3(-r2 * 0.4, trunk_h + r2 * 0.75, -r2 * 0.25)), leaf_c.darkened(0.08)])
+			shadows.append(Transform3D(Basis().scaled(Vector3(r2 * 2.4, 1, r2 * 2.4)), pos + Vector3(r2 * 0.4, 0.03, r2 * 0.2)))
+
+	# grass tufts and rocks along the verges and median, and a dense treeline in the distance
+	for rep2 in 3:
+		for k in 1800:
+			var z2 := -vr.randf() * TREE_PERIOD - rep2 * TREE_PERIOD + VIEW_BEHIND
+			var band := vr.randf()
+			var x2: float
+			if band < 0.45:
+				x2 = Data.RAIL + vr.randf_range(0.8, 13.0)
+			elif band < 0.6:
+				x2 = MEDIAN_X + vr.randf_range(-1.8, 1.8)
+			else:
+				x2 = OPP_X - Data.RAIL - vr.randf_range(0.8, 11.0)
+			var hgt := vr.randf_range(0.25, 0.7)
+			var col := Color("#4d6a2c").lerp(Color("#9a8f52"), vr.randf() * 0.7)
+			tufts.append([Transform3D(Basis(Vector3.UP, vr.randf() * TAU).scaled(Vector3(vr.randf_range(0.15, 0.35), hgt, vr.randf_range(0.15, 0.35))), Vector3(x2, hgt / 2.0, z2)), col])
+		for k in 40:
+			var z3 := -vr.randf() * TREE_PERIOD - rep2 * TREE_PERIOD + VIEW_BEHIND
+			var x3 := (Data.RAIL + vr.randf_range(3.0, 20.0)) * (1.0 if vr.randf() < 0.6 else -1.0)
+			if x3 < 0.0:
+				x3 = OPP_X - Data.RAIL - vr.randf_range(3.0, 20.0)
+			var rs := vr.randf_range(0.3, 1.0)
+			rocks.append([Transform3D(Basis(Vector3.UP, vr.randf() * TAU).scaled(Vector3(rs * 1.3, rs * 0.6, rs)), Vector3(x3, rs * 0.2, z3)),
+				Color("#8a8679").lerp(Color("#6b675e"), vr.randf())])
+		for k in 420:
+			var z4 := -vr.randf() * TREE_PERIOD - rep2 * TREE_PERIOD + VIEW_BEHIND
+			var x4 := Data.RAIL + vr.randf_range(75.0, 170.0) if vr.randf() < 0.5 else OPP_X - Data.RAIL - vr.randf_range(75.0, 170.0)
+			var th := vr.randf_range(9.0, 16.0)
+			var tr := vr.randf_range(2.2, 3.6)
+			pines.append([Transform3D(Basis().scaled(Vector3(tr, th, tr)), Vector3(x4, th / 2.0, z4)), Color("#2a4229").lerp(Color("#3b5230"), vr.randf())])
 
 	var trunk_mesh := CylinderMesh.new()
 	trunk_mesh.top_radius = 0.16
@@ -269,7 +318,18 @@ func _build_trees() -> void:
 	var leaf := StandardMaterial3D.new()
 	leaf.vertex_color_use_as_albedo = true
 	leaf.roughness = 1.0
-	for pair in [[trunks, trunk_mesh], [crowns, crown_mesh], [pines, pine_mesh], [bushes, crown_mesh]]:
+	var tuft_mesh := CylinderMesh.new()
+	tuft_mesh.top_radius = 0.0
+	tuft_mesh.bottom_radius = 1.0
+	tuft_mesh.height = 1.0
+	tuft_mesh.radial_segments = 5
+	tuft_mesh.rings = 1
+	var rock_mesh := SphereMesh.new()
+	rock_mesh.radius = 1.0
+	rock_mesh.height = 2.0
+	rock_mesh.radial_segments = 7
+	rock_mesh.rings = 4
+	for pair in [[trunks, trunk_mesh], [crowns, crown_mesh], [pines, pine_mesh], [bushes, crown_mesh], [tufts, tuft_mesh], [rocks, rock_mesh]]:
 		var list: Array = pair[0]
 		var mm := MultiMesh.new()
 		mm.transform_format = MultiMesh.TRANSFORM_3D
@@ -282,7 +342,22 @@ func _build_trees() -> void:
 		var mmi := MultiMeshInstance3D.new()
 		mmi.multimesh = mm
 		mmi.material_override = leaf
+		if pair[1] == tuft_mesh or pair[1] == rock_mesh:
+			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		holder.add_child(mmi)
+	# soft contact shadows under the trees, so they sit on the ground beyond the shadow distance
+	CarModel._shadow()
+	var smm := MultiMesh.new()
+	smm.transform_format = MultiMesh.TRANSFORM_3D
+	smm.mesh = CarModel._shadow_mesh
+	smm.instance_count = shadows.size()
+	for i in shadows.size():
+		smm.set_instance_transform(i, shadows[i])
+	var smi := MultiMeshInstance3D.new()
+	smi.multimesh = smm
+	smi.material_override = CarModel._shadow_mat
+	smi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	holder.add_child(smi)
 
 
 ## Mountains and clouds on the horizon. They stay at a fixed distance.
@@ -290,8 +365,9 @@ func _build_far() -> void:
 	var far := Node3D.new()
 	add_child(far)
 	var shader: Shader = load("res://shaders/far.gdshader")
-	var layers := [[1950.0, 240.0, 70.0, Color("#6c7a8c"), Color("#9aa3ad"), 0.6, 11],
-		[1250.0, 110.0, 25.0, Color("#55663f"), Color("#7b8656"), 0.45, 23]]
+	# Drawn at 900 m and 600 m but scaled to look like ranges 2 km and 1.3 km away.
+	var layers := [[900.0, 112.0, 32.0, Color("#5e6f86"), Color("#a2adb9"), 0.58, 11],
+		[600.0, 53.0, 12.0, Color("#4b5f38"), Color("#76844f"), 0.42, 23]]
 	for L in layers:
 		var st := SurfaceTool.new()
 		st.begin(Mesh.PRIMITIVE_TRIANGLES)
@@ -348,11 +424,11 @@ func _build_far() -> void:
 	q.size = Vector2(1, 1)
 	var rng2 := RandomNumberGenerator.new()
 	rng2.seed = 99
-	for i in 14:
+	for i in 20:
 		var a := deg_to_rad(rng2.randf_range(-75.0, 75.0))
-		var r := rng2.randf_range(900.0, 1700.0)
-		var base := Vector3(sin(a) * r, rng2.randf_range(220.0, 420.0), -cos(a) * r)
-		var w := rng2.randf_range(220.0, 420.0)
+		var r := rng2.randf_range(430.0, 820.0)
+		var base := Vector3(sin(a) * r, rng2.randf_range(105.0, 200.0), -cos(a) * r)
+		var w := rng2.randf_range(105.0, 200.0)
 		for k in 4:
 			var puff := MeshInstance3D.new()
 			puff.mesh = q
@@ -626,7 +702,7 @@ func update_view(base_z: float, finish_z: float, dt := 0.016) -> void:
 		lp[0].position.z = fmod(base_z, lp[1])
 	_update_slots(base_z)
 	_update_oncoming(base_z, dt)
-	_clouds.position.x = fmod(_t * 3.0, 400.0) - 200.0
+	_clouds.position.x = fmod(_t * 1.5, 200.0) - 100.0
 	var next_km := ceilf((base_z - 20.0) / 1000.0) * 1000.0
 	if next_km < 1000.0:
 		next_km = 1000.0

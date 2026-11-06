@@ -58,6 +58,26 @@ static func mat(c: Color, glow := 0.0, rough := 0.55, metal := 0.0) -> StandardM
 	return m
 
 
+## Emissive lamp that fades out with distance. A lit pixel that flickers on
+## and off at the horizon (and gets bloomed) reads as a flashing car, so far
+## lamps dissolve smoothly instead.
+static func lamp(c: Color, glow: float) -> StandardMaterial3D:
+	var key := "lamp|%s|%s" % [c.to_html(), glow]
+	if _mats.has(key):
+		return _mats[key]
+	var m := StandardMaterial3D.new()
+	m.albedo_color = c
+	m.roughness = 0.3
+	m.emission_enabled = true
+	m.emission = c
+	m.emission_energy_multiplier = glow
+	m.distance_fade_mode = BaseMaterial3D.DISTANCE_FADE_PIXEL_DITHER
+	m.distance_fade_min_distance = 230.0  # min > max: fully faded beyond 230 m, solid within 110 m
+	m.distance_fade_max_distance = 110.0
+	_mats[key] = m
+	return m
+
+
 ## Glossy car paint with a clear coat.
 static func paint(c: Color) -> StandardMaterial3D:
 	var key := "paint|%s" % c.to_html()
@@ -800,17 +820,17 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a"), style 
 	var mats: Array[Material]
 	if kit.get("truck", false):
 		mats = [mat(color, 0.0, 0.55, 0.1), paint(cab_color), _glass(), mat(Color("#18191b"), 0.0, 0.7),
-			mat(Color("#d9dde1"), 0.0, 0.15, 0.95), mat(Color("#e8e6dc"), 0.0, 0.6), mat(Color("#fff6d8"), 2.0)]
+			mat(Color("#d9dde1"), 0.0, 0.15, 0.95), mat(Color("#e8e6dc"), 0.0, 0.6), lamp(Color("#fff6d8"), 2.0)]
 	else:
 		mats = [paint(color), _glass(), mat(Color("#18191b"), 0.0, 0.6), mat(Color("#d9dde1"), 0.0, 0.15, 0.95),
-			mat(Color("#e8e6dc"), 0.0, 0.6), mat(Color("#fff6d8"), 2.0), paint(Color(style.get("accent", "#f3f5ef")))]
+			mat(Color("#e8e6dc"), 0.0, 0.6), lamp(Color("#fff6d8"), 2.0), paint(Color(style.get("accent", "#f3f5ef")))]
 	for i in mats.size():
 		body.set_surface_override_material(i, mats[i])
 	_body.add_child(body)
 
 	_tails = _light(kit.tails, _tail_mat(false))
-	_sig_l = _light(kit.sig_l, mat(Color("#ffaa18"), 6.0))
-	_sig_r = _light(kit.sig_r, mat(Color("#ffaa18"), 6.0))
+	_sig_l = _light(kit.sig_l, lamp(Color("#ffaa18"), 5.0))
+	_sig_r = _light(kit.sig_r, lamp(Color("#ffaa18"), 5.0))
 	_sig_l.visible = false
 	_sig_r.visible = false
 
@@ -869,7 +889,10 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a"), style 
 func _set_draw_distance(n: Node) -> void:
 	for c in n.get_children():
 		if c is GeometryInstance3D:
-			(c as GeometryInstance3D).visibility_range_end = DRAW_DISTANCE
+			var gi := c as GeometryInstance3D
+			gi.visibility_range_end = DRAW_DISTANCE
+			gi.visibility_range_end_margin = 90.0  # dissolve out over the last 90 m instead of cutting off
+			gi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 		_set_draw_distance(c)
 
 
@@ -895,7 +918,7 @@ static func _glass() -> StandardMaterial3D:
 
 
 static func _tail_mat(on: bool) -> StandardMaterial3D:
-	return mat(Color("#ff2414"), 7.0, 0.3) if on else mat(Color("#8c1010"), 0.9, 0.25)
+	return lamp(Color("#ff2414"), 6.0) if on else lamp(Color("#8c1010"), 0.9)
 
 
 static func _shadow() -> PlaneMesh:
@@ -1180,6 +1203,17 @@ func build_interior() -> void:
 		mi.set_surface_override_material(i, mats[order[i]])
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_body.add_child(mi)
+
+	# soft bounce light inside the cabin, as daylight would reflect off the seats and dash
+	var fill := OmniLight3D.new()
+	fill.light_color = Color("#ffeedd")
+	fill.light_energy = 0.7
+	fill.omni_range = 1.9
+	fill.omni_attenuation = 1.4
+	fill.shadow_enabled = false
+	fill.light_specular = 0.2
+	fill.position = Vector3(0, yr - 0.25, ez - 0.25)
+	_body.add_child(fill)
 
 	# faint reflection on the inside of the windscreen
 	var sheen := StandardMaterial3D.new()

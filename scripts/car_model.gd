@@ -805,7 +805,7 @@ var _shoulders: Array = []
 
 
 ## Cars further away than this are fully hidden by haze, so they are not drawn.
-const DRAW_DISTANCE := 560.0
+const DRAW_DISTANCE := 360.0
 
 
 ## style (optional): {"rim", "rim_color", "caliper", "accent", "badge", "plate"} plus
@@ -893,7 +893,7 @@ func _set_draw_distance(n: Node) -> void:
 		if c is GeometryInstance3D:
 			var gi := c as GeometryInstance3D
 			gi.visibility_range_end = DRAW_DISTANCE
-			gi.visibility_range_end_margin = 90.0  # dissolve out over the last 90 m instead of cutting off
+			gi.visibility_range_end_margin = 0.0  # fully hidden by the depth fog there anyway
 			gi.visibility_range_fade_mode = GeometryInstance3D.VISIBILITY_RANGE_FADE_SELF
 		_set_draw_distance(c)
 

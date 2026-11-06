@@ -100,6 +100,9 @@ var showroom := ""  # --showroom=rear|front: every player car parked in a row, s
 var shots: Array = []
 var burst: Array = []  # --burst=START:COUNT:DIR saves COUNT consecutive frames (test aid)
 var _burst_i := 0
+var idcolor := false   # --idcolor: flat unique colour per traffic car, no fog or scenery (flicker test)
+var _id_next := 1
+var _id_log: FileAccess
 var demo_pops := false  # --demo-pops: show a sample score message every second (test aid)
 var _demo_t := 0.0  # [[seconds, path], ...] from --shot=SEC:PATH
 var _log_t := 0.0
@@ -117,6 +120,8 @@ func _ready() -> void:
 			showroom = a.substr(11) if a.length() > 11 else "rear"
 		if a.begins_with("--cam="):  # chase, hood or cockpit (not saved)
 			Save.data.cam.mode = a.substr(6)
+		if a == "--idcolor":
+			idcolor = true
 		if a == "--demo-pops":
 			demo_pops = true
 		if a.begins_with("--burst="):
@@ -159,6 +164,21 @@ func _ready() -> void:
 		_start_run()
 	if showroom != "":
 		_build_showroom()
+	if idcolor:
+		scenery.visible = false
+		player.model.visible = false
+		get_viewport().msaa_3d = Viewport.MSAA_DISABLED
+		get_viewport().screen_space_aa = Viewport.SCREEN_SPACE_AA_DISABLED
+		for n in get_children():
+			if n is WorldEnvironment:
+				n.environment.fog_enabled = false
+				n.environment.glow_enabled = false
+				n.environment.background_mode = Environment.BG_COLOR
+				n.environment.background_color = Color.BLACK
+				n.environment.tonemap_mode = Environment.TONE_MAPPER_LINEAR
+				n.environment.adjustment_enabled = false
+		for c in traffic:
+			_paint_id(c)
 	for a in args:
 		if a.begins_with("--open="):  # e.g. --open=garage or --open=garage:up
 			var parts := a.substr(7).split(":")
@@ -218,14 +238,16 @@ func _build_environment() -> void:
 	env.fog_light_color = Color("#cdc6b6")
 	env.fog_light_energy = 1.0
 	env.fog_sun_scatter = 0.3
-	# Depth fog reaches 100% at 520 m on every renderer. Traffic is added
-	# further out (580 m+) and not drawn past 560 m, so no car can be seen
-	# appearing or disappearing, however fast you drive.
+	# Depth fog reaches 100% at 340 m on every renderer. Beyond ~300 m a car
+	# is only a few pixels wide and flickers as it shrinks into the vanishing
+	# point (most visible from the high chase camera), so the haze fades
+	# traffic out smoothly before that. Cars are drawn only within 360 m and
+	# added beyond it, so none can be seen appearing, however fast you drive.
 	env.fog_mode = Environment.FOG_MODE_DEPTH
 	env.fog_density = 1.0
-	env.fog_depth_begin = 40.0
-	env.fog_depth_end = 520.0
-	env.fog_depth_curve = 1.7
+	env.fog_depth_begin = 30.0
+	env.fog_depth_end = 340.0
+	env.fog_depth_curve = 1.35
 	env.fog_aerial_perspective = 0.55
 	env.fog_sky_affect = 0.25
 	env.glow_enabled = true
@@ -345,7 +367,7 @@ func _reset_world() -> void:
 	player.v = 24.0
 	player.vx = 0.0
 	var z := 45.0
-	while z < 620.0:
+	while z < 400.0:
 		_try_spawn(z)
 		z += randf_range(14.0, 26.0)
 
@@ -400,7 +422,26 @@ func _try_spawn(z: float, lane_hint := -1, v_override := 0.0) -> bool:
 		c.model.build(shape, Color(Data.TRAFFIC_COLORS.pick_random()), Color("#b5322a"), {"rim": ["steel", "5spoke", "5spoke", "multi"].pick_random()})
 	add_child(c.model)
 	traffic.append(c)
+	if idcolor:
+		_paint_id(c)
 	return true
+
+
+func _paint_id(c: Vehicle) -> void:
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.albedo_color = Color8((_id_next % 32) * 8, (_id_next / 32 % 32) * 8, 200)
+	c.set_meta("id", _id_next)
+	_id_next += 1
+	var stack: Array[Node] = [c.model]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		if n is GeometryInstance3D:
+			(n as GeometryInstance3D).material_override = m
+			if n is Label3D:
+				n.visible = false
+		for ch in n.get_children():
+			stack.append(ch)
 
 
 func _lane_open_for(c: Vehicle, nl: int) -> bool:
@@ -479,10 +520,10 @@ func _update_traffic(dt: float) -> void:
 	# past CarModel.DRAW_DISTANCE), so none of them pops in or out of view.
 	var ahead := 0
 	for c in traffic:
-		if c.z > player.z and c.z < player.z + 660.0:
+		if c.z > player.z and c.z < player.z + 440.0:
 			ahead += 1
 	for k in 2:
-		if ahead < dens * 6.4 and _try_spawn(player.z + randf_range(580.0, 650.0)):
+		if ahead < dens * 4.4 and _try_spawn(player.z + randf_range(380.0, 440.0)):
 			ahead += 1
 	if player.v < 23.0 and randf() < dt * 0.6:
 		_try_spawn(player.z - 75.0, 0 if randf() < 0.6 else 1, randf_range(29.0, 33.0))
@@ -1006,6 +1047,17 @@ func _process(delta: float) -> void:
 
 
 func _check_shots() -> void:
+	if idcolor and burst.size() == 3 and Time.get_ticks_msec() / 1000.0 > burst[0] and burst[1] > 0:
+		if _id_log == null:
+			_id_log = FileAccess.open(burst[2] + "/log.txt", FileAccess.WRITE)
+		var line := "%d" % _burst_i
+		for c in traffic:
+			var wp := c.model.global_position + Vector3(0, 0.7, -c.l / 2.0)
+			if not cam.is_position_behind(wp):
+				var sp := cam.unproject_position(wp)
+				line += " %d:%.0f:%.0f:%.0f" % [c.get_meta("id", 0), c.z - player.z, sp.x, sp.y]
+		_id_log.store_line(line)
+		_id_log.flush()
 	if burst.size() == 3 and Time.get_ticks_msec() / 1000.0 > burst[0] and burst[1] > 0:
 		get_viewport().get_texture().get_image().save_png("%s/f%04d.png" % [burst[2], _burst_i])
 		_burst_i += 1
@@ -1040,7 +1092,7 @@ func _sync_visuals(delta: float) -> void:
 	player.model.set_roll(clampf(-player.vx * 0.025, -0.06, 0.06))
 	player.model.set_pitch(clampf(-player_accel * 0.0028, -0.022, 0.03))
 	var cam_mode: String = Save.data.cam.mode
-	player.model.visible = cam_mode != "chase" or not (run and run.invuln > 0.0 and fmod(t * 10.0, 1.0) < 0.5)
+	player.model.visible = not idcolor and (cam_mode != "chase" or not (run and run.invuln > 0.0 and fmod(t * 10.0, 1.0) < 0.5))
 	player.model.set_gauges(player.v * 3.6 / 300.0, sound.rpm / (sound.redline * 1.1))
 	player.model.set_steer(clampf(player.vx * 0.3, -1.4, 1.4))
 	player.model.set_gear(sound.gear, delta)

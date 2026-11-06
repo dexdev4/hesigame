@@ -664,7 +664,7 @@ func _update_oncoming(base_z: float, dt: float) -> void:
 		c.model.spin(c.v, dt)
 	if _oncoming.size() < 10 and randf() < dt * 2.0:
 		var lane := randi() % 4
-		var z := base_z + randf_range(620.0, 720.0)
+		var z := base_z + randf_range(400.0, 480.0)
 		for o in _oncoming:
 			if absf(o.x - OPP_LANES[lane]) < 1.0 and absf(o.z - z) < 40.0:
 				return

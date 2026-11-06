@@ -101,6 +101,7 @@ Arguments placed after `--` on the command line:
 - `--shot=SECONDS:PATH`: save a screenshot.
 - `--cam=chase|hood|cockpit`: start in that camera view (not saved). `--cam=inspect` looks across the cabin from the back seat.
 - `--open=settings` / `--open=pedal_edit`: open the settings screen or the pedal editor on start.
+- `--car=ID` / `--autospeed=M/S`: test-drive another car (not saved) and set how fast the test driver goes.
 - `--idcolor`: draw each traffic car in a flat unique colour with no fog or scenery; with `--burst` it also logs where each car should be, to measure flicker.
 - `--demo-pops`: show a sample score message every second, to check where messages appear in each camera view.
 - `--burst=SECONDS:COUNT:DIR`: save COUNT consecutive frames from SECONDS onwards (for checking flicker).

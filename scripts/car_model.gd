@@ -797,6 +797,8 @@ var _lever: Node3D
 var _lever_base := Vector3.ZERO
 var _lever_target := Vector3.ZERO
 var _last_screen := ""
+var _halo: MeshInstance3D
+var _halo_mat: StandardMaterial3D
 var _msg: Label3D
 var _msg_until := 0
 var _hands: Array[MeshInstance3D] = []
@@ -1443,6 +1445,43 @@ func _segment(mi: MeshInstance3D, a: Vector3, b: Vector3) -> void:
 	var x := y.cross(Vector3.FORWARD if absf(y.z) < 0.9 else Vector3.RIGHT).normalized()
 	var z := x.cross(y)
 	mi.transform = Transform3D(Basis(x, y * d.length(), z), (a + b) / 2.0)
+
+
+## Invulnerability glow: a soft amber halo pulsing on the road under the car.
+func set_ghost(on: bool, t: float) -> void:
+	if not on:
+		if _halo:
+			_halo.visible = false
+		return
+	if _halo == null:
+		_shadow()
+		var g := Gradient.new()
+		g.set_color(0, Color(1, 1, 1, 1))
+		g.set_color(1, Color(1, 1, 1, 0))
+		g.add_point(0.5, Color(1, 1, 1, 0.6))
+		var tex := GradientTexture2D.new()
+		tex.gradient = g
+		tex.fill = GradientTexture2D.FILL_RADIAL
+		tex.fill_from = Vector2(0.5, 0.5)
+		tex.fill_to = Vector2(0.5, 0.0)
+		tex.width = 64
+		tex.height = 64
+		_halo_mat = StandardMaterial3D.new()
+		_halo_mat.albedo_texture = tex
+		_halo_mat.albedo_color = Color(1.0, 0.72, 0.2, 0.0)
+		_halo_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		_halo_mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+		_halo_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		_halo_mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+		_halo = MeshInstance3D.new()
+		_halo.mesh = _shadow_mesh
+		_halo.material_override = _halo_mat
+		_halo.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		_halo.scale = Vector3(shape.w + 1.8, 1.0, shape.l + 2.2)
+		_halo.position = Vector3(0, 0.03, -shape.l / 2.0)
+		add_child(_halo)
+	_halo.visible = true
+	_halo_mat.albedo_color = Color(1.0, 0.72, 0.2, 0.55 + 0.35 * sin(t * 7.0))
 
 
 ## Shows a scoring or crash message on the infotainment screen for a moment.

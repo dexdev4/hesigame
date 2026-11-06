@@ -100,6 +100,7 @@ var showroom := ""  # --showroom=rear|front: every player car parked in a row, s
 var shots: Array = []
 var burst: Array = []  # --burst=START:COUNT:DIR saves COUNT consecutive frames (test aid)
 var _burst_i := 0
+var auto_speed := 46.0  # --autospeed=M/S: how fast the test driver goes
 var idcolor := false   # --idcolor: flat unique colour per traffic car, no fog or scenery (flicker test)
 var _id_next := 1
 var _id_log: FileAccess
@@ -120,6 +121,10 @@ func _ready() -> void:
 			showroom = a.substr(11) if a.length() > 11 else "rear"
 		if a.begins_with("--cam="):  # chase, hood or cockpit (not saved)
 			Save.data.cam.mode = a.substr(6)
+		if a.begins_with("--autospeed="):
+			auto_speed = float(a.substr(12))
+		if a.begins_with("--car="):  # test drive another car (not saved)
+			Save.data.selected = a.substr(6)
 		if a == "--idcolor":
 			idcolor = true
 		if a == "--demo-pops":
@@ -737,7 +742,7 @@ func _autopilot(dt: float) -> void:
 			best = l
 	target_x = Data.LANES[best]
 	ap_brake = best_d < 16.0
-	ap_gas = not ap_brake and player.v < (46.0 if autotest else 38.0)
+	ap_gas = not ap_brake and player.v < (auto_speed if autotest else 38.0)
 
 
 func _hit(reason: String, other: Vehicle = null) -> void:
@@ -1092,7 +1097,11 @@ func _sync_visuals(delta: float) -> void:
 	player.model.set_roll(clampf(-player.vx * 0.025, -0.06, 0.06))
 	player.model.set_pitch(clampf(-player_accel * 0.0028, -0.022, 0.03))
 	var cam_mode: String = Save.data.cam.mode
-	player.model.visible = not idcolor and (cam_mode != "chase" or not (run and run.invuln > 0.0 and fmod(t * 10.0, 1.0) < 0.5))
+	# Invulnerability used to blink the car on and off, which in the chase view
+	# looked like a car popping in and out at the centre of the road. Now a
+	# soft glow pulses on the road under the car instead.
+	player.model.visible = not idcolor
+	player.model.set_ghost(run != null and run.invuln > 0.0 and run.dying <= 0.0, t)
 	player.model.set_gauges(player.v * 3.6 / 300.0, sound.rpm / (sound.redline * 1.1))
 	player.model.set_steer(clampf(player.vx * 0.3, -1.4, 1.4))
 	player.model.set_gear(sound.gear, delta)

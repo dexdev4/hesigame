@@ -1060,7 +1060,9 @@ func _process(delta: float) -> void:
 		var front := showroom == "front"
 		cam.fov = 55.0
 		var views := {"rear": [Vector3(-9.5, 2.4, 6.0), Vector3(-1.0, 0.6, -6.0)], "front": [Vector3(9.0, 2.2, -24.0), Vector3(-1.0, 0.6, -9.0)],
-			"close": [Vector3(-7.6, 1.5, 2.2), Vector3(-5.4, 0.7, -2.0)]}
+			"close": [Vector3(-7.6, 1.5, 2.2), Vector3(-5.4, 0.7, -2.0)],
+			"m_front": [Vector3(1.6, 1.3, -21.0), Vector3(-1.8, 0.6, -15.4)], "m_rear": [Vector3(-4.6, 1.5, -7.4), Vector3(-1.8, 0.6, -15.0)],
+			"m_side": [Vector3(4.2, 1.1, -14.6), Vector3(-1.8, 0.6, -15.3)]}
 		var v: Array = views.get(showroom, views.rear)
 		cam.global_transform = Transform3D(Basis(), v[0])
 		cam.look_at(v[1])
@@ -1436,6 +1438,9 @@ func _resume() -> void:
 
 
 func _on_act(action: String, arg: String) -> void:
+	# a drag that scrolled a menu must not also press the button it started on
+	if hud and hud.clicks_blocked() and not action in ["cam_set", "set", "cam_save", "save", "pause", "cam_cycle"]:
+		return
 	match action:
 		"start":
 			_start_run()

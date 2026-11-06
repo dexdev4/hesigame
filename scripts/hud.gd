@@ -243,6 +243,7 @@ func _screen(name: String, bg := SIGN, width := 660.0) -> VBoxContainer:
 	var scroll := ScrollContainer.new()
 	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.scroll_deadzone = 100000  # touch scrolling is handled in _input instead
 	scr.add_child(scroll)
 	var margin := MarginContainer.new()
 	margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -754,6 +755,7 @@ func _build_garage() -> void:
 	var scroll := ScrollContainer.new()
 	scroll.custom_minimum_size.y = 620
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.scroll_deadzone = 100000  # touch scrolling is handled in _input instead
 	v.add_child(scroll)
 	var list := VBoxContainer.new()
 	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1258,8 +1260,65 @@ func end_pedal_edit() -> void:
 	play_layer.visible = _play_on
 
 
+# ---------------------------------------------------------------- menu scrolling
+
+var _scroll := {}            # the touch currently scrolling a menu
+var _block_clicks_until := 0  # a scroll ends without pressing the button under the finger
+
+
+## The scroll area under a touch on the visible menu: the garage list if the
+## touch is inside it, otherwise the whole screen.
+func _scroll_at(pos: Vector2) -> ScrollContainer:
+	for k in screens:
+		var scr: Control = screens[k]
+		if scr.visible:
+			if k == "garage" and (_garage.scroll as ScrollContainer).get_global_rect().has_point(pos):
+				return _garage.scroll
+			return scr.get_child(1) as ScrollContainer
+	return null
+
+
+func _over_slider(pos: Vector2) -> bool:
+	for key in _set:
+		var c: Variant = _set[key]
+		if c is HSlider and (c as HSlider).is_visible_in_tree() and (c as HSlider).get_global_rect().grow_individual(0, 10, 0, 10).has_point(pos):
+			return true
+	return false
+
+
+## Drag anywhere on a menu to scroll it, including over buttons. Drags that
+## start on a slider move the slider instead.
+func _menu_scroll(event: InputEvent) -> void:
+	if event is InputEventScreenTouch:
+		var e := event as InputEventScreenTouch
+		if e.pressed:
+			var sc := _scroll_at(e.position)
+			if sc and not _over_slider(e.position):
+				_scroll = {"i": e.index, "y": e.position.y, "start": e.position.y, "on": false, "sc": sc}
+		elif not _scroll.is_empty() and e.index == _scroll.i:
+			if _scroll.on:
+				_block_clicks_until = Time.get_ticks_msec() + 150
+			_scroll = {}
+	elif event is InputEventScreenDrag and not _scroll.is_empty():
+		var e := event as InputEventScreenDrag
+		if e.index != _scroll.i:
+			return
+		if not _scroll.on and absf(e.position.y - _scroll.start) > 14.0:
+			_scroll.on = true
+		if _scroll.on:
+			(_scroll.sc as ScrollContainer).scroll_vertical -= int(e.position.y - _scroll.y)
+			get_viewport().set_input_as_handled()
+		_scroll.y = e.position.y
+
+
+## True just after a menu scroll, so the button under the finger is not pressed.
+func clicks_blocked() -> bool:
+	return not _scroll.is_empty() and _scroll.on or Time.get_ticks_msec() < _block_clicks_until
+
+
 func _input(event: InputEvent) -> void:
 	if not _editing:
+		_menu_scroll(event)
 		return
 	if event is InputEventScreenTouch:
 		var e := event as InputEventScreenTouch

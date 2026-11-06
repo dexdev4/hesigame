@@ -28,6 +28,11 @@ const PROFILES := {
 		"body": [[0.0, 1.0, 0.92], [0.12, 1.05, 0.98], [0.6, 1.08, 1.0], [3.6, 1.08, 1.0], [4.2, 1.02, 1.0], [4.62, 0.92, 0.96], [4.8, 0.72, 0.9]],
 		"gh": [0.22, 3.9, 0.36, 3.3, 1.08, 1.8, 0.95, 0.86], "pillars": [[0.0, 0.1], [0.36, 0.4], [0.66, 0.7], [0.94, 1.0]],
 		"wheel": [0.38, 0.92, 3.85], "exhaust": 1},
+	# compact performance saloon: long bonnet, short high boot, kinked C-pillar, quad exhausts
+	"msedan": {
+		"body": [[0.0, 0.74, 0.9], [0.12, 0.83, 0.97], [0.45, 0.89, 1.0], [1.0, 0.9, 1.0], [3.0, 0.88, 1.0], [3.55, 0.84, 1.0], [4.1, 0.76, 0.98], [4.45, 0.64, 0.92], [4.58, 0.5, 0.86]],
+		"gh": [0.98, 3.5, 1.45, 2.85, 0.88, 1.42, 0.94, 0.8], "pillars": [[0.0, 0.17], [0.5, 0.54], [0.93, 1.0]],
+		"kink": [0.17, 0.27, 0.38], "wheel": [0.34, 0.88, 3.64], "exhaust": 4, "exhaust_pairs": true},
 	"muscle": {
 		"body": [[0.0, 0.8, 0.92], [0.18, 0.86, 0.98], [1.2, 0.87, 1.0], [3.2, 0.86, 1.0], [4.35, 0.78, 0.98], [4.72, 0.62, 0.92], [4.8, 0.5, 0.88]],
 		"gh": [1.2, 3.3, 1.55, 2.86, 0.87, 1.32, 0.92, 0.76], "pillars": [[0.0, 0.2], [0.9, 1.0]],
@@ -244,7 +249,7 @@ static func _lathe(st: SurfaceTool, profile: Array, segs: int) -> void:
 			_tri(st, pa, pc, pd, n0, n1, n0)
 
 
-const RIM_STYLES := ["steel", "5spoke", "multi", "mesh", "turbine"]
+const RIM_STYLES := ["steel", "5spoke", "multi", "mesh", "turbine", "double"]
 
 
 static func _wheel_mesh(r: float, width: float, style := "5spoke", rim_col := Color("#c3c8ce")) -> ArrayMesh:
@@ -286,6 +291,11 @@ static func _wheel_mesh(r: float, width: float, style := "5spoke", rim_col := Co
 				for k in 12:
 					var b := Basis(Vector3.RIGHT, TAU * k / 12.0) * Basis(Vector3.UP, 0.5)
 					_box(rim, c + b.y * r * 0.36, Vector3(0.02, r * 0.5, 0.045), b)
+			"double":  # five pairs of slim spokes
+				for k in 5:
+					for tw in [-0.12, 0.12]:
+						var b := Basis(Vector3.RIGHT, TAU * k / 5.0 + tw)
+						_box(rim, c + b.y * r * 0.35, Vector3(0.026, r * 0.55, 0.032), b)
 			_:  # 5spoke
 				for k in 5:
 					var b := Basis(Vector3.RIGHT, TAU * k / 5.0)
@@ -333,7 +343,7 @@ static func _arch(st: SurfaceTool, x: float, cy: float, cz: float, r0: float, r1
 ## Builds (once) the shared meshes for a vehicle type.
 ## Body surfaces: 0 paint, 1 glass, 2 dark trim, 3 chrome, 4 plate, 5 headlights.
 ## Body options that change geometry. Anything else (rims, badges) is per instance.
-const KIT_KEYS := ["stripes", "scoop", "intakes", "roofwing", "wiper", "lightbar", "splitter", "vents"]
+const KIT_KEYS := ["stripes", "scoop", "intakes", "roofwing", "wiper", "lightbar", "splitter", "vents", "dome", "gills", "split_grille", "ltail", "halo", "lip"]
 
 
 static func _kit(id: String, style := {}) -> Dictionary:
@@ -471,6 +481,12 @@ static func _car_kit(id: String, style := {}) -> Dictionary:
 				var c: Vector3 = side[2].lerp(side[3], pl[1]) + off
 				var d: Vector3 = side[2].lerp(side[3], pl[0]) + off
 				_quad(paint_st, a, b, c, d, side[4])
+			if pr.has("kink"):  # forward kink at the base of the rear pillar
+				var kk: Array = pr.kink
+				var k0: Vector3 = side[0].lerp(side[1], kk[0]) + off
+				var k1: Vector3 = side[0].lerp(side[1], kk[1]) + off
+				var k2: Vector3 = side[0].lerp(side[1], kk[0]).lerp(side[2].lerp(side[3], kk[0]), kk[2]) + off
+				_tri(paint_st, k0, k1, k2, side[4], side[4], side[4])
 			var t0: Vector3 = side[0] + off
 			var t1: Vector3 = side[1] + off
 			var lift: Vector3 = (side[2] - side[0]).normalized() * 0.035
@@ -540,6 +556,9 @@ static func _car_kit(id: String, style := {}) -> Dictionary:
 		_box(tails, Vector3((x0 + x1) / 2.0, tcy + th * 0.22, tz + 0.004), Vector3(absf(x1 - x0), th * 0.42, 0.03))         # upper lens
 		_box(tails, Vector3((x0 + x1) / 2.0 + s * 0.03, tcy - th * 0.26, tz + 0.006), Vector3(absf(x1 - x0) - 0.06, th * 0.14, 0.03))  # LED strip
 		_cyl(tails, Vector3(x1 - s * 0.09, tcy - th * 0.05, tz + 0.012), th * 0.2, 0.02, Vector3.BACK, 12)                  # round element
+		if style.get("ltail", false):  # L-shaped light bar wrapping the outer corner
+			_box(tails, Vector3(x1 - s * 0.035, tcy - 0.05, tz + 0.008), Vector3(0.05, th + 0.1, 0.03))
+			_box(tails, Vector3((x0 + x1) / 2.0, ty1 - 0.02, tz + 0.008), Vector3(absf(x1 - x0), 0.03, 0.03))
 		_box(sig_l if s < 0 else sig_r, Vector3(s * rear_hw * 0.5, (ty0 + ty1) / 2.0, tz), Vector3(0.12, (ty1 - ty0) * 0.8, 0.032))
 		_box(chrome, Vector3(s * rear_hw * 0.755, ty0 - 0.02, tz), Vector3(rear_hw * 0.38, 0.015, 0.02))
 	if not pr.get("van", false) and pr.has("gh"):
@@ -548,6 +567,8 @@ static func _car_kit(id: String, style := {}) -> Dictionary:
 			_box(tails, Vector3(0, ty1 - 0.02, tz + 0.004), Vector3(rear_hw * 1.2, 0.025, 0.03))
 	var ex: int = pr.get("exhaust", 1)
 	var ex_x: Array = [-rear_hw * 0.62] if ex == 1 else ([-rear_hw * 0.6, rear_hw * 0.6] if ex == 2 else [-0.22, -0.08, 0.08, 0.22])
+	if pr.get("exhaust_pairs", false):
+		ex_x = [-rear_hw * 0.66, -rear_hw * 0.66 + 0.12, rear_hw * 0.66 - 0.12, rear_hw * 0.66]
 	for x in ex_x:
 		_cyl(chrome, Vector3(x, bumper_y - 0.04, 0.02), 0.045 if ex < 4 else 0.04, 0.16, Vector3.BACK, 10, false)
 		_cyl(dark, Vector3(x, bumper_y - 0.04, 0.025), 0.033, 0.16, Vector3.BACK, 8, true)
@@ -575,9 +596,17 @@ static func _car_kit(id: String, style := {}) -> Dictionary:
 			var px: float = hx - s * (0.05 + k * 0.12)
 			_cyl(chrome, Vector3(px, hy - 0.008, fz + 0.02), 0.042, 0.02, Vector3.BACK, 12)
 			_cyl(head, Vector3(px, hy - 0.008, fz + 0.008), 0.028, 0.02, Vector3.BACK, 12)
+			if style.get("halo", false):
+				_cyl(head, Vector3(px, hy - 0.008, fz + 0.012), 0.052, 0.012, Vector3.BACK, 16, false)
 		_box(dark, Vector3(s * front_hw * 0.72, sill + 0.1, fz + 0.03), Vector3(0.2, 0.08, 0.03))  # fog-light pods
-	_box(chrome, Vector3(0, front_top - 0.13, fz + 0.03), Vector3(front_hw * 0.62, 0.17, 0.03))
-	_box(dark, Vector3(0, front_top - 0.13, fz + 0.015), Vector3(front_hw * 0.56, 0.13, 0.03))
+	if style.get("split_grille", false):
+		for gx in [-0.14, 0.14]:  # split grille: two upright openings
+			_box(chrome, Vector3(gx, front_top - 0.12, fz + 0.03), Vector3(0.2, 0.17, 0.03))
+			_box(dark, Vector3(gx, front_top - 0.12, fz + 0.015), Vector3(0.16, 0.13, 0.03))
+		_box(dark, Vector3(0, sill + 0.2, fz + 0.025), Vector3(front_hw * 1.2, 0.1, 0.04))  # wide lower intake
+	else:
+		_box(chrome, Vector3(0, front_top - 0.13, fz + 0.03), Vector3(front_hw * 0.62, 0.17, 0.03))
+		_box(dark, Vector3(0, front_top - 0.13, fz + 0.015), Vector3(front_hw * 0.56, 0.13, 0.03))
 	_box(dark, Vector3(0, sill + 0.12, fz + 0.03), Vector3(front_hw * 0.9, 0.14, 0.04))
 
 	var r: float = pr.wheel[0]
@@ -684,6 +713,21 @@ static func _style_extras(id: String, style: Dictionary, pr: Dictionary, station
 		var top := _station_at(stations, d, 1)
 		_box(paint_st, Vector3(0, top + 0.04, -d), Vector3(0.62, 0.08, 0.8))
 		_box(dark, Vector3(0, top + 0.05, -d - 0.405), Vector3(0.5, 0.05, 0.02))
+	if style.get("dome", false) and not g.is_empty():  # raised power dome down the bonnet
+		var d0: float = g[1] + 0.12
+		var d1: float = l - 0.4
+		var mid := (d0 + d1) / 2.0
+		var top := _station_at(stations, mid, 1)
+		_box(paint_st, Vector3(0, top + 0.022, -mid), Vector3(0.46, 0.04, d1 - d0), Basis(Vector3.RIGHT, -0.06))
+	if style.get("gills", false) and not g.is_empty():  # vents behind the front wheels
+		var gd: float = pr.wheel[2] - pr.wheel[0] - 0.22
+		for sx in [-1.0, 1.0]:
+			var hx: float = w / 2.0 * _station_at(stations, gd, 2)
+			_box(chrome, Vector3(sx * (hx + 0.006), g[4] - 0.2, -gd), Vector3(0.012, 0.08, 0.2))
+			for k in 2:
+				_box(dark, Vector3(sx * (hx + 0.01), g[4] - 0.22 + k * 0.035, -gd), Vector3(0.012, 0.012, 0.17))
+	if style.get("lip", false) and not g.is_empty():  # small boot-lid spoiler
+		_box(paint_st, Vector3(0, rear_top + 0.03, -0.1), Vector3(w * 0.7, 0.03, 0.1), Basis(Vector3.RIGHT, 0.18))
 	if style.get("vents", false) and not g.is_empty():
 		for sx in [-1.0, 1.0]:
 			var d2: float = g[1] + 0.35

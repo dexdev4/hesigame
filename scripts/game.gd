@@ -74,6 +74,8 @@ var boss: Vehicle = null
 var player := Vehicle.new()
 var target_x := 0.0
 var on_shoulder := false
+var player_accel := 0.0   # smoothed longitudinal accel, for body pitch
+var player_slip := 0.0    # 0..1, drives tyre squeal
 var finish_z := -1.0
 var t := 0.0
 var st := {}
@@ -169,6 +171,11 @@ func _build_environment() -> void:
 	env.fog_light_color = Color("#d9b48a")
 	env.fog_density = 0.0055
 	env.fog_sky_affect = 0.15
+	env.glow_enabled = true
+	env.glow_intensity = 0.7
+	env.glow_bloom = 0.04
+	env.glow_hdr_threshold = 1.1
+	env.glow_blend_mode = Environment.GLOW_BLEND_MODE_SOFTLIGHT
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
@@ -245,6 +252,8 @@ func _set_player_car() -> void:
 	player.model = CarModel.new()
 	player.model.build(c.shape, Color(c.color))
 	add_child(player.model)
+	if sound:
+		sound.set_car(c)
 
 
 func _compute_stats() -> void:
@@ -651,14 +660,20 @@ func _update_player(dt: float) -> void:
 		a -= st.brake * (1.0 if player.v > 3.0 else 0.4)
 	if on_shoulder:
 		a -= 2.5 + player.v * 0.05
+	var v_before := player.v
 	player.v = maxf(0.0, player.v + a * dt)
 	player.braking = brk
+	player_accel = lerpf(player_accel, (player.v - v_before) / maxf(dt, 0.0001), minf(1.0, dt * 6.0))
 	# steering: chase the swipe target with limited lateral speed and grip
 	var speed_k := clampf(player.v / 12.0, 0.25, 1.0)
 	var lat_max: float = st.lat * speed_k
 	var desired := clampf((target_x - player.x) * 3.2, -lat_max, lat_max)
 	var grip: float = st.grip * (1.0 - 0.22 * clampf(vr, 0.0, 1.2)) * (0.6 if on_shoulder else 1.0)
 	player.vx += clampf(desired - player.vx, -grip * dt, grip * dt)
+	# tyre squeal: hard cornering past the grip limit, or heavy braking at speed
+	var corner := clampf((absf(desired - player.vx) / maxf(lat_max, 0.1) - 0.35) * 1.6, 0.0, 1.0) * clampf((player.v - 14.0) / 20.0, 0.0, 1.0)
+	var lock := (0.55 if brk and player.v > 16.0 else 0.0)
+	player_slip = maxf(corner, lock) * (0.4 if on_shoulder else 1.0)
 	player.x += player.vx * dt
 	player.z += player.v * dt
 	on_shoulder = absf(player.x) + player.w / 2.0 > Data.ROAD_HALF + 0.25
@@ -880,7 +895,9 @@ func _process(delta: float) -> void:
 	_flash.color.a = maxf(0.0, _flash.color.a - delta * 0.8)
 	_sync_visuals(delta)
 	_update_hud()
-	sound.drive(player.v, st.top, (in_gas if _live() else false) or autotest, state == S.PLAY)
+	var snd_gas := ((in_gas if _live() else ap_gas) if not autotest else ap_gas) and state != S.PAUSED
+	var snd_brake := (in_brake if _live() else ap_brake) if not autotest else ap_brake
+	sound.drive(player.v, st.top, snd_gas, snd_brake, player_slip if state == S.PLAY else 0.0, state == S.PLAY, delta)
 	if autotest:
 		_log_t += delta
 		if _log_t > 3.0:
@@ -897,7 +914,8 @@ func _process(delta: float) -> void:
 		get_tree().quit()
 
 
-func _place(c: Vehicle) -> void:
+func _place(c: Vehicle, delta: float) -> void:
+	c.model.spin(c.v, delta)
 	c.model.position = Vector3(c.x, 0.0, -(c.z - player.z))
 	c.model.rotation.y = -atan2(c.vx, maxf(c.v, 4.0)) * 0.9
 	c.model.set_brake(c.braking)
@@ -910,11 +928,12 @@ func _place(c: Vehicle) -> void:
 func _sync_visuals(delta: float) -> void:
 	scenery.update_view(player.z, finish_z)
 	for c in traffic:
-		_place(c)
+		_place(c, delta)
 	if boss:
-		_place(boss)
-	_place(player)
+		_place(boss, delta)
+	_place(player, delta)
 	player.model.set_roll(clampf(-player.vx * 0.025, -0.06, 0.06))
+	player.model.set_pitch(clampf(-player_accel * 0.0028, -0.022, 0.03))
 	player.model.visible = not (run and run.invuln > 0.0 and fmod(t * 10.0, 1.0) < 0.5)
 	dust.position = Vector3(player.x, 0.2, 0.0)
 	dust.emitting = on_shoulder and player.v > 8.0
@@ -942,6 +961,8 @@ func _update_hud() -> void:
 		"lives": run.lives,
 		"max_lives": maxi(3 + Save.perm_level("lives"), run.lives),
 		"kmh": str(roundi(player.v * 3.6)),
+		"gear": sound.gear,
+		"rpm": sound.rpm / sound.redline,
 		"fast": player.v > 33.0,
 		"boss": run.phase == "boss",
 	}

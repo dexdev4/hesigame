@@ -38,6 +38,8 @@ var _goal: PanelContainer
 var _g := {}
 var _kmh: Label
 var _sp_tag: Label
+var _unit: Label
+var _rpm: ProgressBar
 var _pops: VBoxContainer
 var _banner: VBoxContainer
 var _banner_t: Label
@@ -454,9 +456,14 @@ func _build_play() -> void:
 	_kmh.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.6))
 	_kmh.add_theme_constant_override("shadow_offset_y", 3)
 	speedo.add_child(_kmh)
-	var unit := _label("KM/H", 18, MUTED, mono_font)
-	unit.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	speedo.add_child(unit)
+	_unit = _label("KM/H", 18, MUTED, mono_font)
+	_unit.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	speedo.add_child(_unit)
+	_rpm = _bar(_fill_white, 8)
+	_rpm.custom_minimum_size.x = 190
+	_rpm.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	speedo.add_child(_rpm)
+	speedo.move_child(_rpm, 1)
 
 	brake = Pedal.new()
 	brake.kind = "brake"
@@ -529,6 +536,9 @@ func update_play(d: Dictionary) -> void:
 		_max_lives = d.max_lives
 		_lives_ctrl.queue_redraw()
 	_kmh.text = d.kmh
+	_unit.text = "KM/H  ·  GEAR %d" % d.gear
+	_rpm.value = clampf(d.rpm, 0.0, 1.0)
+	_rpm.add_theme_stylebox_override("fill", _fill_red if d.rpm > 0.9 else (_fill_amber if d.rpm > 0.75 else _fill_white))
 	_kmh.add_theme_color_override("font_color", AMBER if d.fast else LINE)
 	_sp_tag.text = "HIGH SPEED BONUS" if d.fast else ""
 	(_g["style"] as StyleBoxFlat).bg_color = RED_SIGN if d.boss else SIGN

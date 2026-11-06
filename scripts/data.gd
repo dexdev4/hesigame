@@ -18,23 +18,34 @@ const SHAPES := {
 	"truck":  {"w": 2.50, "l": 11.0, "b": 3.9, "t": 3.9, "c0": 0.0, "c1": 0.0, "ins": 0.0, "truck": true},
 }
 
+# engine: cylinder count, idle/redline rpm, and synth character (res = exhaust
+# resonance, decay = pulse length, var/uneven = per-cylinder variation that
+# gives V8s their burble, rasp = exhaust grit, pops = lift-off crackle).
 # accel/brake in m/s^2, grip = lateral accel (m/s^2), lat = max lateral speed (m/s), top in m/s.
 const CARS := [
-	{"id": "kestrel", "name": "Kestrel 1.6", "shape": "hatch", "color": "#d5dbe2", "accel": 5.2, "brake": 9.0, "grip": 9.0, "lat": 4.2, "top": 50.0, "price": 0, "boss": -1,
+	{"id": "kestrel", "engine": {"cyl": 4, "idle": 850, "redline": 6800, "res": 2.3, "decay": 2.4, "var": 0.06, "uneven": 0.03, "rasp": 0.45, "pops": 0.2, "turbo": false},
+		"name": "Kestrel 1.6", "shape": "hatch", "color": "#d5dbe2", "accel": 5.2, "brake": 9.0, "grip": 9.0, "lat": 4.2, "top": 50.0, "price": 0, "boss": -1,
 		"blurb": "Your starter hatch. Light, honest, slow."},
-	{"id": "vanta", "name": "Vanta GT", "shape": "sedan", "color": "#2f6fd6", "accel": 6.4, "brake": 10.0, "grip": 10.0, "lat": 4.6, "top": 57.0, "price": 2500, "boss": -1,
+	{"id": "vanta", "engine": {"cyl": 6, "idle": 800, "redline": 7000, "res": 2.0, "decay": 2.6, "var": 0.08, "uneven": 0.04, "rasp": 0.35, "pops": 0.4, "turbo": true},
+		"name": "Vanta GT", "shape": "sedan", "color": "#2f6fd6", "accel": 6.4, "brake": 10.0, "grip": 10.0, "lat": 4.6, "top": 57.0, "price": 2500, "boss": -1,
 		"blurb": "A sport sedan with real brakes."},
-	{"id": "bruiser", "name": "Bruiser 5.7", "shape": "muscle", "color": "#e0a020", "accel": 8.0, "brake": 9.5, "grip": 9.0, "lat": 4.4, "top": 63.0, "price": 6000, "boss": -1,
+	{"id": "bruiser", "engine": {"cyl": 8, "idle": 700, "redline": 6300, "res": 1.4, "decay": 3.0, "var": 0.3, "uneven": 0.32, "rasp": 0.5, "pops": 0.9, "turbo": false},
+		"name": "Bruiser 5.7", "shape": "muscle", "color": "#e0a020", "accel": 8.0, "brake": 9.5, "grip": 9.0, "lat": 4.4, "top": 63.0, "price": 6000, "boss": -1,
 		"blurb": "V8 torque, a bit of a handful."},
-	{"id": "halcyon", "name": "Halcyon R", "shape": "super", "color": "#f1f1ee", "accel": 9.5, "brake": 12.0, "grip": 12.0, "lat": 5.3, "top": 72.0, "price": 15000, "boss": -1,
+	{"id": "halcyon", "engine": {"cyl": 10, "idle": 950, "redline": 8700, "res": 2.6, "decay": 2.1, "var": 0.08, "uneven": 0.05, "rasp": 0.3, "pops": 0.6, "turbo": false},
+		"name": "Halcyon R", "shape": "super", "color": "#f1f1ee", "accel": 9.5, "brake": 12.0, "grip": 12.0, "lat": 5.3, "top": 72.0, "price": 15000, "boss": -1,
 		"blurb": "Mid-engine supercar. Everything is sharper."},
-	{"id": "copperhead", "name": "Copperhead", "shape": "muscle", "color": "#c9652e", "accel": 7.6, "brake": 10.5, "grip": 11.0, "lat": 5.0, "top": 61.0, "price": 4000, "boss": 0,
+	{"id": "copperhead", "engine": {"cyl": 8, "idle": 720, "redline": 6800, "res": 1.5, "decay": 2.8, "var": 0.26, "uneven": 0.28, "rasp": 0.55, "pops": 1.0, "turbo": false},
+		"name": "Copperhead", "shape": "muscle", "color": "#c9652e", "accel": 7.6, "brake": 10.5, "grip": 11.0, "lat": 5.0, "top": 61.0, "price": 4000, "boss": 0,
 		"blurb": "Stage 1 boss car. Grippier than any muscle car should be."},
-	{"id": "marshal", "name": "Night Marshal", "shape": "sedan", "color": "#1f2633", "accel": 8.6, "brake": 11.5, "grip": 11.5, "lat": 5.2, "top": 66.0, "price": 9000, "boss": 1,
+	{"id": "marshal", "engine": {"cyl": 6, "idle": 780, "redline": 7400, "res": 2.1, "decay": 2.5, "var": 0.1, "uneven": 0.05, "rasp": 0.4, "pops": 0.7, "turbo": true},
+		"name": "Night Marshal", "shape": "sedan", "color": "#1f2633", "accel": 8.6, "brake": 11.5, "grip": 11.5, "lat": 5.2, "top": 66.0, "price": 9000, "boss": 1,
 		"blurb": "Stage 2 boss car. Stops like it hit a wall."},
-	{"id": "static", "name": "Blue Static", "shape": "super", "color": "#1fa3ff", "accel": 10.2, "brake": 12.0, "grip": 13.0, "lat": 5.6, "top": 75.0, "price": 18000, "boss": 2,
+	{"id": "static", "engine": {"cyl": 6, "idle": 900, "redline": 8200, "res": 2.5, "decay": 2.2, "var": 0.05, "uneven": 0.02, "rasp": 0.3, "pops": 0.5, "turbo": true},
+		"name": "Blue Static", "shape": "super", "color": "#1fa3ff", "accel": 10.2, "brake": 12.0, "grip": 13.0, "lat": 5.6, "top": 75.0, "price": 18000, "boss": 2,
 		"blurb": "Stage 3 boss car. Twitchy and very fast."},
-	{"id": "lastexit", "name": "Last Exit", "shape": "super", "color": "#b0122a", "accel": 11.0, "brake": 13.0, "grip": 14.0, "lat": 6.0, "top": 81.0, "price": 30000, "boss": 3,
+	{"id": "lastexit", "engine": {"cyl": 12, "idle": 1000, "redline": 9200, "res": 2.8, "decay": 1.9, "var": 0.05, "uneven": 0.02, "rasp": 0.25, "pops": 0.5, "turbo": false},
+		"name": "Last Exit", "shape": "super", "color": "#b0122a", "accel": 11.0, "brake": 13.0, "grip": 14.0, "lat": 6.0, "top": 81.0, "price": 30000, "boss": 3,
 		"blurb": "Stage 4 boss car. The fastest thing on the interstate."},
 ]
 
@@ -64,9 +75,9 @@ const BOONS := [
 	{"id": "combo", "name": "Adrenaline", "desc": "Combo timer lasts 1 s longer", "tag": "COMBO"},
 ]
 
-const TRAFFIC_COLORS := ["#c9ccd1", "#eef0f2", "#26292f", "#50555d", "#1f3a66", "#9b1c1c",
-	"#5a1f2b", "#cbb995", "#2d4a36", "#7b8a99", "#a9b3bd", "#e6e2d6"]
-const TRUCK_BOX_COLORS := ["#e9ebe6", "#d8d2c4", "#c4ccd2"]
+const TRAFFIC_COLORS := ["#c9ccd1", "#dfe2e4", "#26292f", "#50555d", "#1f3a66", "#9b1c1c",
+	"#5a1f2b", "#cbb995", "#2d4a36", "#7b8a99", "#a9b3bd", "#d9d5c9"]
+const TRUCK_BOX_COLORS := ["#d6d8d3", "#cfc8b8", "#b9c1c7", "#8e3b2f", "#2f4f7a"]
 const TRUCK_CAB_COLORS := ["#b5322a", "#1f4e8c", "#2a2d33", "#d9a21b", "#3d6b3a"]
 const ROMAN := ["", "II", "III", "IV", "V", "VI", "VII", "VIII"]
 const MAX_LIVES := 6

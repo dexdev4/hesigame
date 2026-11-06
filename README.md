@@ -10,7 +10,9 @@ A roguelike traffic-weaving racer built in **Godot 4** (GDScript). You drive an 
 1. Install **Godot 4.3 or newer** (the standard build, not .NET) from https://godotengine.org/download.
 2. In the Project Manager choose **Import**, pick this folder's `project.godot`, then press **Run** (F5).
 
-There are no asset files: the cars, road, trees, UI and sounds are all generated in code, so the project opens without any import step.
+There are no asset files to download: the cars, road, trees, UI and sounds are all generated in code.
+
+Each car has its own engine sound, generated live from a small engine model: cylinder count (from the hatch's four to the Last Exit's twelve), RPM through six gears with real shift points, throttle load, pops when you lift off, turbo whine and blow-off on the turbo cars, and tyre squeal when you push past the grip limit. The HUD shows your gear and an RPM bar under the speedometer.
 
 ### Controls
 

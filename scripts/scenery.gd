@@ -684,6 +684,10 @@ func _update_oncoming(base_z: float, dt: float) -> void:
 		else:
 			m.build(shape, Color(Data.TRAFFIC_COLORS.pick_random()), Color("#b5322a"), {"rim": ["steel", "5spoke", "multi"].pick_random()})
 		m.rotation.y = PI  # heading towards us
+		# Place it before it is ever drawn. A new node sits at the origin (the
+		# player's position) until moved, so adding it unplaced showed the car
+		# right behind the player for one frame.
+		m.position = Vector3(OPP_LANES[lane], 0, -(z - base_z))
 		add_child(m)
 		var v := randf_range(22.0, 30.0) if shape == "truck" else randf_range(26.0, 35.0)
 		_oncoming.append({"model": m, "x": OPP_LANES[lane], "z": z, "v": v})

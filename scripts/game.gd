@@ -425,6 +425,7 @@ func _try_spawn(z: float, lane_hint := -1, v_override := 0.0) -> bool:
 		c.model.build(shape, Color(Data.TRUCK_BOX_COLORS.pick_random()), Color(Data.TRUCK_CAB_COLORS.pick_random()))
 	else:
 		c.model.build(shape, Color(Data.TRAFFIC_COLORS.pick_random()), Color("#b5322a"), {"rim": ["steel", "5spoke", "5spoke", "multi"].pick_random()})
+	c.model.position = Vector3(c.x, 0.0, -(c.z - player.z))  # place before it is first drawn
 	add_child(c.model)
 	traffic.append(c)
 	if idcolor:
@@ -580,6 +581,7 @@ func _start_boss() -> void:
 	tag.outline_size = 18
 	tag.position = Vector3(0, sh.t + 1.4, -sh.l / 2.0)
 	boss.model.add_child(tag)
+	boss.model.position = Vector3(boss.x, 0.0, -(boss.z - player.z))  # place before it is first drawn
 	add_child(boss.model)
 	run.phase = "boss"
 	run.b_dist = 0.0

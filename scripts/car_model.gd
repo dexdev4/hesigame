@@ -150,16 +150,19 @@ static func _cyl(st: SurfaceTool, center: Vector3, r: float, length: float, axis
 ## Cross-section of the lower body at one station: rounded shoulders, tucked sill.
 static func _ring(hw: float, top: float) -> Array:
 	var b := minf(0.3, top - 0.3)
-	var y2 := maxf(top - 0.18, b + 0.16)
+	var y2 := maxf(top - 0.2, b + 0.16)
 	var y1 := minf(b + 0.14, y2 - 0.02)
-	var y3 := maxf(top - 0.05, y2 + 0.01)
+	var rise := top - y2
 	var right := [
 		[Vector2(hw * 0.93, b), Vector2(0.3, -1)],
 		[Vector2(hw, y1), Vector2(1, -0.2)],
-		[Vector2(hw, y2), Vector2(1, 0.1)],
-		[Vector2(hw * 0.96, y3), Vector2(0.7, 0.7)],
-		[Vector2(hw * 0.8, top), Vector2(0.15, 1)],
+		[Vector2(hw, y2), Vector2(1, 0.05)],
 	]
+	# rounded shoulder: quarter ellipse from the side up to the top surface
+	for deg in [30.0, 60.0, 90.0]:
+		var a := deg_to_rad(deg)
+		right.append([Vector2(hw * (0.8 + 0.2 * cos(a)), y2 + rise * sin(a)), Vector2(cos(a) / 0.2, sin(a) * hw / maxf(rise, 0.05)).normalized()])
+	right.append([Vector2(hw * 0.4, top + 0.014), Vector2(0.06, 1)])  # crowned bonnet and boot lid
 	var ring := []
 	for p in right:
 		ring.append(p)
@@ -169,33 +172,114 @@ static func _ring(hw: float, top: float) -> Array:
 	return ring
 
 
-static func _wheel_mesh(r: float, width: float) -> ArrayMesh:
-	var key := "wheel%s_%s" % [r, width]
+## Catmull-Rom resampling of body stations so the profile curves smoothly.
+static func _smooth(st: Array, sub := 3) -> Array:
+	var out := []
+	var n := st.size()
+	for i in n - 1:
+		var p0: Array = st[maxi(i - 1, 0)]
+		var p1: Array = st[i]
+		var p2: Array = st[i + 1]
+		var p3: Array = st[mini(i + 2, n - 1)]
+		for k in sub:
+			var t := float(k) / sub
+			var row := []
+			for c in 3:
+				var a: float = p0[c]
+				var b: float = p1[c]
+				var cc: float = p2[c]
+				var d: float = p3[c]
+				row.append(0.5 * (2.0 * b + (-a + cc) * t + (2.0 * a - 5.0 * b + 4.0 * cc - d) * t * t + (-a + 3.0 * b - 3.0 * cc + d) * t * t * t))
+			out.append(row)
+	out.append(st[n - 1])
+	return out
+
+
+## Surface of revolution around X from a profile of (radius, x) points.
+static func _lathe(st: SurfaceTool, profile: Array, segs: int) -> void:
+	for i in profile.size() - 1:
+		var a: Vector2 = profile[i]
+		var b: Vector2 = profile[i + 1]
+		var dr := b.x - a.x
+		var dx := b.y - a.y
+		var nr := dx
+		var nx := -dr
+		var nl := sqrt(nr * nr + nx * nx)
+		if nl < 0.00001:
+			continue
+		nr /= nl
+		nx /= nl
+		for k in segs:
+			var t0 := TAU * k / segs
+			var t1 := TAU * (k + 1) / segs
+			var d0 := Vector3(0, cos(t0), sin(t0))
+			var d1 := Vector3(0, cos(t1), sin(t1))
+			var pa := Vector3(a.y, 0, 0) + d0 * a.x
+			var pb := Vector3(a.y, 0, 0) + d1 * a.x
+			var pc := Vector3(b.y, 0, 0) + d1 * b.x
+			var pd := Vector3(b.y, 0, 0) + d0 * b.x
+			var n0 := d0 * nr + Vector3(nx, 0, 0)
+			var n1 := d1 * nr + Vector3(nx, 0, 0)
+			_tri(st, pa, pb, pc, n0, n1, n1)
+			_tri(st, pa, pc, pd, n0, n1, n0)
+
+
+const RIM_STYLES := ["steel", "5spoke", "multi", "mesh", "turbine"]
+
+
+static func _wheel_mesh(r: float, width: float, style := "5spoke", rim_col := Color("#c3c8ce")) -> ArrayMesh:
+	var key := "wheel%s_%s_%s_%s" % [r, width, style, rim_col.to_html()]
 	if _meshes.has(key):
 		return _meshes[key]
+	var hw := width / 2.0
 	var tire := _new_st()
-	_cyl(tire, Vector3.ZERO, r, width, Vector3.RIGHT, 18)
+	# rounded tyre: bead, bulging sidewall, shoulder, tread and back again
+	_lathe(tire, [Vector2(0.64 * r, -hw + 0.01), Vector2(0.86 * r, -hw - 0.008), Vector2(0.96 * r, -hw + 0.015),
+		Vector2(r, -hw + 0.055), Vector2(r, hw - 0.055), Vector2(0.96 * r, hw - 0.015), Vector2(0.86 * r, hw + 0.008),
+		Vector2(0.64 * r, hw - 0.01)], 20)
 	var rim := _new_st()
 	var brake := _new_st()
 	for side in [-1.0, 1.0]:
-		var face: float = side * (width / 2.0 + 0.003)
+		var face: float = side * (hw + 0.002)
 		# dark wheel well behind the spokes, then the brake disc
-		_cyl(tire, Vector3(face - side * 0.07, 0, 0), r * 0.62, 0.01, Vector3.RIGHT, 14)
-		_cyl(brake, Vector3(face - side * 0.05, 0, 0), r * 0.46, 0.02, Vector3.RIGHT, 14)
-		# rim lip (open barrel) and five spokes
-		_cyl(rim, Vector3(face - side * 0.02, 0, 0), r * 0.65, 0.05, Vector3.RIGHT, 18, false)
-		_cyl(rim, Vector3(face - side * 0.02, 0, 0), r * 0.6, 0.05, Vector3.RIGHT, 18, false)
-		for k in 5:
-			var ang := TAU * k / 5.0
-			var b := Basis(Vector3.RIGHT, ang)
-			_box(rim, Vector3(face - side * 0.01, 0, 0) + b.y * r * 0.34, Vector3(0.03, r * 0.56, 0.075), b)
-		_cyl(rim, Vector3(face - side * 0.005, 0, 0), r * 0.17, 0.04, Vector3.RIGHT, 10)
+		_cyl(tire, Vector3(face - side * 0.08, 0, 0), r * 0.62, 0.01, Vector3.RIGHT, 16)
+		_cyl(brake, Vector3(face - side * 0.055, 0, 0), r * 0.47, 0.022, Vector3.RIGHT, 18)
+		# rim lip
+		_lathe(rim, [Vector2(r * 0.6, face - side * 0.05), Vector2(r * 0.66, face - side * 0.012), Vector2(r * 0.66, face), Vector2(r * 0.6, face + side * 0.004)], 22)
+		var c := Vector3(face - side * 0.012, 0, 0)
+		match style:
+			"steel":
+				_cyl(rim, c - Vector3(side * 0.01, 0, 0), r * 0.6, 0.012, Vector3.RIGHT, 18)
+				for k in 6:
+					var b := Basis(Vector3.RIGHT, TAU * k / 6.0)
+					_cyl(tire, c + Vector3(side * 0.001, 0, 0) + b.y * r * 0.4, r * 0.06, 0.014, Vector3.RIGHT, 8)
+			"multi":
+				for k in 10:
+					var b := Basis(Vector3.RIGHT, TAU * k / 10.0)
+					_box(rim, c + b.y * r * 0.36, Vector3(0.022, r * 0.5, 0.03), b)
+			"mesh":
+				for k in 8:
+					for tw in [-0.22, 0.22]:
+						var b := Basis(Vector3.RIGHT, TAU * k / 8.0) * Basis(Vector3.RIGHT, tw)
+						_box(rim, c + b.y * r * 0.34, Vector3(0.018, r * 0.52, 0.022), b)
+			"turbine":
+				for k in 12:
+					var b := Basis(Vector3.RIGHT, TAU * k / 12.0) * Basis(Vector3.UP, 0.5)
+					_box(rim, c + b.y * r * 0.36, Vector3(0.02, r * 0.5, 0.045), b)
+			_:  # 5spoke
+				for k in 5:
+					var b := Basis(Vector3.RIGHT, TAU * k / 5.0)
+					_box(rim, c + b.y * r * 0.34, Vector3(0.03, r * 0.54, 0.085), b)
+		_cyl(rim, c + Vector3(side * 0.008, 0, 0), r * 0.17, 0.035, Vector3.RIGHT, 12)
+		for k in 5:  # lug nuts
+			var b := Basis(Vector3.RIGHT, TAU * k / 5.0 + 0.3)
+			_cyl(brake, c + Vector3(side * 0.028, 0, 0) + b.y * r * 0.1, r * 0.025, 0.02, Vector3.RIGHT, 6)
 	var m := ArrayMesh.new()
 	tire.commit(m)
 	rim.commit(m)
 	brake.commit(m)
-	m.surface_set_material(0, mat(Color("#121315"), 0.0, 0.92))
-	m.surface_set_material(1, mat(Color("#c3c8ce"), 0.0, 0.2, 0.9))
+	m.surface_set_material(0, mat(Color("#141517"), 0.0, 0.9))
+	m.surface_set_material(1, mat(rim_col, 0.0, 0.22, 0.85) if style != "steel" else mat(Color("#6f7378"), 0.0, 0.5, 0.5))
 	m.surface_set_material(2, mat(Color("#6d7176"), 0.0, 0.45, 0.8))
 	_meshes[key] = m
 	return m
@@ -228,15 +312,23 @@ static func _arch(st: SurfaceTool, x: float, cy: float, cz: float, r0: float, r1
 
 ## Builds (once) the shared meshes for a vehicle type.
 ## Body surfaces: 0 paint, 1 glass, 2 dark trim, 3 chrome, 4 plate, 5 headlights.
-static func _kit(id: String) -> Dictionary:
-	if _kits.has(id):
-		return _kits[id]
+## Body options that change geometry. Anything else (rims, badges) is per instance.
+const KIT_KEYS := ["stripes", "scoop", "intakes", "roofwing", "wiper", "lightbar", "splitter", "vents"]
+
+
+static func _kit(id: String, style := {}) -> Dictionary:
+	var key := id
+	for k in KIT_KEYS:
+		if style.get(k, false):
+			key += "|" + k
+	if _kits.has(key):
+		return _kits[key]
 	var kit := {}
 	if id == "truck":
 		kit = _truck_kit()
 	else:
-		kit = _car_kit(id)
-	_kits[id] = kit
+		kit = _car_kit(id, style)
+	_kits[key] = kit
 	return kit
 
 
@@ -246,7 +338,7 @@ static func _new_st() -> SurfaceTool:
 	return st
 
 
-static func _car_kit(id: String) -> Dictionary:
+static func _car_kit(id: String, style := {}) -> Dictionary:
 	var sh: Dictionary = Data.SHAPES[id]
 	var pr: Dictionary = PROFILES[id]
 	var w: float = sh.w
@@ -260,15 +352,16 @@ static func _car_kit(id: String) -> Dictionary:
 	var tails := _new_st()
 	var sig_l := _new_st()
 	var sig_r := _new_st()
+	var accent := _new_st()
 
 	# --- lower body loft
-	var stations: Array = pr.body.duplicate()
+	var stations: Array = _smooth(pr.body)
 	# Split the loft at the cabin ends so the roof of the lower body can be left
 	# open under the glass: the interior shows through from the cockpit, and the
 	# opaque glass hides the opening from outside.
 	if pr.has("gh"):
 		for d in [pr.gh[0] + 0.03, pr.gh[1] - 0.03]:
-			stations.append([d, _station_at(pr.body, d, 1), _station_at(pr.body, d, 2)])
+			stations.append([d, _station_at(stations, d, 1), _station_at(stations, d, 2)])
 		stations.sort_custom(func(a, b): return a[0] < b[0])
 	var rings := []
 	for s in stations:
@@ -280,7 +373,7 @@ static func _car_kit(id: String) -> Dictionary:
 		var r1: Array = rings[i + 1]
 		var cabin: bool = pr.has("gh") and stations[i][0] >= pr.gh[0] + 0.02 and stations[i + 1][0] <= pr.gh[1] - 0.02
 		for j in r0.size():
-			if cabin and j == 4:
+			if cabin and j >= 5 and j <= 7:
 				continue  # open top inside the cabin
 			var j2 := (j + 1) % r0.size()
 			var a := Vector3(r0[j][0].x, r0[j][0].y, z0)
@@ -336,8 +429,19 @@ static func _car_kit(id: String) -> Dictionary:
 		_quad(glass, BRL, BFL, RFL, RRL, n_left)
 		_quad(glass, BRR, BFR, RFR, RRR, n_right)
 		# roof panel
-		var up := Vector3.UP
-		_quad(paint_st, RRL + Vector3(-0.01, 0.006, 0.02), RRR + Vector3(0.01, 0.006, 0.02), RFR + Vector3(0.01, 0.006, -0.02), RFL + Vector3(-0.01, 0.006, -0.02), up)
+		# crowned roof: edge strips curve up into a slightly raised centre
+		var e := Vector3(0, 0.006, 0)
+		var crown := [[-1.02, 0.0, Vector3(-0.5, 1, 0)], [-0.6, 0.03, Vector3(-0.12, 1, 0)], [0.6, 0.03, Vector3(0.12, 1, 0)], [1.02, 0.0, Vector3(0.5, 1, 0)]]
+		for ci in crown.size() - 1:
+			var c0: Array = crown[ci]
+			var c1: Array = crown[ci + 1]
+			var n0: Vector3 = (c0[2] + c1[2]).normalized()
+			_quad(paint_st, Vector3(hr * c0[0], yr + c0[1], -g[2] + 0.02) + e, Vector3(hr * c1[0], yr + c1[1], -g[2] + 0.02) + e,
+				Vector3(hr * c1[0], yr + c1[1], -g[3] - 0.02) + e, Vector3(hr * c0[0], yr + c0[1], -g[3] - 0.02) + e, n0)
+			if style.get("stripes", false) and ci == 1:
+				for sx in [-1.0, 1.0]:
+					_quad(accent, Vector3(sx * 0.07, yr + 0.04, -g[2] + 0.02), Vector3(sx * 0.27, yr + 0.04, -g[2] + 0.02),
+						Vector3(sx * 0.27, yr + 0.04, -g[3] - 0.02), Vector3(sx * 0.07, yr + 0.04, -g[3] - 0.02), Vector3.UP)
 		# side-window pillars and chrome belt trim
 		for side in [[BRL, BFL, RRL, RFL, n_left], [BRR, BFR, RRR, RFR, n_right]]:
 			var off: Vector3 = side[4] * 0.008
@@ -396,12 +500,19 @@ static func _car_kit(id: String) -> Dictionary:
 	for s in [-1.0, 1.0]:
 		var x0: float = s * rear_hw * 0.66
 		var x1: float = s * rear_hw * 0.93
-		_box(head, Vector3(s * rear_hw * 0.61, (ty0 + ty1) / 2.0, tz), Vector3(rear_hw * 0.1, (ty1 - ty0) * 0.9, 0.028))
-		_box(tails, Vector3((x0 + x1) / 2.0, (ty0 + ty1) / 2.0, tz), Vector3(absf(x1 - x0), ty1 - ty0, 0.03))
+		var tcy := (ty0 + ty1) / 2.0
+		var th := ty1 - ty0
+		_box(dark, Vector3((x0 + x1) / 2.0 - s * 0.02, tcy, tz - 0.004), Vector3(absf(x1 - x0) + 0.1, th + 0.03, 0.03))   # smoked housing
+		_box(head, Vector3(s * rear_hw * 0.61, tcy, tz), Vector3(rear_hw * 0.1, th * 0.9, 0.028))                          # reverse lamp
+		_box(tails, Vector3((x0 + x1) / 2.0, tcy + th * 0.22, tz + 0.004), Vector3(absf(x1 - x0), th * 0.42, 0.03))         # upper lens
+		_box(tails, Vector3((x0 + x1) / 2.0 + s * 0.03, tcy - th * 0.26, tz + 0.006), Vector3(absf(x1 - x0) - 0.06, th * 0.14, 0.03))  # LED strip
+		_cyl(tails, Vector3(x1 - s * 0.09, tcy - th * 0.05, tz + 0.012), th * 0.2, 0.02, Vector3.BACK, 12)                  # round element
 		_box(sig_l if s < 0 else sig_r, Vector3(s * rear_hw * 0.5, (ty0 + ty1) / 2.0, tz), Vector3(0.12, (ty1 - ty0) * 0.8, 0.032))
 		_box(chrome, Vector3(s * rear_hw * 0.755, ty0 - 0.02, tz), Vector3(rear_hw * 0.38, 0.015, 0.02))
 	if not pr.get("van", false) and pr.has("gh"):
 		_box(chrome, Vector3(0, ty0 - 0.02, tz), Vector3(rear_hw * 0.95, 0.015, 0.02))
+		if style.get("lightbar", false):
+			_box(tails, Vector3(0, ty1 - 0.02, tz + 0.004), Vector3(rear_hw * 1.2, 0.025, 0.03))
 	var ex: int = pr.get("exhaust", 1)
 	var ex_x: Array = [-rear_hw * 0.62] if ex == 1 else ([-rear_hw * 0.6, rear_hw * 0.6] if ex == 2 else [-0.22, -0.08, 0.08, 0.22])
 	for x in ex_x:
@@ -422,14 +533,22 @@ static func _car_kit(id: String) -> Dictionary:
 	# --- front details
 	var fz := -l - 0.012
 	for s in [-1.0, 1.0]:
-		_box(chrome, Vector3(s * front_hw * 0.68, front_top - 0.1, fz + 0.035), Vector3(front_hw * 0.46, 0.13, 0.03))
-		_box(head, Vector3(s * front_hw * 0.68, front_top - 0.1, fz + 0.02), Vector3(front_hw * 0.4, 0.09, 0.03))
+		var hx: float = s * front_hw * 0.68
+		var hy := front_top - 0.1
+		_box(dark, Vector3(hx, hy, fz + 0.035), Vector3(front_hw * 0.46, 0.13, 0.03))                         # housing
+		_box(head, Vector3(hx, hy + 0.045, fz + 0.015), Vector3(front_hw * 0.42, 0.018, 0.03))               # DRL strip
+		_box(head, Vector3(hx + s * front_hw * 0.2, hy, fz + 0.015), Vector3(0.018, 0.1, 0.03))
+		for k in 2:
+			var px: float = hx - s * (0.05 + k * 0.12)
+			_cyl(chrome, Vector3(px, hy - 0.008, fz + 0.02), 0.042, 0.02, Vector3.BACK, 12)
+			_cyl(head, Vector3(px, hy - 0.008, fz + 0.008), 0.028, 0.02, Vector3.BACK, 12)
 		_box(dark, Vector3(s * front_hw * 0.72, sill + 0.1, fz + 0.03), Vector3(0.2, 0.08, 0.03))  # fog-light pods
 	_box(chrome, Vector3(0, front_top - 0.13, fz + 0.03), Vector3(front_hw * 0.62, 0.17, 0.03))
 	_box(dark, Vector3(0, front_top - 0.13, fz + 0.015), Vector3(front_hw * 0.56, 0.13, 0.03))
 	_box(dark, Vector3(0, sill + 0.12, fz + 0.03), Vector3(front_hw * 0.9, 0.14, 0.04))
 
 	var r: float = pr.wheel[0]
+	_style_extras(id, style, pr, stations, w, l, sill, rear_top, front_top, paint_st, dark, chrome, accent, glass)
 	for s in [-1.0, 1.0]:
 		var n := Vector3(s, 0, 0)
 		for ax in [pr.wheel[1], pr.wheel[2]]:
@@ -450,14 +569,66 @@ static func _car_kit(id: String) -> Dictionary:
 	if pr.has("gh"):
 		_box(dark, Vector3(0, pr.gh[5] + 0.04, -pr.gh[2] - 0.12), Vector3(0.07, 0.06, 0.18))  # shark-fin antenna
 
+	_box(accent, Vector3(0, 0.4, -l / 2.0), Vector3(0.01, 0.01, 0.01))  # keeps the accent surface present (hidden inside)
 	var body := ArrayMesh.new()
-	for st in [paint_st, glass, dark, chrome, plate, head]:
+	for st in [paint_st, glass, dark, chrome, plate, head, accent]:
 		st.commit(body)
 	return {
 		"body": body, "tails": tails.commit(), "sig_l": sig_l.commit(), "sig_r": sig_r.commit(),
 		"wheels": [[-(w / 2.0 - 0.11), -pr.wheel[1]], [w / 2.0 - 0.11, -pr.wheel[1]], [-(w / 2.0 - 0.11), -pr.wheel[2]], [w / 2.0 - 0.11, -pr.wheel[2]]],
-		"r": r, "ww": 0.24,
+		"r": r, "ww": 0.24, "plate_y": bumper_y + 0.2,
 	}
+
+
+## Geometry for a car's styling kit: racing stripes, bonnet scoop, side
+## intakes, roof spoiler, rear wiper, splitter and skirts, bonnet vents.
+static func _style_extras(id: String, style: Dictionary, pr: Dictionary, stations: Array, w: float, l: float, sill: float,
+		rear_top: float, front_top: float, paint_st: SurfaceTool, dark: SurfaceTool, chrome: SurfaceTool, accent: SurfaceTool, glass: SurfaceTool) -> void:
+	var g: Array = pr.get("gh", [])
+	if style.get("stripes", false):
+		# twin stripes over boot and bonnet, following the crowned top surface
+		for i in stations.size() - 1:
+			var a: Array = stations[i]
+			var b: Array = stations[i + 1]
+			if not g.is_empty() and a[0] >= g[0] - 0.05 and b[0] <= g[1] + 0.05:
+				continue  # the greenhouse covers this part
+			for sx in [-1.0, 1.0]:
+				_quad(accent, Vector3(sx * 0.07, a[1] + 0.018, -a[0]), Vector3(sx * 0.27, a[1] + 0.018, -a[0]),
+					Vector3(sx * 0.27, b[1] + 0.018, -b[0]), Vector3(sx * 0.07, b[1] + 0.018, -b[0]), Vector3.UP)
+		for sx in [-1.0, 1.0]:  # down the rear panel
+			_box(accent, Vector3(sx * 0.17, rear_top - 0.15, 0.014), Vector3(0.2, 0.3, 0.01))
+	if style.get("scoop", false) and not g.is_empty():
+		var d: float = g[1] + 0.55
+		var top := _station_at(stations, d, 1)
+		_box(paint_st, Vector3(0, top + 0.04, -d), Vector3(0.62, 0.08, 0.8))
+		_box(dark, Vector3(0, top + 0.05, -d - 0.405), Vector3(0.5, 0.05, 0.02))
+	if style.get("vents", false) and not g.is_empty():
+		for sx in [-1.0, 1.0]:
+			var d2: float = g[1] + 0.35
+			var t2 := _station_at(stations, d2, 1)
+			for k in 4:
+				_box(dark, Vector3(sx * 0.32, t2 + 0.012, -d2 - k * 0.07), Vector3(0.3, 0.012, 0.035))
+	if style.get("intakes", false):
+		var rz: float = pr.wheel[0] + pr.wheel[1] + 0.15
+		for sx in [-1.0, 1.0]:
+			var hx: float = w / 2.0 * _station_at(stations, rz + 0.3, 2)
+			_box(dark, Vector3(sx * (hx - 0.01), sill + 0.38, -rz - 0.3), Vector3(0.04, 0.24, 0.55))
+			for k in 3:
+				_box(chrome, Vector3(sx * (hx + 0.005), sill + 0.3 + k * 0.08, -rz - 0.3), Vector3(0.012, 0.012, 0.52))
+	if style.get("roofwing", false) and not g.is_empty():
+		_box(paint_st, Vector3(0, g[5] + 0.015, -g[2] + 0.06), Vector3(w * 0.78, 0.035, 0.26), Basis(Vector3.RIGHT, -0.12))
+		_box(dark, Vector3(0, g[5] - 0.02, -g[2] + 0.12), Vector3(w * 0.7, 0.03, 0.04))
+	if style.get("wiper", false) and not g.is_empty():
+		var base := Vector3(0, g[4] + 0.1, -g[0] - 0.04)
+		var tip := Vector3(-0.42, g[4] + 0.32, -g[0] - 0.12)
+		_strap(dark, base, tip, 0.02, 0.015)
+	if style.get("splitter", false):
+		_box(dark, Vector3(0, sill - 0.06, -l + 0.12), Vector3(w * 0.96, 0.03, 0.3))
+		var a0: float = pr.wheel[1] + pr.wheel[0] + 0.1
+		var a1: float = pr.wheel[2] - pr.wheel[0] - 0.1
+		for sx in [-1.0, 1.0]:
+			var hx3: float = w / 2.0 * _station_at(stations, (a0 + a1) / 2.0, 2)
+			_box(dark, Vector3(sx * (hx3 - 0.02), sill + 0.02, -(a0 + a1) / 2.0), Vector3(0.08, 0.09, a1 - a0))
 
 
 static func _truck_kit() -> Dictionary:
@@ -542,12 +713,21 @@ var _lever: Node3D
 var _lever_base := Vector3.ZERO
 var _lever_target := Vector3.ZERO
 var _last_screen := ""
+var _hands: Array[MeshInstance3D] = []
+var _arms: Array = []
+var _shoulders: Array = []
 
 
-func build(shape_id: String, color: Color, cab_color := Color("#b5322a")) -> void:
+## Cars further away than this are fully hidden by haze, so they are not drawn.
+const DRAW_DISTANCE := 560.0
+
+
+## style (optional): {"rim", "rim_color", "caliper", "accent", "badge", "plate"} plus
+## any KIT_KEYS flags. Traffic passes only a rim; the player and bosses get full kits.
+func build(shape_id: String, color: Color, cab_color := Color("#b5322a"), style := {}) -> void:
 	shape = Data.SHAPES[shape_id]
 	_shape_id = shape_id
-	var kit := _kit(shape_id)
+	var kit := _kit(shape_id, style)
 	_body = Node3D.new()
 	add_child(_body)
 
@@ -559,7 +739,7 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a")) -> voi
 			mat(Color("#d9dde1"), 0.0, 0.15, 0.95), mat(Color("#e8e6dc"), 0.0, 0.6), mat(Color("#fff6d8"), 2.0)]
 	else:
 		mats = [paint(color), _glass(), mat(Color("#18191b"), 0.0, 0.6), mat(Color("#d9dde1"), 0.0, 0.15, 0.95),
-			mat(Color("#e8e6dc"), 0.0, 0.6), mat(Color("#fff6d8"), 2.0)]
+			mat(Color("#e8e6dc"), 0.0, 0.6), mat(Color("#fff6d8"), 2.0), paint(Color(style.get("accent", "#f3f5ef")))]
 	for i in mats.size():
 		body.set_surface_override_material(i, mats[i])
 	_body.add_child(body)
@@ -571,7 +751,8 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a")) -> voi
 	_sig_r.visible = false
 
 	_wheel_r = kit.r
-	var wm := _wheel_mesh(kit.r, kit.ww)
+	var wm := _wheel_mesh(kit.r, kit.ww, style.get("rim", "steel" if kit.get("truck", false) else "5spoke"), Color(style.get("rim_color", "#c3c8ce")))
+	var cal_col: String = style.get("caliper", "#55595e")
 	for p in kit.wheels:
 		var wn := Node3D.new()
 		wn.position = Vector3(p[0], kit.r, p[1])
@@ -580,6 +761,35 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a")) -> voi
 		wn.add_child(mi)
 		add_child(wn)  # wheels stay level when the body rolls
 		_wheels.append(wn)
+		if not kit.get("truck", false):
+			# brake caliper: fixed to the car, visible through the spokes
+			var cal := MeshInstance3D.new()
+			cal.mesh = box_mesh(Vector3(0.05, kit.r * 0.34, kit.r * 0.42))
+			cal.material_override = mat(Color(cal_col), 0.0, 0.4, 0.3)
+			var outward := signf(p[0])
+			cal.position = Vector3(p[0] + outward * (kit.ww / 2.0 - 0.045), kit.r + kit.r * 0.3, p[1] + kit.r * 0.22)
+			add_child(cal)
+
+	if style.has("plate") or style.has("badge"):
+		var py: float = kit.get("plate_y", 0.6)
+		if style.has("plate"):
+			var pl := Label3D.new()
+			pl.text = style.plate
+			pl.font_size = 48
+			pl.pixel_size = 0.0019
+			pl.modulate = Color("#1b2a4a")
+			pl.outline_size = 0
+			pl.position = Vector3(0, py, 0.024)
+			_body.add_child(pl)
+		if style.has("badge"):
+			var bd := Label3D.new()
+			bd.text = style.badge
+			bd.font_size = 40
+			bd.pixel_size = 0.0018
+			bd.modulate = Color("#d9dde1")
+			bd.outline_size = 0
+			bd.position = Vector3(0.0, (PROFILES.get(shape_id, {}).get("body", [[0, 0.8]])[0][1]) - 0.34, 0.02)
+			_body.add_child(bd)
 
 	# soft contact shadow so cars sit on the road even beyond the shadow distance
 	var sh := MeshInstance3D.new()
@@ -589,6 +799,14 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a")) -> voi
 	sh.scale = Vector3(shape.w + 0.7, 1.0, shape.l + 0.9)
 	sh.position = Vector3(0, 0.02, -shape.l / 2.0)
 	add_child(sh)
+	_set_draw_distance(self)
+
+
+func _set_draw_distance(n: Node) -> void:
+	for c in n.get_children():
+		if c is GeometryInstance3D:
+			(c as GeometryInstance3D).visibility_range_end = DRAW_DISTANCE
+		_set_draw_distance(c)
 
 
 func _light(m: Mesh, material: Material) -> MeshInstance3D:
@@ -728,7 +946,7 @@ func build_interior() -> void:
 	var zr: float = -g[0]                     # rear of the cabin
 
 	var S := {}
-	var keys := ["carpet", "trim", "dash", "pad", "leather", "cloth", "chrome", "alu", "vent", "screen", "red", "stitch"]
+	var keys := ["carpet", "trim", "dash", "pad", "leather", "cloth", "chrome", "alu", "vent", "screen", "red", "stitch", "ambient", "map", "route"]
 	for k in keys:
 		S[k] = _new_st()
 
@@ -756,6 +974,15 @@ func build_interior() -> void:
 	_box(S.stitch, Vector3(0, yb + 0.076, dz + 0.53), Vector3(hb * 2.0 - 0.06, 0.004, 0.006))
 	_box(S.dash, Vector3(0, yb - 0.3, dz + 0.35), Vector3(hb * 2.0, 0.18, 0.4))               # lower dash
 	_box(S.alu, Vector3(0, yb - 0.11, dz + 0.605), Vector3(hb * 2.0 - 0.1, 0.025, 0.012))     # trim strip
+	_box(S.ambient, Vector3(0, yb - 0.126, dz + 0.607), Vector3(hb * 2.0 - 0.12, 0.004, 0.006))  # ambient light line
+	for sd in [-1.0, 1.0]:
+		_box(S.ambient, Vector3(sd * (hb - 0.062), yb - 0.07, (zr + dz) / 2.0), Vector3(0.004, 0.004, absf(dz - zr) * 0.9))
+	# sat-nav map under the radio text
+	_box(S.map, Vector3(0, yb - 0.172, dz + 0.6265), Vector3(0.23, 0.05, 0.002))
+	for rd in [[-0.06, 0.0, 0.11, 0.005], [0.03, -0.01, 0.005, 0.045], [0.07, 0.008, 0.07, 0.004]]:
+		_box(S.screen, Vector3(rd[0], yb - 0.172 + rd[1], dz + 0.628), Vector3(rd[2], rd[3], 0.002))
+	_box(S.route, Vector3(0.0, yb - 0.172, dz + 0.6285), Vector3(0.004, 0.04, 0.002))
+	_box(S.route, Vector3(-0.03, yb - 0.152, dz + 0.6285), Vector3(0.06, 0.004, 0.002))
 	_box(S.trim, Vector3(-ex, yb - 0.3, dz + 0.56), Vector3(0.46, 0.16, 0.02))               # glovebox lid
 	_box(S.chrome, Vector3(-ex + 0.17, yb - 0.25, dz + 0.575), Vector3(0.06, 0.015, 0.015))  # glovebox latch
 	for sd in [-1.0, 1.0]:
@@ -802,12 +1029,16 @@ func build_interior() -> void:
 		_box(S.dash, Vector3(sx, floor_y + 0.06, ez + 0.05), Vector3(0.4, 0.06, 0.45))                      # rails and base
 		_box(S.leather, Vector3(sx, cushion_top - 0.07, ez + 0.03), Vector3(0.46, 0.14, 0.5))
 		_box(S.cloth, Vector3(sx, cushion_top + 0.005, ez + 0.03), Vector3(0.28, 0.01, 0.44))                # insert
+		for q in 5:  # quilting
+			_box(S.stitch, Vector3(sx, cushion_top + 0.011, ez - 0.17 + q * 0.1), Vector3(0.28, 0.002, 0.006))
 		for sd in [-1.0, 1.0]:
 			_box(S.leather, Vector3(sx + sd * 0.21, cushion_top - 0.01, ez + 0.03), Vector3(0.07, 0.12, 0.48))  # cushion bolster
 		var back := Basis(Vector3.RIGHT, 0.2)
 		var bc := Vector3(sx, cushion_top + 0.3, ez + 0.34)
 		_box(S.leather, bc, Vector3(0.48, 0.62, 0.12), back)
 		_box(S.cloth, bc + back.z * -0.065, Vector3(0.28, 0.5, 0.01), back)
+		for q in 6:
+			_box(S.stitch, bc + back.z * -0.071 + back.y * (-0.22 + q * 0.088), Vector3(0.28, 0.006, 0.002), back)
 		for sd in [-1.0, 1.0]:
 			_box(S.leather, bc + back.x * sd * 0.22 + back.z * -0.05, Vector3(0.07, 0.56, 0.1), back)       # back bolster
 		var top: Vector3 = bc + back.y * 0.31
@@ -845,6 +1076,7 @@ func build_interior() -> void:
 		"leather": mat(Color("#2b2624"), 0.0, 0.55), "chrome": mat(Color("#c9ced3"), 0.0, 0.3, 0.35),
 		"alu": mat(Color("#8d939a"), 0.0, 0.45, 0.25), "vent": mat(Color("#0d0e10"), 0.0, 0.8),
 		"screen": mat(Color("#20425e"), 1.2, 0.2), "red": mat(Color("#d02a1a"), 1.0), "stitch": mat(Color("#b3462c"), 0.0, 0.6),
+		"ambient": mat(Color("#ff7a3a"), 1.4), "map": mat(Color("#0c1a26"), 0.6), "route": mat(Color("#f5b52e"), 2.5),
 	}
 	var cloth := StandardMaterial3D.new()  # unshaded: down-facing fabric would pick up the green ground light
 	cloth.albedo_color = Color("#4a4a4c")
@@ -938,7 +1170,8 @@ func build_interior() -> void:
 	_screen.pixel_size = 0.0008
 	_screen.modulate = Color("#cfe8ff")
 	_screen.outline_size = 0
-	_screen.position = Vector3(0, yb - 0.13, dz + 0.628)
+	_screen.position = Vector3(0, yb - 0.105, dz + 0.628)
+	_screen.font_size = 26
 	_body.add_child(_screen)
 
 	# steering wheel: tilted column with a spinning rim, spokes, airbag hub and paddles
@@ -980,6 +1213,44 @@ func build_interior() -> void:
 		paddle.material_override = mats.alu
 		_steer_node.add_child(paddle)
 
+	# the driver: gloved hands on the rim at a quarter to three, arms that follow the wheel
+	var glove := mat(Color("#141416"), 0.0, 0.45)
+	var sleeve := mat(Color("#2a2f38"), 0.0, 0.85)
+	for sd in [-1.0, 1.0]:
+		var hand := MeshInstance3D.new()
+		var cap := CapsuleMesh.new()
+		cap.radius = 0.04
+		cap.height = 0.14
+		cap.radial_segments = 10
+		cap.rings = 3
+		hand.mesh = cap
+		hand.material_override = glove
+		hand.position = Vector3(sd * 0.168, 0.01, -0.045)
+		hand.rotation = Vector3(PI / 2.0, 0, sd * 0.25)
+		_steer_node.add_child(hand)
+		var knuckles := MeshInstance3D.new()
+		knuckles.mesh = box_mesh(Vector3(0.05, 0.07, 0.1))
+		knuckles.material_override = glove
+		knuckles.position = Vector3(sd * 0.15, 0.03, -0.04)
+		_steer_node.add_child(knuckles)
+		_hands.append(hand)
+		var arm := []
+		for k in 2:
+			var seg := MeshInstance3D.new()
+			var cyl := CylinderMesh.new()
+			cyl.top_radius = 0.038 if k == 0 else 0.048
+			cyl.bottom_radius = 0.042 if k == 0 else 0.052
+			cyl.height = 1.0
+			cyl.radial_segments = 10
+			seg.mesh = cyl
+			seg.material_override = sleeve
+			seg.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			_body.add_child(seg)
+			arm.append(seg)
+		_arms.append(arm)
+	_shoulders = [Vector3(ex - 0.2, eye.y - 0.24, ez + 0.16), Vector3(ex + 0.2, eye.y - 0.24, ez + 0.16)]
+	_update_arms()
+
 	# gear lever on an H-pattern gate
 	_lever = Node3D.new()
 	_lever_base = Vector3(0, yb - 0.37, ez - 0.32)
@@ -1012,6 +1283,26 @@ func set_gauges(speed_frac: float, rpm_frac: float) -> void:
 func set_steer(angle: float) -> void:
 	if _steer_node:
 		_steer_node.rotation.y = -angle
+		_update_arms()
+
+
+## Upper arm from the shoulder to an elbow below and outside, forearm to the glove.
+func _update_arms() -> void:
+	for i in _hands.size():
+		var hand: Vector3 = _body.to_local(_hands[i].global_position)
+		var sh: Vector3 = _shoulders[i]
+		var sd := -1.0 if i == 0 else 1.0
+		var elbow: Vector3 = sh.lerp(hand, 0.52) + Vector3(sd * 0.07, -0.13, 0.02)
+		_segment(_arms[i][1], sh, elbow)
+		_segment(_arms[i][0], elbow, hand)
+
+
+func _segment(mi: MeshInstance3D, a: Vector3, b: Vector3) -> void:
+	var d := b - a
+	var y := d.normalized()
+	var x := y.cross(Vector3.FORWARD if absf(y.z) < 0.9 else Vector3.RIGHT).normalized()
+	var z := x.cross(y)
+	mi.transform = Transform3D(Basis(x, y * d.length(), z), (a + b) / 2.0)
 
 
 ## Cockpit readouts: gear and speed on the cluster, radio and trip on the screen.

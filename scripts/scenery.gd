@@ -588,7 +588,7 @@ func _update_oncoming(base_z: float, dt: float) -> void:
 		c.model.spin(c.v, dt)
 	if _oncoming.size() < 10 and randf() < dt * 2.0:
 		var lane := randi() % 4
-		var z := base_z + randf_range(420.0, 680.0)
+		var z := base_z + randf_range(620.0, 720.0)
 		for o in _oncoming:
 			if absf(o.x - OPP_LANES[lane]) < 1.0 and absf(o.z - z) < 40.0:
 				return
@@ -606,7 +606,7 @@ func _update_oncoming(base_z: float, dt: float) -> void:
 		if shape == "truck":
 			m.build(shape, Color(Data.TRUCK_BOX_COLORS.pick_random()), Color(Data.TRUCK_CAB_COLORS.pick_random()))
 		else:
-			m.build(shape, Color(Data.TRAFFIC_COLORS.pick_random()))
+			m.build(shape, Color(Data.TRAFFIC_COLORS.pick_random()), Color("#b5322a"), {"rim": ["steel", "5spoke", "multi"].pick_random()})
 		m.rotation.y = PI  # heading towards us
 		add_child(m)
 		var v := randf_range(22.0, 30.0) if shape == "truck" else randf_range(26.0, 35.0)

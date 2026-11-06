@@ -96,6 +96,7 @@ var ap_brake := false
 # test flags (see README): --autotest drives itself, --fast shrinks targets
 var autotest := false
 var auto_quit := 0.0
+var showroom := ""  # --showroom=rear|front: every player car parked in a row, simulation frozen (test view)
 var shots: Array = []  # [[seconds, path], ...] from --shot=SEC:PATH
 var _log_t := 0.0
 
@@ -108,6 +109,8 @@ func _ready() -> void:
 	for a in args:
 		if a.begins_with("--quit-after="):
 			auto_quit = float(a.split("=")[1])
+		if a.begins_with("--showroom"):
+			showroom = a.substr(11) if a.length() > 11 else "rear"
 		if a.begins_with("--cam="):  # chase, hood or cockpit (not saved)
 			Save.data.cam.mode = a.substr(6)
 		if a.begins_with("--shot="):
@@ -145,12 +148,30 @@ func _ready() -> void:
 	_go_menu()
 	if autotest:
 		_start_run()
+	if showroom != "":
+		_build_showroom()
 	for a in args:
 		if a.begins_with("--open="):  # e.g. --open=garage or --open=garage:up
 			var parts := a.substr(7).split(":")
 			_on_act(parts[0], parts[1] if parts.size() > 1 else "")
 			if parts.size() > 1:
 				_on_act("tab", parts[1])
+
+
+func _build_showroom() -> void:
+	for c in traffic:
+		c.model.queue_free()
+	traffic.clear()
+	player.model.visible = false
+	hud.show_screen("")
+	for i in Data.CARS.size():
+		var car: Dictionary = Data.CARS[i]
+		var m := CarModel.new()
+		m.build(car.shape, Color(car.color), Color("#b5322a"), car.style)
+		add_child(m)
+		m.position = Vector3(-5.4 + (i % 4) * 3.6, 0, -float(i / 4) * 9.0 - 4.0)
+		if i == 0:
+			m.set_brake(true)
 
 
 func _build_environment() -> void:
@@ -251,7 +272,7 @@ func _set_player_car() -> void:
 	if player.model:
 		player.model.queue_free()
 	player.model = CarModel.new()
-	player.model.build(c.shape, Color(c.color))
+	player.model.build(c.shape, Color(c.color), Color("#b5322a"), c.style)
 	add_child(player.model)
 	player.model.build_interior()
 	if sound:
@@ -282,7 +303,7 @@ func _reset_world() -> void:
 	player.v = 24.0
 	player.vx = 0.0
 	var z := 45.0
-	while z < 430.0:
+	while z < 620.0:
 		_try_spawn(z)
 		z += randf_range(14.0, 26.0)
 
@@ -334,7 +355,7 @@ func _try_spawn(z: float, lane_hint := -1, v_override := 0.0) -> bool:
 	if c.truck:
 		c.model.build(shape, Color(Data.TRUCK_BOX_COLORS.pick_random()), Color(Data.TRUCK_CAB_COLORS.pick_random()))
 	else:
-		c.model.build(shape, Color(Data.TRAFFIC_COLORS.pick_random()))
+		c.model.build(shape, Color(Data.TRAFFIC_COLORS.pick_random()), Color("#b5322a"), {"rim": ["steel", "5spoke", "5spoke", "multi"].pick_random()})
 	add_child(c.model)
 	traffic.append(c)
 	return true
@@ -407,17 +428,19 @@ func _update_traffic(dt: float) -> void:
 				c.x += step
 	for i in range(traffic.size() - 1, -1, -1):
 		var c := traffic[i]
-		if c.z < player.z - 90.0 or c.z > player.z + 800.0:
+		if c.z < player.z - 90.0 or c.z > player.z + 1100.0:
 			c.model.queue_free()
 			traffic.remove_at(i)
 	# keep the road populated
 	var dens := minf(7.2, 3.3 + run.stage * 0.55) if run else 3.4
+	# Cars are added and removed only far beyond the haze (and are not drawn
+	# past CarModel.DRAW_DISTANCE), so none of them pops in or out of view.
 	var ahead := 0
 	for c in traffic:
-		if c.z > player.z:
+		if c.z > player.z and c.z < player.z + 660.0:
 			ahead += 1
 	for k in 2:
-		if ahead < dens * 4.2 and _try_spawn(player.z + randf_range(390.0, 450.0)):
+		if ahead < dens * 6.4 and _try_spawn(player.z + randf_range(580.0, 650.0)):
 			ahead += 1
 	if player.v < 23.0 and randf() < dt * 0.6:
 		_try_spawn(player.z - 75.0, 0 if randf() < 0.6 else 1, randf_range(29.0, 33.0))
@@ -457,7 +480,7 @@ func _start_boss() -> void:
 	boss.is_boss = true
 	boss.title = bi.full
 	boss.model = CarModel.new()
-	boss.model.build(car.shape, Color(car.color))
+	boss.model.build(car.shape, Color(car.color), Color("#b5322a"), car.style)
 	var tag := Label3D.new()
 	tag.text = String(bi.full).to_upper()
 	tag.font_size = 72
@@ -874,6 +897,15 @@ func _sim_running() -> bool:
 
 
 func _process(delta: float) -> void:
+	if showroom != "":
+		scenery.update_view(0.0, -1.0, 0.0)
+		var front := showroom == "front"
+		cam.fov = 55.0
+		cam.global_transform = Transform3D(Basis(), Vector3(-9.5, 2.4, 6.0) if not front else Vector3(9.0, 2.2, -24.0))
+		cam.look_at(Vector3(-1.0, 0.6, -6.0) if not front else Vector3(-1.0, 0.6, -9.0))
+		hud.set_play_visible(false)
+		_check_shots()
+		return
 	var dt := minf(delta, 0.05)
 	if _sim_running():
 		if run and run.dying > 0.0:
@@ -903,6 +935,10 @@ func _process(delta: float) -> void:
 			if run:
 				print("[autotest] t=%.0f stage=%d phase=%s lives=%d score=%d v=%.0fkm/h dist=%.0f cars=%d" % [
 					Time.get_ticks_msec() / 1000.0, run.stage, run.phase, run.lives, run.score, player.v * 3.6, run.dist, traffic.size()])
+	_check_shots()
+
+
+func _check_shots() -> void:
 	for sh in shots:
 		if sh[0] > 0.0 and Time.get_ticks_msec() / 1000.0 > sh[0]:
 			sh[0] = -1.0

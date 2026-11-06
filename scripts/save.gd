@@ -26,7 +26,9 @@ func defaults() -> Dictionary:
 ## an empty array means the default spot in the bottom corner.
 const SETTING_DEFAULTS := {
 	"steer_sens": 1.0, "pedal_scale": 1.0, "haptics": true, "shake": true, "units": "kmh",
-	"gas_pos": [], "brake_pos": [],
+	"gas_pos": [], "brake_pos": [], "wheel_pos": [], "arrows_pos": [],
+	"steer_mode": "swipe",        # swipe, wheel or buttons
+	"orientation": "portrait",    # portrait or landscape; fixed, never follows the phone's sensor
 }
 
 

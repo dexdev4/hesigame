@@ -25,6 +25,8 @@ var screens := {}
 
 var gas: Pedal
 var brake: Pedal
+var wheel: SteerWheel
+var arrows: ArrowPad
 var pause_btn: Button
 var cam_btn: Button
 var _top_margin: MarginContainer
@@ -483,6 +485,10 @@ func _build_play() -> void:
 	gas = Pedal.new()
 	gas.kind = "gas"
 	play_layer.add_child(gas)
+	wheel = SteerWheel.new()
+	play_layer.add_child(wheel)
+	arrows = ArrowPad.new()
+	play_layer.add_child(arrows)
 	play_layer.visible = false
 
 
@@ -520,9 +526,24 @@ func role_at(pos: Vector2) -> String:
 		return "gas"
 	if brake.hit_rect().has_point(pos):
 		return "brake"
+	if wheel.visible and wheel.hit(pos):
+		return "wheel"
+	if arrows.visible:
+		var side := arrows.side_at(pos)
+		if side != "":
+			return side
+	if Save.setting("steer_mode") != "swipe":
+		return "none"  # only the steering control steers in wheel and button modes
 	if pause_btn.get_global_rect().grow(12).has_point(pos) or cam_btn.get_global_rect().grow(12).has_point(pos):
 		return "ui"
 	return ""
+
+
+## The dashboard gauges show speed and gear in the cockpit, so the HUD speedo hides there.
+func set_speedo_visible(on: bool) -> void:
+	var spd: Control = _kmh.get_parent()
+	if spd.visible != on:
+		spd.visible = on
 
 
 func set_pedals(g: bool, b: bool) -> void:
@@ -637,6 +658,7 @@ func banner(title: String, sub := "") -> void:
 
 
 func show_hint() -> void:
+	_hint.text = {"wheel": "Turn the wheel to steer", "buttons": "Hold the arrow buttons to steer"}.get(Save.setting("steer_mode"), "Swipe left or right anywhere to steer")
 	if _hint_tween:
 		_hint_tween.kill()
 	_hint_tween = create_tween()
@@ -1082,8 +1104,8 @@ func _build_settings() -> void:
 	v.add_child(_eyebrow("Gameplay"))
 	_slider_row(v, "steer_sens", "set", "save")
 	_slider_row(v, "pedal_scale", "set", "save")
-	var toggles := [["assist", "Lane assist"], ["haptics", "Vibration"], ["shake", "Camera shake"],
-		["sound", "Engine sound"], ["units", "Speed units"]]
+	var toggles := [["steer_mode", "Steering"], ["orientation", "Screen"], ["assist", "Lane assist"], ["haptics", "Vibration"],
+		["shake", "Camera shake"], ["sound", "Engine sound"], ["units", "Speed units"]]
 	var grid := GridContainer.new()
 	grid.columns = 2
 	grid.add_theme_constant_override("h_separation", 12)
@@ -1125,6 +1147,8 @@ func render_settings() -> void:
 		"assist": "ON" if Save.data.assist else "OFF", "haptics": "ON" if Save.setting("haptics") else "OFF",
 		"shake": "ON" if Save.setting("shake") else "OFF", "sound": "ON" if Save.data.sound else "OFF",
 		"units": "MPH" if Save.setting("units") == "mph" else "KM/H",
+		"steer_mode": {"swipe": "SWIPE", "wheel": "WHEEL", "buttons": "BUTTONS"}.get(Save.setting("steer_mode"), "SWIPE"),
+		"orientation": "LANDSCAPE" if Save.setting("orientation") == "landscape" else "PORTRAIT",
 	}
 	for key in states:
 		var b: Button = _set["t_" + key]
@@ -1138,13 +1162,41 @@ func layout_pedals() -> void:
 		return
 	var vp := get_viewport().get_visible_rect().size
 	var k := float(Save.setting("pedal_scale"))
+	var mode: String = Save.setting("steer_mode")
 	var gsz := Vector2(140, 262) * k
 	var bsz := Vector2(210, 176) * k
-	_place_pedal(gas, gsz, Save.setting("gas_pos"), Vector2(vp.x - 26 - gsz.x / 2.0, vp.y - _bottom - 30 - gsz.y / 2.0), vp)
-	_place_pedal(brake, bsz, Save.setting("brake_pos"), Vector2(26 + bsz.x / 2.0, vp.y - _bottom - 30 - bsz.y / 2.0), vp)
+	var base_y := vp.y - _bottom - 30.0
+	var gas_c := Vector2(vp.x - 26 - gsz.x / 2.0, base_y - gsz.y / 2.0)
+	var brake_c := Vector2(26 + bsz.x / 2.0, base_y - bsz.y / 2.0)
+	if mode != "swipe":
+		# steering control takes the bottom-left corner; the brake moves above the gas
+		brake_c = Vector2(vp.x - 26 - bsz.x / 2.0, base_y - gsz.y - 24.0 - bsz.y / 2.0)
+	_place_pedal(gas, gsz, Save.setting("gas_pos"), gas_c, vp)
+	_place_pedal(brake, bsz, Save.setting("brake_pos"), brake_c, vp)
+	wheel.visible = mode == "wheel"
+	arrows.visible = mode == "buttons"
+	var wd := 250.0 * k
+	_place_pedal(wheel, Vector2(wd, wd), Save.setting("wheel_pos"), Vector2(26 + wd / 2.0, base_y - wd / 2.0), vp)
+	var asz := Vector2(280, 130) * k
+	_place_pedal(arrows, asz, Save.setting("arrows_pos"), Vector2(26 + asz.x / 2.0, base_y - asz.y / 2.0), vp)
+	# keep the speedometer in the gap between the steering control and the pedals
+	var spd: Control = _kmh.get_parent()
+	var lft := 0.0
+	var rgt := vp.x
+	for c in [wheel, arrows]:
+		if c.visible and c.position.y + c.size.y > vp.y * 0.7 and c.position.x < vp.x / 2.0:
+			lft = maxf(lft, c.position.x + c.size.x + 8.0)
+	for c in [gas, brake]:
+		if c.position.y + c.size.y > vp.y - 220.0 and c.position.x > vp.x / 2.0:
+			rgt = minf(rgt, c.position.x - 8.0)
+	var mid := (lft + rgt) / 2.0 if lft > 0.0 else vp.x / 2.0
+	spd.anchor_left = 0.0
+	spd.anchor_right = 0.0
+	spd.offset_left = mid - 130.0
+	spd.offset_right = mid + 130.0
 
 
-func _place_pedal(p: Pedal, sz: Vector2, pos: Variant, fallback: Vector2, vp: Vector2) -> void:
+func _place_pedal(p: Control, sz: Vector2, pos: Variant, fallback: Vector2, vp: Vector2) -> void:
 	var c := fallback
 	if pos is Array and pos.size() == 2:
 		c = Vector2(float(pos[0]) * vp.x, float(pos[1]) * vp.y)
@@ -1153,10 +1205,11 @@ func _place_pedal(p: Pedal, sz: Vector2, pos: Variant, fallback: Vector2, vp: Ve
 	p.queue_redraw()
 
 
-func _store_pedal(p: Pedal) -> void:
+func _store_pedal(p: Control) -> void:
 	var vp := get_viewport().get_visible_rect().size
 	var c := p.position + p.size / 2.0
-	Save.data.settings["gas_pos" if p == gas else "brake_pos"] = [c.x / vp.x, c.y / vp.y]
+	var key: String = {gas: "gas_pos", brake: "brake_pos", wheel: "wheel_pos", arrows: "arrows_pos"}[p]
+	Save.data.settings[key] = [c.x / vp.x, c.y / vp.y]
 
 
 func swap_pedals() -> void:
@@ -1171,7 +1224,7 @@ func swap_pedals() -> void:
 func _build_pedal_editor() -> void:
 	var v := _screen("pedals", SIGN, 620)
 	v.add_child(_eyebrow("Pedal layout"))
-	v.add_child(_wrap("Drag the gas and brake pedals to where your thumbs rest. Change their size with Pedal size in Settings.", 22))
+	v.add_child(_wrap("Drag the pedals and the steering control to where your thumbs rest. Change their size with Pedal size in Settings.", 22))
 	var r := _row(12)
 	v.add_child(r)
 	r.add_child(_button("DONE", "amber", "pedal_done"))
@@ -1190,6 +1243,7 @@ func begin_pedal_edit() -> void:
 	play_layer.visible = true
 	for c in play_layer.get_children():
 		c.visible = c == gas or c == brake
+	layout_pedals()  # shows the steering control for the current mode
 	set_pedals(false, false)
 	show_screen("pedals")
 
@@ -1200,6 +1254,7 @@ func end_pedal_edit() -> void:
 	for c in play_layer.get_children():
 		c.visible = true
 	_hint.modulate.a = 0.0
+	layout_pedals()
 	play_layer.visible = _play_on
 
 
@@ -1209,14 +1264,16 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventScreenTouch:
 		var e := event as InputEventScreenTouch
 		if e.pressed:
-			for p in [gas, brake]:
-				if (p as Pedal).get_global_rect().has_point(e.position):
+			for p in [gas, brake, wheel, arrows]:
+				if (p as Control).visible and (p as Control).get_global_rect().has_point(e.position):
 					_drag = {"p": p, "off": p.position - e.position, "i": e.index}
-					p.pressed = true
+					if p is Pedal:
+						p.pressed = true
 					get_viewport().set_input_as_handled()
 					return
 		elif not _drag.is_empty() and e.index == _drag.i:
-			_drag.p.pressed = false
+			if _drag.p is Pedal:
+				_drag.p.pressed = false
 			_store_pedal(_drag.p)
 			_drag = {}
 			act.emit("pedal_moved", "")
@@ -1225,6 +1282,6 @@ func _input(event: InputEvent) -> void:
 		var e := event as InputEventScreenDrag
 		if e.index == _drag.i:
 			var vp := get_viewport().get_visible_rect().size
-			var p: Pedal = _drag.p
+			var p: Control = _drag.p
 			p.position = (e.position + _drag.off).clamp(Vector2(4, 4), vp - p.size - Vector2(4, 28))
 			get_viewport().set_input_as_handled()

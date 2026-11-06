@@ -121,6 +121,10 @@ func _ready() -> void:
 			showroom = a.substr(11) if a.length() > 11 else "rear"
 		if a.begins_with("--cam="):  # chase, hood or cockpit (not saved)
 			Save.data.cam.mode = a.substr(6)
+		if a.begins_with("--steer="):  # swipe, wheel or buttons (not saved)
+			Save.data.settings.steer_mode = a.substr(8)
+		if a.begins_with("--orient="):  # portrait or landscape (not saved)
+			Save.data.settings.orientation = a.substr(9)
 		if a.begins_with("--autospeed="):
 			auto_speed = float(a.substr(12))
 		if a.begins_with("--car="):  # test drive another car (not saved)
@@ -136,6 +140,7 @@ func _ready() -> void:
 			var parts := a.substr(7).split(":", true, 1)
 			shots.append([float(parts[0]), parts[1]])
 
+	_apply_orientation()
 	_build_environment()
 	scenery = Scenery.new()
 	add_child(scenery)
@@ -537,14 +542,31 @@ func _update_traffic(dt: float) -> void:
 
 # ---------------------------------------------------------------- boss
 
-func _lane_blocked(b: Vehicle, lane: int, dist: float) -> bool:
+## True if anything (traffic, a car changing into the lane, or the player)
+## occupies `lane` from `behind` metres behind the boss to `ahead` in front.
+func _lane_blocked(b: Vehicle, lane: int, ahead: float, behind := 6.0) -> bool:
 	var lx: float = Data.LANES[lane]
 	for c in traffic:
-		if absf(c.x - lx) < 2.3 and c.z + c.l > b.z - 4.0 and c.z < b.z + b.l + dist:
+		if (absf(c.x - lx) < 2.4 or c.tlane == lane) and c.z + c.l > b.z - behind and c.z < b.z + b.l + ahead:
 			return true
-	if absf(player.x - lx) < 2.3 and player.z + player.l > b.z - 9.0 and player.z < b.z + b.l + 10.0:
+	if absf(player.x - lx) < 2.4 and player.z + player.l > b.z - behind - 4.0 and player.z < b.z + b.l + ahead:
 		return true
 	return false
+
+
+## Nearest vehicle ahead of the boss in its path, and the gap to it.
+func _boss_leader(b: Vehicle) -> Array:
+	var gap := 1e9
+	var lead: Vehicle = null
+	var others: Array[Vehicle] = traffic.duplicate()
+	others.append(player)
+	for o in others:
+		if absf(o.x - b.x) < (o.w + b.w) / 2.0 + 0.35 and o.z + o.l > b.z:
+			var g := o.z - (b.z + b.l)
+			if g < gap:
+				gap = g
+				lead = o
+	return [lead, gap]
 
 
 func _remove_boss() -> void:
@@ -567,6 +589,13 @@ func _start_boss() -> void:
 	boss.w = sh.w
 	boss.l = sh.l
 	boss.is_boss = true
+	# start in a lane that is clear around the boss's starting spot
+	for l in [boss.lane, 3 - boss.lane, 0, 3]:
+		boss.lane = l
+		boss.x = Data.LANES[l]
+		if not _lane_blocked(boss, l, 12.0, 12.0):
+			break
+	boss.tlane = boss.lane
 	boss.title = bi.full
 	boss.model = CarModel.new()
 	boss.model.build(car.shape, Color(car.color), Color("#b5322a"), car.style)
@@ -601,27 +630,47 @@ func _update_boss(dt: float) -> void:
 	if boss == null:
 		return
 	var b := boss
+	# The boss paces the player, but drives like everyone else: it follows the
+	# car ahead and brakes for it, and only changes lane into a clear gap.
 	var tz := player.z + 16.0 + 13.0 * sin(t * 0.33)
 	var want := player.v + clampf((tz - b.z) * 0.6, -10.0, 12.0)
-	b.v += clampf(want - b.v, -8.0 * dt, 6.0 * dt)
+	var lg := _boss_leader(b)
+	var lead: Vehicle = lg[0]
+	var gap: float = lg[1]
+	if lead and gap < 45.0:
+		want = minf(want, lead.v + (gap - 7.0) * 0.45)
+	b.v += clampf(want - b.v, -(10.0 if gap < 8.0 else 7.0) * dt, 6.0 * dt)
+	if lead and gap < 0.8:
+		b.v = minf(b.v, lead.v)
+	b.v = maxf(0.0, b.v)
+	b.braking = want < b.v - 0.5
 	b.z += b.v * dt
+	if lead and b.z + b.l > lead.z - 0.3 and absf(lead.x - b.x) < (lead.w + b.w) / 2.0:
+		b.z = lead.z - b.l - 0.3  # never inside the car ahead
 	b.vx = 0.0
 	if b.tlane == b.lane:
-		if _lane_blocked(b, b.lane, 24.0):
+		b.sig_t = maxf(0.0, b.sig_t - dt)
+		if lead and gap < 30.0 and lead.v < want + 1.0 and b.sig_t <= 0.0:
 			var opts: Array[int] = []
 			for l in [b.lane - 1, b.lane + 1]:
-				if l >= 0 and l < 4 and not _lane_blocked(b, l, 30.0):
+				if l >= 0 and l < 4 and not _lane_blocked(b, l, 32.0, 8.0):
 					opts.append(l)
 			if not opts.is_empty():
 				b.tlane = opts.pick_random()
 	else:
 		var tx: float = Data.LANES[b.tlane]
+		# abort the move if the target lane fills up alongside
+		if _lane_blocked(b, b.tlane, 4.0, 2.0) and absf(tx - b.x) > 1.2:
+			b.tlane = b.lane
+			b.sig_t = 1.0
+			tx = Data.LANES[b.lane]
 		var d := tx - b.x
-		var step := 4.6 * dt * signf(d)
-		b.vx = 4.6 * signf(d)
+		var step := 4.0 * dt * signf(d)
+		b.vx = 4.0 * signf(d)
 		if absf(d) <= absf(step):
 			b.x = tx
 			b.lane = b.tlane
+			b.sig_t = 0.8  # settle before the next lane change
 		else:
 			b.x += step
 	if run == null or run.phase != "boss":
@@ -799,6 +848,8 @@ func _update_player(dt: float) -> void:
 	# steering: chase the swipe target with limited lateral speed and grip
 	var speed_k := clampf(player.v / 12.0, 0.25, 1.0)
 	var lat_max: float = st.lat * speed_k
+	if live and not autotest:
+		_analog_steer(dt)
 	var desired := clampf((target_x - player.x) * 3.2, -lat_max, lat_max)
 	var grip: float = st.grip * (1.0 - 0.22 * clampf(vr, 0.0, 1.2)) * (0.6 if on_shoulder else 1.0)
 	player.vx += clampf(desired - player.vx, -grip * dt, grip * dt)
@@ -1099,6 +1150,7 @@ func _sync_visuals(delta: float) -> void:
 	player.model.set_roll(clampf(-player.vx * 0.025, -0.06, 0.06))
 	player.model.set_pitch(clampf(-player_accel * 0.0028, -0.022, 0.03))
 	var cam_mode: String = Save.data.cam.mode
+	hud.set_speedo_visible(cam_mode != "cockpit")
 	# Invulnerability used to blink the car on and off, which in the chase view
 	# looked like a car popping in and out at the centre of the road. Now a
 	# soft glow pulses on the road under the car instead.
@@ -1129,6 +1181,18 @@ func _vib(ms: int) -> void:
 		Input.vibrate_handheld(ms)
 
 
+## Portrait or landscape, chosen in Settings. The screen is locked to it, so
+## turning the phone never switches orientation by accident.
+func _apply_orientation() -> void:
+	var land: bool = Save.setting("orientation") == "landscape"
+	DisplayServer.screen_set_orientation(DisplayServer.SCREEN_LANDSCAPE if land else DisplayServer.SCREEN_PORTRAIT)
+	get_tree().root.content_scale_size = Vector2i(1280, 720) if land else Vector2i(720, 1280)
+	if not OS.has_feature("mobile") and DisplayServer.get_name() != "headless":
+		DisplayServer.window_set_size(Vector2i(768, 432) if land else Vector2i(432, 768))
+	if hud:
+		hud.layout_pedals()
+
+
 func _update_camera(delta: float, mode: String) -> void:
 	if mode == "inspect":  # test view (--cam=inspect): looks across the cabin from the back seat
 		var e: Vector3 = player.model.cockpit_eye()
@@ -1138,6 +1202,10 @@ func _update_camera(delta: float, mode: String) -> void:
 		cam.global_transform = player.model.body_node().global_transform * Transform3D(Basis.looking_at(Vector3(e.x * 0.6, e.y - 0.35, e.z - 0.7) - from), from)
 		return
 	var cfg := Save.cam(mode)
+	# portrait keeps the horizontal field of view; landscape keeps a vertical one
+	var land := get_viewport().get_visible_rect().size.x > get_viewport().get_visible_rect().size.y
+	cam.keep_aspect = Camera3D.KEEP_HEIGHT if land else Camera3D.KEEP_WIDTH
+	var fov_k := 0.82 if land else 1.0
 	var speed_k := clampf(player.v / 70.0, 0.0, 1.0)
 	var pitch := Basis(Vector3.RIGHT, deg_to_rad(cfg.angle))
 	cam_x = lerpf(cam_x, player.x * 0.62, minf(1.0, delta * 3.5))
@@ -1145,7 +1213,7 @@ func _update_camera(delta: float, mode: String) -> void:
 	if mode == "chase":
 		# high chase view so the next few cars are readable
 		cam.near = 0.5
-		cam.fov = cfg.fov + 12.0 * speed_k
+		cam.fov = (cfg.fov + 12.0 * speed_k) * fov_k
 		var jitter := Vector3.ZERO
 		if shake > 0.0:
 			jitter = Vector3(randf_range(-1, 1), randf_range(-1, 1), 0) * 0.35 * shake * _shake_k()
@@ -1153,7 +1221,7 @@ func _update_camera(delta: float, mode: String) -> void:
 		return
 	# hood and cockpit ride on the car body, so they lean and dip with it
 	cam.near = 0.05
-	cam.fov = cfg.fov + 8.0 * speed_k
+	cam.fov = (cfg.fov + 8.0 * speed_k) * fov_k
 	var eye: Vector3 = player.model.cockpit_eye() if mode == "cockpit" else player.model.hood_eye()
 	eye += Vector3(0, cfg.height, -cfg.dist)
 	var buzz := Vector3(randf_range(-1, 1), randf_range(-1, 1), 0) * (0.003 * speed_k + 0.04 * shake) * _shake_k()
@@ -1201,6 +1269,53 @@ func _update_hud() -> void:
 
 # ---------------------------------------------------------------- input
 
+var _steer_val := 0.0
+var _steer_active := false
+
+
+## Wheel and button steering: the input sets how far ahead of the car the
+## steering target sits, so the car's sideways speed follows the input
+## smoothly and stops when you centre the wheel or let go of the button.
+func _analog_steer(dt: float) -> void:
+	var mode: String = Save.setting("steer_mode")
+	var held := false
+	var left := false
+	var right := false
+	for k in touches:
+		match touches[k].role:
+			"wheel":
+				held = true
+			"left":
+				left = true
+			"right":
+				right = true
+	hud.wheel.held = held
+	hud.arrows.left_on = left
+	hud.arrows.right_on = right
+	if mode == "wheel":
+		if not held:
+			hud.wheel.angle = move_toward(hud.wheel.angle, 0.0, 7.0 * dt)  # springs back to centre
+		var raw := hud.wheel.angle / SteerWheel.MAX_ANGLE
+		_steer_val = 0.0 if absf(raw) < 0.04 else raw
+		held = held or absf(_steer_val) > 0.0
+	elif mode == "buttons":
+		var want := (1.0 if right else 0.0) - (1.0 if left else 0.0)
+		_steer_val = move_toward(_steer_val, want, (4.0 if want != 0.0 else 7.0) * dt)  # eases in and out
+		held = absf(_steer_val) > 0.01
+	else:
+		return
+	if not _live():
+		return
+	if held:
+		var lead := 1.7 * float(Save.setting("steer_sens"))
+		target_x = clampf(player.x + _steer_val * lead, -(Data.RAIL + 1.0), Data.RAIL + 1.0)
+		_steer_active = true
+	elif _steer_active:
+		_steer_active = false
+		# lane assist: settle into the lane the car is heading for
+		target_x = Data.LANES[Data.nearest_lane(player.x + player.vx * 0.3)] if Save.data.assist else player.x
+
+
 func _refresh_inputs() -> void:
 	var tg := false
 	var tb := false
@@ -1222,6 +1337,8 @@ func _input(event: InputEvent) -> void:
 			if role == "":
 				role = "steer"
 			touches[e.index] = {"role": role, "x": e.position.x}
+			if role == "wheel":
+				touches[e.index]["a"] = (e.position - hud.wheel.centre()).angle()
 		else:
 			var tt: Variant = touches.get(e.index)
 			touches.erase(e.index)
@@ -1240,6 +1357,10 @@ func _input(event: InputEvent) -> void:
 			return
 		var dx: float = e.position.x - tt.x
 		tt.x = e.position.x
+		if tt.role == "wheel":
+			var a: float = (e.position - hud.wheel.centre()).angle()
+			hud.wheel.angle = clampf(hud.wheel.angle + wrapf(a - tt.a, -PI, PI), -SteerWheel.MAX_ANGLE, SteerWheel.MAX_ANGLE)
+			tt.a = a
 		if tt.role == "steer" and _live():
 			var vw := get_viewport().get_visible_rect().size
 			var sens: float = (16.0 if vw.y > vw.x else 13.0) * float(Save.setting("steer_sens"))
@@ -1381,6 +1502,13 @@ func _on_act(action: String, arg: String) -> void:
 					sound.set_enabled(Save.data.sound)
 				"assist":
 					Save.data.assist = not Save.data.assist
+				"steer_mode":
+					var order := ["swipe", "wheel", "buttons"]
+					Save.data.settings.steer_mode = order[(order.find(Save.setting("steer_mode")) + 1) % order.size()]
+					hud.layout_pedals()
+				"orientation":
+					Save.data.settings.orientation = "portrait" if Save.setting("orientation") == "landscape" else "landscape"
+					_apply_orientation()
 				"units":
 					Save.data.settings.units = "kmh" if Save.setting("units") == "mph" else "mph"
 				_:

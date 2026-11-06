@@ -37,7 +37,9 @@ Tap **CAM** (top right) to switch between **Chase**, **Hood** and **Cockpit** vi
 Open **Settings** from the main menu or the pause menu. The game keeps drawing behind it, so camera changes preview live.
 - **Camera:** choose a view and set its field of view, height, distance (forward/back for hood and cockpit) and angle. **Reset this view** restores the defaults.
 - **Gameplay:** steering sensitivity, pedal size, lane assist, vibration, camera shake, engine sound, and speed in km/h or mph.
-- **Pedal layout:** **Edit pedal layout** lets you drag the gas and brake anywhere on screen. **Swap pedals** puts the gas on the left, and **Reset pedals** returns them to the bottom corners.
+- **Steering:** **Swipe** anywhere on the screen, an on-screen **Wheel** you turn with your thumb (it springs back to centre when you let go), or **Buttons** for left and right. With the wheel or buttons the car steers in proportion to your input, and lane assist settles it into a lane when you let go.
+- **Screen:** **Portrait** or **Landscape**. The game locks to the one you choose, so turning the phone never switches it by accident.
+- **Pedal layout:** **Edit pedal layout** lets you drag the gas, brake and steering wheel or buttons anywhere on screen. **Swap pedals** puts the gas on the left, and **Reset pedals** returns them to the bottom corners.
 
 ### How a run works
 
@@ -102,6 +104,7 @@ Arguments placed after `--` on the command line:
 - `--cam=chase|hood|cockpit`: start in that camera view (not saved). `--cam=inspect` looks across the cabin from the back seat.
 - `--open=settings` / `--open=pedal_edit`: open the settings screen or the pedal editor on start.
 - `--car=ID` / `--autospeed=M/S`: test-drive another car (not saved) and set how fast the test driver goes.
+- `--steer=swipe|wheel|buttons` / `--orient=portrait|landscape`: try a steering method or orientation without saving it.
 - `--idcolor`: draw each traffic car in a flat unique colour with no fog or scenery; with `--burst` it also logs where each car should be, to measure flicker.
 - `--demo-pops`: show a sample score message every second, to check where messages appear in each camera view.
 - `--burst=SECONDS:COUNT:DIR`: save COUNT consecutive frames from SECONDS onwards (for checking flicker).

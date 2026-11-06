@@ -797,6 +797,8 @@ var _lever: Node3D
 var _lever_base := Vector3.ZERO
 var _lever_target := Vector3.ZERO
 var _last_screen := ""
+var _msg: Label3D
+var _msg_until := 0
 var _hands: Array[MeshInstance3D] = []
 var _arms: Array = []
 var _shoulders: Array = []
@@ -1443,8 +1445,31 @@ func _segment(mi: MeshInstance3D, a: Vector3, b: Vector3) -> void:
 	mi.transform = Transform3D(Basis(x, y * d.length(), z), (a + b) / 2.0)
 
 
+## Shows a scoring or crash message on the infotainment screen for a moment.
+func show_message(text: String, kind := "") -> void:
+	if _screen == null:
+		return
+	if _msg == null:
+		_msg = Label3D.new()
+		_msg.font_size = 32
+		_msg.pixel_size = 0.0007
+		_msg.outline_size = 0
+		_msg.width = 300
+		_msg.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		_msg.position = _screen.position + Vector3(0, 0.004, 0.002)
+		_body.add_child(_msg)
+	_msg.text = text
+	_msg.modulate = Color("#f5b52e") if kind == "hot" else (Color("#ff5a45") if kind == "bad" else Color("#ffffff"))
+	_msg.visible = true
+	_screen.visible = false
+	_msg_until = Time.get_ticks_msec() + 1500
+
+
 ## Cockpit readouts: gear and speed on the cluster, radio and trip on the screen.
 func set_display(gear: int, speed: String, unit: String, trip: String) -> void:
+	if _msg and _msg.visible and Time.get_ticks_msec() > _msg_until:
+		_msg.visible = false
+		_screen.visible = true
 	if _display:
 		_display.text = "%d\n%s %s" % [gear, speed, unit]
 	if _screen:

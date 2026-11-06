@@ -588,6 +588,42 @@ func pop(text: String, kind := "") -> void:
 	tw.tween_callback(l.queue_free)
 
 
+## Small floating message at a screen position (usually just above the car).
+## It rises and fades; several in a row stack upwards instead of overlapping.
+func pop_at(text: String, kind: String, pos: Vector2) -> void:
+	var size := 24
+	var col := LINE
+	if kind == "hot":
+		size = 28
+		col = AMBER
+	elif kind == "bad":
+		col = TAIL
+	elif kind == "small":
+		col = MUTED
+	var l := _label(text, size, col, display_font)
+	l.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.7))
+	l.add_theme_constant_override("shadow_offset_y", 2)
+	l.add_theme_constant_override("outline_size", 6)
+	l.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.45))
+	l.modulate.a = 0.0
+	play_layer.add_child(l)
+	var live := 0
+	for c in play_layer.get_children():
+		if c.has_meta("float"):
+			live += 1
+	l.set_meta("float", true)
+	var sz := l.get_minimum_size()
+	var vp := get_viewport().get_visible_rect().size
+	var start := Vector2(clampf(pos.x - sz.x / 2.0, 8.0, vp.x - sz.x - 8.0), pos.y - sz.y - live * (sz.y + 2.0))
+	l.position = start
+	var tw := l.create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(l, "modulate:a", 1.0, 0.08)
+	tw.tween_property(l, "position:y", start.y - 30.0, 1.1).set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
+	tw.chain().tween_property(l, "modulate:a", 0.0, 0.25)
+	tw.chain().tween_callback(l.queue_free)
+
+
 func banner(title: String, sub := "") -> void:
 	_banner_t.text = title
 	_banner_s.text = sub

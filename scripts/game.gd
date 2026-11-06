@@ -99,7 +99,9 @@ var auto_quit := 0.0
 var showroom := ""  # --showroom=rear|front: every player car parked in a row, simulation frozen (test view)
 var shots: Array = []
 var burst: Array = []  # --burst=START:COUNT:DIR saves COUNT consecutive frames (test aid)
-var _burst_i := 0  # [[seconds, path], ...] from --shot=SEC:PATH
+var _burst_i := 0
+var demo_pops := false  # --demo-pops: show a sample score message every second (test aid)
+var _demo_t := 0.0  # [[seconds, path], ...] from --shot=SEC:PATH
 var _log_t := 0.0
 
 
@@ -115,6 +117,8 @@ func _ready() -> void:
 			showroom = a.substr(11) if a.length() > 11 else "rear"
 		if a.begins_with("--cam="):  # chase, hood or cockpit (not saved)
 			Save.data.cam.mode = a.substr(6)
+		if a == "--demo-pops":
+			demo_pops = true
 		if a.begins_with("--burst="):
 			var bp := a.substr(8).split(":", true, 2)
 			burst = [float(bp[0]), int(bp[1]), bp[2]]
@@ -214,7 +218,14 @@ func _build_environment() -> void:
 	env.fog_light_color = Color("#cdc6b6")
 	env.fog_light_energy = 1.0
 	env.fog_sun_scatter = 0.3
-	env.fog_density = 0.0052          # ~95% haze at the 560 m car draw distance
+	# Depth fog reaches 100% at 520 m on every renderer. Traffic is added
+	# further out (580 m+) and not drawn past 560 m, so no car can be seen
+	# appearing or disappearing, however fast you drive.
+	env.fog_mode = Environment.FOG_MODE_DEPTH
+	env.fog_density = 1.0
+	env.fog_depth_begin = 40.0
+	env.fog_depth_end = 520.0
+	env.fog_depth_curve = 1.7
 	env.fog_aerial_perspective = 0.55
 	env.fog_sky_affect = 0.25
 	env.glow_enabled = true
@@ -597,12 +608,29 @@ func _end_battle() -> void:
 		if run.lives <= 0:
 			_end_run("Lost the race to " + bi.full)
 			return
-		hud.pop("LOST TO %s · -1 LIFE" % String(bi.full).to_upper(), "bad")
+		_notify("LOST TO %s · -1 LIFE" % String(bi.full).to_upper(), "bad")
 		run.phase = "cruise"
 		run.rematch_t = 2.5
 
 
 # ---------------------------------------------------------------- scoring
+
+## Scoring and crash messages: small text floating just above your car in the
+## chase view, low on screen from the bonnet, and on the infotainment screen
+## in the cockpit, so they never cover the traffic ahead.
+func _notify(text: String, kind := "") -> void:
+	var mode: String = Save.data.cam.mode
+	if mode == "cockpit":
+		player.model.show_message(text, kind)
+		return
+	var vp := get_viewport().get_visible_rect().size
+	var pos := Vector2(vp.x / 2.0, vp.y * 0.66)
+	if mode == "chase":
+		var above := player.model.global_position + Vector3(0, float(Data.SHAPES[Data.car_by_id(Save.data.selected).shape].t) + 0.35, -player.l * 0.5)
+		if not cam.is_position_behind(above):
+			pos = cam.unproject_position(above)
+	hud.pop_at(text, kind, pos)
+
 
 func _mult() -> float:
 	return minf(8.0, 1.0 + run.combo * 0.35) if run else 1.0
@@ -622,7 +650,7 @@ func _add_score(base: float, label: String, combo: int, kind := "") -> void:
 	if run.phase == "boss":
 		run.b_score += pts
 	if label != "":
-		hud.pop("%s  +%s" % [label, Fmt.num(pts)], kind)
+		_notify("%s +%s" % [label, Fmt.num(pts)], kind)
 
 
 func _award(kind: String, c: Vehicle, clr: float) -> void:
@@ -696,9 +724,9 @@ func _hit(reason: String, other: Vehicle = null) -> void:
 	_vib(180)
 	if run.lives <= 0:
 		run.dying = 1.7
-		hud.pop(reason, "bad")
+		_notify(reason, "bad")
 	else:
-		hud.pop(reason + " · -1 LIFE", "bad")
+		_notify(reason + " · -1 LIFE", "bad")
 
 
 func _update_player(dt: float) -> void:
@@ -969,6 +997,11 @@ func _process(delta: float) -> void:
 			if run:
 				print("[autotest] t=%.0f stage=%d phase=%s lives=%d score=%d v=%.0fkm/h dist=%.0f cars=%d" % [
 					Time.get_ticks_msec() / 1000.0, run.stage, run.phase, run.lives, run.score, player.v * 3.6, run.dist, traffic.size()])
+	if demo_pops and run:
+		_demo_t += delta
+		if _demo_t > 1.0:
+			_demo_t = 0.0
+			_notify("NEAR MISS +%d" % randi_range(120, 480), ["", "hot"].pick_random())
 	_check_shots()
 
 

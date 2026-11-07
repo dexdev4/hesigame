@@ -1,2 +1,5 @@
-node_modules/
-android/android/
+# Godot
+.godot/
+*.apk
+*.aab
+build/

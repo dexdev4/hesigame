@@ -1,0 +1,720 @@
+class_name Scenery
+extends Node3D
+## The endless interstate: our four eastbound lanes, a grass median and the
+## westbound carriageway with oncoming traffic, plus everything along it.
+##
+## Nothing here is streamed. The road meshes stay under the player while their
+## shaders scroll; small repeating objects live in "loop" containers shifted by
+## (distance mod period); big one-off structures (overpasses, sign gantries,
+## billboards, farms) use "slots": a tiny pool re-dressed from a hash of the
+## slot number, so the same stretch of road always looks the same.
+
+const VIEW_AHEAD := 700.0
+const VIEW_BEHIND := 60.0
+const TREE_PERIOD := 600.0
+const SCROLL_PERIOD := 3600.0
+const OPP_X := -22.0                     # centre of the westbound carriageway
+const MEDIAN_X := -11.0                  # halfway between the two inner guardrails
+const OPP_LANES: Array[float] = [OPP_X - 5.4, OPP_X - 1.8, OPP_X + 1.8, OPP_X + 5.4]
+
+const PLACES := ["Oak Hollow", "Mercer", "Lakeview", "Granite Falls", "Port Ellis", "Ashford", "Red Mesa",
+	"Kingsbridge", "Dunmore", "Silver Creek", "Cedar Point", "Halloway", "Bristow", "New Carver"]
+const ADS := [
+	["REDLINE OIL", "Keeps it in the red", "#b0122a", "#f3f5ef"],
+	["MOTEL 4", "Next exit · Free coffee", "#1f4e8c", "#f5b52e"],
+	["BURGER BARN", "2 km · Open late", "#e0a020", "#2a1a08"],
+	["CLOSE PASSES PAY", "Drive like it matters", "#1b1e23", "#f5b52e"],
+	["GRIPMAX TYRES", "Corners on rails", "#2d4a36", "#f3f5ef"],
+	["KESTREL MOTORS", "Your first car. Your last chance.", "#f3f5ef", "#0d6a42"],
+]
+
+var _road_mats: Array[ShaderMaterial] = []
+var _grass_mat: ShaderMaterial
+var _loops: Array = []      # [container, period]
+var _slots: Array = []      # {period, offset, pool, setup}
+var _km_sign: Node3D
+var _km_label: Label3D
+var _gantry: Node3D
+var _clouds: Node3D
+var _oncoming: Array = []   # {model, x, z, v}
+var _t := 0.0
+
+var M := {}  # shared materials
+
+
+func _ready() -> void:
+	M.concrete = CarModel.mat(Color("#a9a59c"), 0.0, 0.9)
+	M.concrete_dark = CarModel.mat(Color("#7f7c75"), 0.0, 0.9)
+	M.steel = CarModel.mat(Color("#b9bfc5"), 0.0, 0.35, 0.6)
+	M.steel_dark = CarModel.mat(Color("#6c7278"), 0.0, 0.6, 0.4)
+	M.white = CarModel.mat(Color("#eceae2"), 0.0, 0.7)
+	M.amber = CarModel.mat(Color("#ffb020"), 2.5)
+	M.lamp = CarModel.mat(Color("#f4ecc8"), 2.0)
+	M.sign = CarModel.mat(Color("#0d6a42"), 0.0, 0.5)
+	M.wood = CarModel.mat(Color("#6b5238"), 0.0, 0.95)
+	M.wire = CarModel.mat(Color("#2a2c2e"), 0.0, 0.6)
+
+	var length := VIEW_AHEAD + VIEW_BEHIND
+	var mid_z := -(VIEW_AHEAD - VIEW_BEHIND) / 2.0
+
+	# --- road surfaces
+	for cx in [0.0, OPP_X]:
+		var mat := ShaderMaterial.new()
+		mat.shader = load("res://shaders/road.gdshader")
+		mat.set_shader_parameter("center_x", cx)
+		var road := MeshInstance3D.new()
+		var pm := PlaneMesh.new()
+		pm.size = Vector2(Data.RAIL * 2.0 + 1.0, length)
+		pm.subdivide_depth = 40
+		road.mesh = pm
+		road.material_override = mat
+		road.position = Vector3(cx, 0, mid_z)
+		road.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		add_child(road)
+		_road_mats.append(mat)
+	_grass_mat = ShaderMaterial.new()
+	_grass_mat.shader = load("res://shaders/grass.gdshader")
+	_grass_mat.set_shader_parameter("edge_r", Data.RAIL + 0.5)
+	_grass_mat.set_shader_parameter("edge_l", OPP_X - Data.RAIL - 0.5)
+	var grass := MeshInstance3D.new()
+	var gm := PlaneMesh.new()
+	gm.size = Vector2(1600, length + 600)
+	grass.mesh = gm
+	grass.material_override = _grass_mat
+	grass.position = Vector3(0, -0.03, mid_z - 300)
+	grass.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(grass)
+
+	# --- continuous rails, fence wires and power lines
+	var rails := [Data.RAIL, -Data.RAIL, OPP_X + Data.RAIL, OPP_X - Data.RAIL]
+	var static_parts := {M.steel: [], M.wire: [], M.wood: []}
+	for x in rails:
+		var face: float = -0.04 * signf(x)  # lobes sit on the road side of the posts
+		static_parts[M.steel].append([Vector3(x + face, 0.71, mid_z), Vector3(0.1, 0.13, length)])
+		static_parts[M.steel].append([Vector3(x + face, 0.55, mid_z), Vector3(0.1, 0.13, length)])
+		static_parts[M.wire].append([Vector3(x, 0.63, mid_z), Vector3(0.07, 0.05, length)])
+	for x in [Data.RAIL + 14.0, OPP_X - Data.RAIL - 12.0]:
+		for y in [0.55, 1.05]:
+			static_parts[M.wood].append([Vector3(x, y, mid_z), Vector3(0.05, 0.1, length)])
+	for dx in [-1.4, 0.0, 1.4]:
+		static_parts[M.wire].append([Vector3(Data.RAIL + 24.0 + dx, 11.15, mid_z), Vector3(0.03, 0.03, length)])
+	add_child(_merged(static_parts))
+
+	_build_loops()
+	_build_trees()
+	_build_far()
+	_build_km_sign()
+	_build_gantry()
+	_add_slot(1300.0, 420.0, 2, _setup_sign_gantry)
+	_add_slot(2100.0, 1150.0, 2, _setup_overpass)
+	_add_slot(900.0, 260.0, 2, _setup_billboard)
+	_add_slot(350.0, 90.0, 3, _setup_farm)
+
+
+# ---------------------------------------------------------------- building helpers
+
+## One MeshInstance from boxes grouped by material: {material: [[center, size, basis?], ...]}.
+func _merged(parts: Dictionary, shadows := true) -> MeshInstance3D:
+	var mesh := ArrayMesh.new()
+	var mats: Array = []
+	for m in parts:
+		if parts[m].is_empty():
+			continue
+		var st := SurfaceTool.new()
+		st.begin(Mesh.PRIMITIVE_TRIANGLES)
+		for b in parts[m]:
+			if b.size() > 2 and b[2] is Basis:
+				CarModel._box(st, b[0], b[1], b[2])
+			else:
+				CarModel._box(st, b[0], b[1])
+		st.commit(mesh)
+		mats.append(m)
+	var mi := MeshInstance3D.new()
+	mi.mesh = mesh
+	for i in mats.size():
+		mi.set_surface_override_material(i, mats[i])
+	if not shadows:
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return mi
+
+
+func _loop(period: float) -> Node3D:
+	var n := Node3D.new()
+	add_child(n)
+	_loops.append([n, period])
+	return n
+
+
+## local z positions for a loop: one every `period`, covering the view window.
+func _loop_zs(period: float) -> Array:
+	var zs := []
+	var z := VIEW_BEHIND + period
+	while z > -(VIEW_AHEAD + period):
+		zs.append(z)
+		z -= period
+	return zs
+
+
+func _build_loops() -> void:
+	# guardrail posts on all four rails, every 4 m
+	var posts := {M.steel_dark: []}
+	for z in _loop_zs(4.0):
+		if z < -220.0:
+			break
+		for x in [Data.RAIL + 0.08, -Data.RAIL - 0.08, OPP_X + Data.RAIL + 0.08, OPP_X - Data.RAIL - 0.08]:
+			posts[M.steel_dark].append([Vector3(x, 0.3, z), Vector3(0.12, 0.6, 0.12)])
+	_loop(4.0).add_child(_merged(posts, false))
+
+	# delineator posts with amber reflectors, every 25 m
+	var delin := {M.white: [], M.amber: []}
+	for z in _loop_zs(25.0):
+		for x in [Data.RAIL + 0.7, OPP_X - Data.RAIL - 0.7]:
+			delin[M.white].append([Vector3(x, 0.55, z), Vector3(0.1, 1.1, 0.1)])
+			delin[M.amber].append([Vector3(x, 0.95, z + 0.055), Vector3(0.07, 0.14, 0.02)])
+	_loop(25.0).add_child(_merged(delin, false))
+
+	# twin-arm lamps in the median, every 55 m
+	var lamps := {M.steel_dark: [], M.lamp: []}
+	for z in _loop_zs(55.0):
+		lamps[M.steel_dark].append([Vector3(MEDIAN_X, 5.0, z), Vector3(0.24, 10.0, 0.24)])
+		lamps[M.steel_dark].append([Vector3(MEDIAN_X, 10.0, z), Vector3(8.0, 0.16, 0.16)])
+		for s in [-1.0, 1.0]:
+			lamps[M.lamp].append([Vector3(MEDIAN_X + s * 3.9, 9.88, z), Vector3(1.0, 0.16, 0.38)])
+	_loop(55.0).add_child(_merged(lamps))
+
+	# farm fences, every 3 m
+	var fence := {M.wood: []}
+	for z in _loop_zs(3.0):
+		for x in [Data.RAIL + 14.0, OPP_X - Data.RAIL - 12.0]:
+			fence[M.wood].append([Vector3(x, 0.65, z), Vector3(0.12, 1.3, 0.12)])
+	_loop(3.0).add_child(_merged(fence, false))
+
+	# power-line poles, every 60 m
+	var poles := {M.wood: [], M.white: []}
+	for z in _loop_zs(60.0):
+		var x := Data.RAIL + 24.0
+		poles[M.wood].append([Vector3(x, 6.0, z), Vector3(0.3, 12.0, 0.3)])
+		poles[M.wood].append([Vector3(x, 11.0, z), Vector3(3.4, 0.18, 0.18)])
+		for dx in [-1.4, 0.0, 1.4]:
+			poles[M.white].append([Vector3(x + dx, 11.15, z), Vector3(0.1, 0.22, 0.1)])
+	_loop(60.0).add_child(_merged(poles))
+
+
+func _build_trees() -> void:
+	var holder := _loop(TREE_PERIOD)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 7
+	# One period of random trees and bushes, repeated so the view is always covered.
+	var pattern: Array = []
+	var z := 0.0
+	while z < TREE_PERIOD:
+		z += rng.randf_range(3.5, 9.0)
+		var right := rng.randf() < 0.55
+		var x := (Data.RAIL + 6.0 + rng.randf() * 60.0) if right else (OPP_X - Data.RAIL - 6.0 - rng.randf() * 60.0)
+		pattern.append({"z": z, "x": x, "k": rng.randf(), "s": rng.randf_range(0.8, 1.5), "bush": false})
+		if rng.randf() < 0.7:  # bushes close to the road and in the median
+			var bx := Data.RAIL + rng.randf_range(2.0, 9.0)
+			var r2 := rng.randf()
+			if r2 < 0.3:
+				bx = MEDIAN_X + rng.randf_range(-1.2, 1.2)
+			elif r2 < 0.55:
+				bx = OPP_X - Data.RAIL - rng.randf_range(2.0, 9.0)
+			pattern.append({"z": z + rng.randf_range(0, 4), "x": bx, "k": rng.randf(), "s": rng.randf_range(0.5, 1.1), "bush": true})
+
+	var items: Array = []
+	for rep in 3:
+		for p in pattern:
+			var it: Dictionary = p.duplicate()
+			it.z = -(p.z + rep * TREE_PERIOD) + VIEW_BEHIND
+			items.append(it)
+	var trunks: Array = []
+	var crowns: Array = []
+	var pines: Array = []
+	var bushes: Array = []
+	var tufts: Array = []
+	var rocks: Array = []
+	var shadows: Array = []
+	var vr := RandomNumberGenerator.new()
+	vr.seed = 31
+	for it in items:
+		var s: float = it.s
+		var pos := Vector3(it.x, 0, it.z)
+		if it.bush:
+			var r := 0.9 * s
+			bushes.append([Transform3D(Basis().scaled(Vector3(r * 1.4, r * 0.8, r * 1.2)), pos + Vector3(0, r * 0.5, 0)),
+				Color("#3b5a2b").lerp(Color("#56703a"), it.k)])
+			continue
+		var pine: bool = it.k > 0.5
+		var birch: bool = not pine and vr.randf() < 0.18
+		var trunk_h := (1.6 if pine else 2.6) * s
+		var bark := Color("#d9d6cc") if birch else Color("#4f3d2a").lerp(Color("#3a2d20"), vr.randf())
+		trunks.append([Transform3D(Basis().scaled(Vector3(s, trunk_h, s)), pos + Vector3(0, trunk_h / 2.0, 0)), bark])
+		var tint := vr.randf_range(-0.06, 0.06)
+		if pine:
+			# tiered spruce: three stacked cones
+			var h: float = (6.0 + it.k * 6.0) * s
+			var r: float = (1.6 + it.k) * s
+			var green := (Color("#24402a") if it.k > 0.75 else Color("#2c4a2c")).lightened(tint) if tint > 0 else (Color("#24402a") if it.k > 0.75 else Color("#2c4a2c")).darkened(-tint)
+			for t in 3:
+				var f := 1.0 - t * 0.28
+				pines.append([Transform3D(Basis().scaled(Vector3(r * f, h * 0.5 * f, r * f)), pos + Vector3(0, trunk_h + h * (0.12 + t * 0.26), 0)),
+					green.lightened(t * 0.04)])
+			shadows.append(Transform3D(Basis().scaled(Vector3(r * 2.6, 1, r * 2.6)), pos + Vector3(0.6, 0.03, 0.3)))
+		else:
+			var r2: float = (2.0 + it.k * 3.0) * s
+			var leaf_c := (Color("#3e5a2e") if it.k > 0.25 else Color("#4c6a35")).lerp(Color("#6b7a3a"), vr.randf() * 0.35)
+			if birch:
+				leaf_c = Color("#6f8a3e")
+			crowns.append([Transform3D(Basis().scaled(Vector3(r2, r2 * 0.9, r2)), pos + Vector3(0, trunk_h + r2 * 0.55, 0)), leaf_c])
+			crowns.append([Transform3D(Basis().scaled(Vector3(r2, r2, r2) * 0.6), pos + Vector3(r2 * 0.45, trunk_h + r2 * 0.9, r2 * 0.2)), leaf_c.lightened(0.08)])
+			crowns.append([Transform3D(Basis().scaled(Vector3(r2, r2, r2) * 0.55), pos + Vector3(-r2 * 0.4, trunk_h + r2 * 0.75, -r2 * 0.25)), leaf_c.darkened(0.08)])
+			shadows.append(Transform3D(Basis().scaled(Vector3(r2 * 2.4, 1, r2 * 2.4)), pos + Vector3(r2 * 0.4, 0.03, r2 * 0.2)))
+
+	# grass tufts and rocks along the verges and median, and a dense treeline in the distance
+	for rep2 in 3:
+		for k in 1800:
+			var z2 := -vr.randf() * TREE_PERIOD - rep2 * TREE_PERIOD + VIEW_BEHIND
+			var band := vr.randf()
+			var x2: float
+			if band < 0.45:
+				x2 = Data.RAIL + vr.randf_range(0.8, 13.0)
+			elif band < 0.6:
+				x2 = MEDIAN_X + vr.randf_range(-1.8, 1.8)
+			else:
+				x2 = OPP_X - Data.RAIL - vr.randf_range(0.8, 11.0)
+			var hgt := vr.randf_range(0.25, 0.7)
+			var col := Color("#4d6a2c").lerp(Color("#9a8f52"), vr.randf() * 0.7)
+			tufts.append([Transform3D(Basis(Vector3.UP, vr.randf() * TAU).scaled(Vector3(vr.randf_range(0.15, 0.35), hgt, vr.randf_range(0.15, 0.35))), Vector3(x2, hgt / 2.0, z2)), col])
+		for k in 40:
+			var z3 := -vr.randf() * TREE_PERIOD - rep2 * TREE_PERIOD + VIEW_BEHIND
+			var x3 := (Data.RAIL + vr.randf_range(3.0, 20.0)) * (1.0 if vr.randf() < 0.6 else -1.0)
+			if x3 < 0.0:
+				x3 = OPP_X - Data.RAIL - vr.randf_range(3.0, 20.0)
+			var rs := vr.randf_range(0.3, 1.0)
+			rocks.append([Transform3D(Basis(Vector3.UP, vr.randf() * TAU).scaled(Vector3(rs * 1.3, rs * 0.6, rs)), Vector3(x3, rs * 0.2, z3)),
+				Color("#8a8679").lerp(Color("#6b675e"), vr.randf())])
+		for k in 420:
+			var z4 := -vr.randf() * TREE_PERIOD - rep2 * TREE_PERIOD + VIEW_BEHIND
+			var x4 := Data.RAIL + vr.randf_range(75.0, 170.0) if vr.randf() < 0.5 else OPP_X - Data.RAIL - vr.randf_range(75.0, 170.0)
+			var th := vr.randf_range(9.0, 16.0)
+			var tr := vr.randf_range(2.2, 3.6)
+			pines.append([Transform3D(Basis().scaled(Vector3(tr, th, tr)), Vector3(x4, th / 2.0, z4)), Color("#2a4229").lerp(Color("#3b5230"), vr.randf())])
+
+	var trunk_mesh := CylinderMesh.new()
+	trunk_mesh.top_radius = 0.16
+	trunk_mesh.bottom_radius = 0.26
+	trunk_mesh.height = 1.0
+	trunk_mesh.radial_segments = 6
+	var crown_mesh := SphereMesh.new()
+	crown_mesh.radius = 1.0
+	crown_mesh.height = 1.8
+	crown_mesh.radial_segments = 9
+	crown_mesh.rings = 5
+	var pine_mesh := CylinderMesh.new()
+	pine_mesh.top_radius = 0.0
+	pine_mesh.bottom_radius = 1.0
+	pine_mesh.height = 1.0
+	pine_mesh.radial_segments = 8
+	var leaf := StandardMaterial3D.new()
+	leaf.vertex_color_use_as_albedo = true
+	leaf.roughness = 1.0
+	var tuft_mesh := CylinderMesh.new()
+	tuft_mesh.top_radius = 0.0
+	tuft_mesh.bottom_radius = 1.0
+	tuft_mesh.height = 1.0
+	tuft_mesh.radial_segments = 5
+	tuft_mesh.rings = 1
+	var rock_mesh := SphereMesh.new()
+	rock_mesh.radius = 1.0
+	rock_mesh.height = 2.0
+	rock_mesh.radial_segments = 7
+	rock_mesh.rings = 4
+	for pair in [[trunks, trunk_mesh], [crowns, crown_mesh], [pines, pine_mesh], [bushes, crown_mesh], [tufts, tuft_mesh], [rocks, rock_mesh]]:
+		var list: Array = pair[0]
+		var mm := MultiMesh.new()
+		mm.transform_format = MultiMesh.TRANSFORM_3D
+		mm.use_colors = true
+		mm.mesh = pair[1]
+		mm.instance_count = list.size()
+		for i in list.size():
+			mm.set_instance_transform(i, list[i][0])
+			mm.set_instance_color(i, list[i][1])
+		var mmi := MultiMeshInstance3D.new()
+		mmi.multimesh = mm
+		mmi.material_override = leaf
+		if pair[1] == tuft_mesh or pair[1] == rock_mesh:
+			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		holder.add_child(mmi)
+	# soft contact shadows under the trees, so they sit on the ground beyond the shadow distance
+	CarModel._shadow()
+	var smm := MultiMesh.new()
+	smm.transform_format = MultiMesh.TRANSFORM_3D
+	smm.mesh = CarModel._shadow_mesh
+	smm.instance_count = shadows.size()
+	for i in shadows.size():
+		smm.set_instance_transform(i, shadows[i])
+	var smi := MultiMeshInstance3D.new()
+	smi.multimesh = smm
+	smi.material_override = CarModel._shadow_mat
+	smi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	holder.add_child(smi)
+
+
+## Mountains and clouds on the horizon. They stay at a fixed distance.
+func _build_far() -> void:
+	var far := Node3D.new()
+	add_child(far)
+	var shader: Shader = load("res://shaders/far.gdshader")
+	# Drawn at 900 m and 600 m but scaled to look like ranges 2 km and 1.3 km away.
+	var layers := [[900.0, 112.0, 32.0, Color("#5e6f86"), Color("#a2adb9"), 0.58, 11],
+		[600.0, 53.0, 12.0, Color("#4b5f38"), Color("#76844f"), 0.42, 23]]
+	for L in layers:
+		var st := SurfaceTool.new()
+		st.begin(Mesh.PRIMITIVE_TRIANGLES)
+		var rng := RandomNumberGenerator.new()
+		rng.seed = L[6]
+		var steps := 90
+		var phase := rng.randf() * 10.0
+		var prev_top := Vector3.ZERO
+		var prev_bot := Vector3.ZERO
+		for i in steps + 1:
+			var a := deg_to_rad(lerpf(-120.0, 120.0, float(i) / steps))
+			var hgt: float = L[2] + L[1] * (0.5 + 0.3 * sin(a * 7.0 + phase) + 0.2 * sin(a * 17.0 + phase * 2.0)) * rng.randf_range(0.8, 1.1)
+			var dir := Vector3(sin(a), 0, -cos(a))
+			var top: Vector3 = dir * L[0] + Vector3(0, hgt, 0)
+			var bot: Vector3 = dir * L[0] + Vector3(0, -20, 0)
+			if i > 0:
+				st.add_vertex(prev_bot)
+				st.add_vertex(prev_top)
+				st.add_vertex(top)
+				st.add_vertex(prev_bot)
+				st.add_vertex(top)
+				st.add_vertex(bot)
+			prev_top = top
+			prev_bot = bot
+		var mi := MeshInstance3D.new()
+		mi.mesh = st.commit()
+		var m := ShaderMaterial.new()
+		m.shader = shader
+		m.set_shader_parameter("base_col", L[3])
+		m.set_shader_parameter("top_col", L[4])
+		m.set_shader_parameter("haze", L[5])
+		m.set_shader_parameter("max_h", L[1] + L[2])
+		mi.material_override = m
+		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		far.add_child(mi)
+
+	# clouds: soft radial puffs, a few quads each
+	_clouds = Node3D.new()
+	far.add_child(_clouds)
+	var g := Gradient.new()
+	g.set_color(0, Color(1, 1, 1, 1))
+	g.set_color(1, Color(1, 1, 1, 0))
+	g.add_point(0.4, Color(1, 1, 1, 0.75))
+	var tex := GradientTexture2D.new()
+	tex.gradient = g
+	tex.fill = GradientTexture2D.FILL_RADIAL
+	tex.fill_from = Vector2(0.5, 0.5)
+	tex.fill_to = Vector2(0.5, 0.0)
+	var cm := ShaderMaterial.new()
+	cm.shader = shader
+	cm.set_shader_parameter("cloud", true)
+	cm.set_shader_parameter("puff", tex)
+	var q := QuadMesh.new()
+	q.size = Vector2(1, 1)
+	var rng2 := RandomNumberGenerator.new()
+	rng2.seed = 99
+	for i in 20:
+		var a := deg_to_rad(rng2.randf_range(-75.0, 75.0))
+		var r := rng2.randf_range(430.0, 820.0)
+		var base := Vector3(sin(a) * r, rng2.randf_range(105.0, 200.0), -cos(a) * r)
+		var w := rng2.randf_range(105.0, 200.0)
+		for k in 4:
+			var puff := MeshInstance3D.new()
+			puff.mesh = q
+			puff.material_override = cm
+			puff.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			puff.position = base + Vector3(rng2.randf_range(-0.35, 0.35) * w, rng2.randf_range(-0.05, 0.12) * w, 0).rotated(Vector3.UP, -a)
+			puff.scale = Vector3(w * rng2.randf_range(0.45, 0.8), w * rng2.randf_range(0.22, 0.36), 1)
+			puff.rotation.y = -a
+			_clouds.add_child(puff)
+
+
+func _build_km_sign() -> void:
+	_km_sign = Node3D.new()
+	add_child(_km_sign)
+	var x := Data.RAIL + 1.6
+	_km_sign.add_child(_merged({CarModel.mat(Color("#8a9096")): [[Vector3(x, 1.2, 0), Vector3(0.12, 2.4, 0.12)]],
+		M.white: [[Vector3(x, 2.85, 0.0), Vector3(1.5, 1.0, 0.07)]], M.sign: [[Vector3(x, 2.85, 0.02), Vector3(1.4, 0.9, 0.07)]]}))
+	_km_label = Label3D.new()
+	_km_label.font_size = 64
+	_km_label.pixel_size = 0.006
+	_km_label.modulate = Color("#f3f5ef")
+	_km_label.position = Vector3(x, 2.85, 0.06)
+	_km_sign.add_child(_km_label)
+
+
+func _build_gantry() -> void:
+	_gantry = Node3D.new()
+	add_child(_gantry)
+	var parts := {M.steel_dark: [], M.white: [], M.sign: []}
+	for s in [-1.0, 1.0]:
+		parts[M.steel_dark].append([Vector3(s * (Data.RAIL + 0.7), 3.6, 0), Vector3(0.4, 7.2, 0.4)])
+	parts[M.steel_dark].append([Vector3(0, 6.95, 0), Vector3(Data.RAIL * 2 + 1.8, 0.5, 0.4)])
+	parts[M.sign].append([Vector3(0, 5.5, 0.1), Vector3(8.6, 2.3, 0.15)])
+	parts[M.white].append([Vector3(0, 5.5, 0.19), Vector3(8.2, 1.9, 0.02)])
+	parts[M.sign].append([Vector3(0, 5.5, 0.21), Vector3(7.9, 1.6, 0.02)])
+	for i in 10:
+		for r in 2:
+			var x := -Data.ROAD_HALF + i * 1.44 + (0.36 if r == 0 else 1.08)
+			parts[M.white].append([Vector3(x, 0.01, -0.36 - r * 0.72), Vector3(0.72, 0.02, 0.72)])
+	_gantry.add_child(_merged(parts))
+	var lbl := Label3D.new()
+	lbl.text = "FINISH"
+	lbl.font_size = 220
+	lbl.pixel_size = 0.0075
+	lbl.modulate = Color("#f3f5ef")
+	lbl.position = Vector3(0, 5.5, 0.24)
+	_gantry.add_child(lbl)
+	_gantry.visible = false
+
+
+# ---------------------------------------------------------------- slots
+
+func _add_slot(period: float, offset: float, count: int, setup: Callable) -> void:
+	var pool: Array[Node3D] = []
+	for i in count:
+		var n := Node3D.new()
+		n.set_meta("k", -999999)
+		add_child(n)
+		pool.append(n)
+	_slots.append({"period": period, "offset": offset, "pool": pool, "setup": setup})
+
+
+func _clear(n: Node3D) -> void:
+	for c in n.get_children():
+		c.queue_free()
+
+
+func _label(text: String, size: int, px: float, col: Color, pos: Vector3) -> Label3D:
+	var l := Label3D.new()
+	l.text = text
+	l.font_size = size
+	l.pixel_size = px
+	l.modulate = col
+	l.position = pos
+	l.outline_size = 0
+	l.line_spacing = -4
+	return l
+
+
+func _setup_sign_gantry(n: Node3D, k: int) -> void:
+	_clear(n)
+	var exit_no := 10 + posmod(k * 7, 89)
+	var a: String = PLACES[posmod(k * 3, PLACES.size())]
+	var b: String = PLACES[posmod(k * 5 + 2, PLACES.size())]
+	var c: String = PLACES[posmod(k * 11 + 5, PLACES.size())]
+	var parts := {M.steel_dark: [], M.white: [], M.sign: []}
+	for x in [Data.RAIL + 1.0, -Data.RAIL - 0.9]:
+		parts[M.steel_dark].append([Vector3(x, 4.0, 0), Vector3(0.45, 8.0, 0.45)])
+	parts[M.steel_dark].append([Vector3(0, 7.9, 0), Vector3(Data.RAIL * 2.0 + 2.4, 0.35, 0.5)])
+	parts[M.steel_dark].append([Vector3(0, 7.5, 0), Vector3(Data.RAIL * 2.0 + 2.4, 0.12, 0.3)])
+	for cx in [3.7, -3.4]:
+		parts[M.white].append([Vector3(cx, 6.5, 0.25), Vector3(6.4, 2.6, 0.06)])
+		parts[M.sign].append([Vector3(cx, 6.5, 0.28), Vector3(6.2, 2.4, 0.06)])
+	parts[M.white].append([Vector3(5.6, 5.0, 0.26), Vector3(2.4, 0.5, 0.05)])
+	n.add_child(_merged(parts))
+	var white := Color("#f3f5ef")
+	n.add_child(_label("%s\n%s" % [a, "1 km"], 150, 0.011, white, Vector3(3.7, 6.55, 0.32)))
+	n.add_child(_label("%s   %d\n%s   %d" % [b, 12 + posmod(k * 13, 60), c, 40 + posmod(k * 17, 90)], 130, 0.01, white, Vector3(-3.4, 6.5, 0.32)))
+	var ex := _label("EXIT %d" % exit_no, 90, 0.008, Color("#0d6a42"), Vector3(5.6, 5.0, 0.3))
+	n.add_child(ex)
+
+
+func _setup_overpass(n: Node3D, _k: int) -> void:
+	_clear(n)
+	var left := OPP_X - Data.RAIL - 9.0
+	var right := Data.RAIL + 9.0
+	var cx := (left + right) / 2.0
+	var span := right - left
+	var parts := {M.concrete: [], M.concrete_dark: [], M.steel: []}
+	parts[M.concrete].append([Vector3(cx, 7.0, 0), Vector3(span, 0.8, 12.0)])
+	parts[M.concrete_dark].append([Vector3(cx, 6.45, 0), Vector3(span, 0.3, 10.0)])
+	for z in [-5.6, 5.6]:
+		parts[M.concrete].append([Vector3(cx, 7.85, z), Vector3(span, 0.9, 0.4)])
+		parts[M.steel].append([Vector3(cx, 8.45, z), Vector3(span, 0.08, 0.08)])
+	for x in [Data.RAIL + 2.6, MEDIAN_X, OPP_X - Data.RAIL - 2.6]:
+		for z in [-3.2, 3.2]:
+			parts[M.concrete].append([Vector3(x, 3.15, z), Vector3(1.1, 6.3, 1.1)])
+		parts[M.concrete_dark].append([Vector3(x, 6.1, 0), Vector3(1.6, 0.4, 9.0)])
+	# embankments at both ends
+	for s in [-1.0, 1.0]:
+		var ex: float = right + 7.0 if s > 0 else left - 7.0
+		parts[M.concrete_dark].append([Vector3(ex, 2.3, 0), Vector3(16.0, 3.0, 14.0), Basis(Vector3.BACK, s * 0.42)])
+		parts[M.concrete].append([Vector3(ex - s * 7.8, 3.8, 0), Vector3(1.4, 7.6, 13.0)])
+	n.add_child(_merged(parts))
+	var stripe := _label("REDLINE COUNTY", 120, 0.012, Color("#5b5953"), Vector3(-2.0, 7.05, 6.02))
+	n.add_child(stripe)
+
+
+func _setup_billboard(n: Node3D, k: int) -> void:
+	_clear(n)
+	var ad: Array = ADS[posmod(k, ADS.size())]
+	var right := posmod(k, 3) != 1
+	var x := Data.RAIL + 13.0 if right else OPP_X - Data.RAIL - 13.0
+	var root := Node3D.new()
+	root.position = Vector3(x, 0, 0)
+	root.rotation.y = 0.35 if right else -0.35
+	n.add_child(root)
+	var bg := CarModel.mat(Color(ad[2]), 0.0, 0.6)
+	var parts := {M.steel_dark: [], M.white: [], bg: []}
+	for dx in [-3.5, 3.5]:
+		parts[M.steel_dark].append([Vector3(dx, 3.5, 0), Vector3(0.35, 7.0, 0.35)])
+	parts[M.steel_dark].append([Vector3(0, 6.8, -0.2), Vector3(12.6, 0.15, 1.0)])  # catwalk
+	parts[M.white].append([Vector3(0, 9.4, 0), Vector3(12.8, 5.0, 0.3)])
+	parts[bg].append([Vector3(0, 9.4, 0.08), Vector3(12.2, 4.4, 0.3)])
+	root.add_child(_merged(parts))
+	var fg := Color(ad[3])
+	root.add_child(_label(ad[0], 220, 0.02, fg, Vector3(0, 10.1, 0.26)))
+	root.add_child(_label(ad[1], 110, 0.016, fg, Vector3(0, 8.4, 0.26)))
+
+
+func _setup_farm(n: Node3D, k: int) -> void:
+	_clear(n)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = k * 7919 + 13
+	if rng.randf() < 0.3:
+		return  # open fields here
+	var right := rng.randf() < 0.55
+	var x := (Data.RAIL + rng.randf_range(40.0, 140.0)) if right else (OPP_X - Data.RAIL - rng.randf_range(40.0, 140.0))
+	var root := Node3D.new()
+	root.position = Vector3(x, 0, rng.randf_range(-60.0, 60.0))
+	root.rotation.y = rng.randf_range(-0.6, 0.6)
+	n.add_child(root)
+	var kind := rng.randi() % 3
+	var wall := CarModel.mat(Color("#8e2f25") if kind == 0 else Color("#e6e1d3"), 0.0, 0.9)
+	var roof := CarModel.mat(Color("#4a4d52") if kind != 0 else Color("#6a6a66"), 0.0, 0.7, 0.2)
+	var w := 10.0 if kind == 0 else 8.0
+	var d := 16.0 if kind == 0 else 10.0
+	var h := 6.0 if kind == 0 else 3.4
+	var parts := {wall: [[Vector3(0, h / 2.0, 0), Vector3(w, h, d)]], roof: [], M.white: []}
+	var pitch := 0.62 if kind == 0 else 0.5
+	var half := w / 2.0 / cos(pitch) + 0.3
+	for s in [-1.0, 1.0]:
+		parts[roof].append([Vector3(s * w / 4.0, h + w / 4.0 * tan(pitch), 0), Vector3(half, 0.15, d + 0.6), Basis(Vector3.BACK, -s * pitch)])
+	# gable ends filled with a narrowing stack
+	for i in 4:
+		var f := (i + 0.5) / 4.0
+		parts[wall].append([Vector3(0, h + f * w / 2.0 * tan(pitch) * 0.95, 0), Vector3(w * (1.0 - f) * 0.98, w / 2.0 * tan(pitch) / 4.0, d - 0.1)])
+	if kind == 0:
+		parts[M.white].append([Vector3(0, 2.2, d / 2.0 + 0.02), Vector3(4.0, 4.4, 0.05)])
+		parts[wall].append([Vector3(0, 2.2, d / 2.0 + 0.05), Vector3(3.6, 4.0, 0.05)])
+	else:
+		parts[M.white].append([Vector3(-2.0, 1.1, d / 2.0 + 0.02), Vector3(1.0, 2.1, 0.05)])
+	root.add_child(_merged(parts))
+	if kind != 2 and rng.randf() < 0.7:  # grain silo
+		var silo := MeshInstance3D.new()
+		var cm := CylinderMesh.new()
+		cm.top_radius = 2.4
+		cm.bottom_radius = 2.4
+		cm.height = 12.0
+		silo.mesh = cm
+		silo.material_override = CarModel.mat(Color("#b8bcbf"), 0.0, 0.4, 0.7)
+		silo.position = Vector3(w / 2.0 + 4.0, 6.0, -d / 4.0)
+		root.add_child(silo)
+		var dome := MeshInstance3D.new()
+		var sm := SphereMesh.new()
+		sm.radius = 2.4
+		sm.height = 2.4
+		sm.is_hemisphere = true
+		dome.mesh = sm
+		dome.material_override = silo.material_override
+		dome.position = silo.position + Vector3(0, 6.0, 0)
+		root.add_child(dome)
+
+
+func _update_slots(base_z: float) -> void:
+	for sl in _slots:
+		var period: float = sl.period
+		var offset: float = sl.offset
+		var pool: Array = sl.pool
+		var k0 := int(floor((base_z - VIEW_BEHIND - offset) / period))
+		for i in pool.size():
+			var k := k0 + i
+			var n: Node3D = pool[posmod(k, pool.size())]
+			if n.get_meta("k") != k:
+				n.set_meta("k", k)
+				(sl.setup as Callable).call(n, k)
+			var zrel := k * period + offset - base_z
+			n.position.z = -zrel
+			n.visible = zrel < VIEW_AHEAD and zrel > -VIEW_BEHIND - 20.0
+
+
+# ---------------------------------------------------------------- oncoming traffic
+
+func _update_oncoming(base_z: float, dt: float) -> void:
+	for i in range(_oncoming.size() - 1, -1, -1):
+		var c: Dictionary = _oncoming[i]
+		c.z -= c.v * dt
+		if c.z < base_z - 90.0:
+			c.model.queue_free()
+			_oncoming.remove_at(i)
+			continue
+		c.model.position = Vector3(c.x, 0, -(c.z - base_z))
+		c.model.spin(c.v, dt)
+	if _oncoming.size() < 10 and randf() < dt * 2.0:
+		var lane := randi() % 4
+		var z := base_z + randf_range(400.0, 480.0)
+		for o in _oncoming:
+			if absf(o.x - OPP_LANES[lane]) < 1.0 and absf(o.z - z) < 40.0:
+				return
+		var r := randf()
+		var shape := "sedan"
+		if lane <= 1 and r < 0.2:
+			shape = "truck"
+		elif r < 0.3:
+			shape = "van"
+		elif r < 0.5:
+			shape = "suv"
+		elif r < 0.7:
+			shape = "hatch"
+		var m := CarModel.new()
+		if shape == "truck":
+			m.build(shape, Color(Data.TRUCK_BOX_COLORS.pick_random()), Color(Data.TRUCK_CAB_COLORS.pick_random()))
+		else:
+			m.build(shape, Color(Data.TRAFFIC_COLORS.pick_random()), Color("#b5322a"), {"rim": ["steel", "5spoke", "multi"].pick_random()})
+		m.rotation.y = PI  # heading towards us
+		# Place it before it is ever drawn. A new node sits at the origin (the
+		# player's position) until moved, so adding it unplaced showed the car
+		# right behind the player for one frame.
+		m.position = Vector3(OPP_LANES[lane], 0, -(z - base_z))
+		add_child(m)
+		var v := randf_range(22.0, 30.0) if shape == "truck" else randf_range(26.0, 35.0)
+		_oncoming.append({"model": m, "x": OPP_LANES[lane], "z": z, "v": v})
+
+
+# ---------------------------------------------------------------- per frame
+
+## base_z: the player's travelled distance. finish_z < 0 hides the gantry.
+func update_view(base_z: float, finish_z: float, dt := 0.016) -> void:
+	_t += dt
+	var scroll := fmod(base_z, SCROLL_PERIOD)
+	for m in _road_mats:
+		m.set_shader_parameter("scroll", scroll)
+	_grass_mat.set_shader_parameter("scroll", scroll)
+	for lp in _loops:
+		lp[0].position.z = fmod(base_z, lp[1])
+	_update_slots(base_z)
+	_update_oncoming(base_z, dt)
+	_clouds.position.x = fmod(_t * 1.5, 200.0) - 100.0
+	var next_km := ceilf((base_z - 20.0) / 1000.0) * 1000.0
+	if next_km < 1000.0:
+		next_km = 1000.0
+	_km_sign.position.z = -(next_km - base_z)
+	_km_label.text = "km %d" % int(next_km / 1000.0)
+	_km_sign.visible = next_km - base_z < VIEW_AHEAD
+	if finish_z >= 0.0 and finish_z - base_z < VIEW_AHEAD and finish_z - base_z > -VIEW_BEHIND:
+		_gantry.visible = true
+		_gantry.position.z = -(finish_z - base_z)
+	else:
+		_gantry.visible = false

@@ -1071,6 +1071,8 @@ func _process(delta: float) -> void:
 			"close": [Vector3(-7.6, 1.5, 2.2), Vector3(-5.4, 0.7, -2.0)],
 			"m_front": [Vector3(1.6, 1.3, -21.0), Vector3(-1.8, 0.6, -15.4)], "m_rear": [Vector3(-4.6, 1.5, -7.4), Vector3(-1.8, 0.6, -15.0)],
 			"m_side": [Vector3(4.2, 1.1, -14.6), Vector3(-1.8, 0.6, -15.3)],
+			"sign": [Vector3(0.0, 5.0, -398.0), Vector3(0.0, 6.4, -420.0)], "bill": [Vector3(4.0, 5.0, -232.0), Vector3(22.0, 9.4, -260.0)],
+			"trees": [Vector3(9.0, 2.2, -10.0), Vector3(24.0, 4.0, -50.0)],
 			"t_rear": [Vector3(-9.5, 2.4, 6.0), Vector3(-1.0, 0.6, -6.0)], "t_front": [Vector3(9.0, 2.2, -24.0), Vector3(-1.0, 0.6, -9.0)]}
 		var v: Array = views.get(showroom, views.rear)
 		cam.global_transform = Transform3D(Basis(), v[0])
@@ -1325,10 +1327,15 @@ func _analog_steer(dt: float) -> void:
 		var lead := 1.7 * float(Save.setting("steer_sens"))
 		target_x = clampf(player.x + _steer_val * lead, -(Data.RAIL + 1.0), Data.RAIL + 1.0)
 		_steer_active = true
-	elif _steer_active:
+	elif _steer_active and Save.data.assist:
 		_steer_active = false
 		# lane assist: settle into the lane the car is heading for
-		target_x = Data.LANES[Data.nearest_lane(player.x + player.vx * 0.3)] if Save.data.assist else player.x
+		target_x = Data.LANES[Data.nearest_lane(player.x + player.vx * 0.3)]
+	elif not Save.data.assist:
+		# no input and no assist: the steering is straight, so the car just keeps
+		# going where it is (the target follows it instead of pulling it back)
+		_steer_active = false
+		target_x = player.x
 
 
 var _tilt_zero := 0.0

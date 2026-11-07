@@ -255,19 +255,39 @@ func _build_trees() -> void:
 			var h: float = (6.0 + it.k * 6.0) * s
 			var r: float = (1.6 + it.k) * s
 			var green := (Color("#24402a") if it.k > 0.75 else Color("#2c4a2c")).lightened(tint) if tint > 0 else (Color("#24402a") if it.k > 0.75 else Color("#2c4a2c")).darkened(-tint)
-			for t in 3:
-				var f := 1.0 - t * 0.28
-				pines.append([Transform3D(Basis().scaled(Vector3(r * f, h * 0.5 * f, r * f)), pos + Vector3(0, trunk_h + h * (0.12 + t * 0.26), 0)),
-					green.lightened(t * 0.04)])
+			# five tiers of branches, each a little smaller, slightly off-centre and
+			# tilted, alternating darker and lighter needles, with a thin tip
+			for t in 5:
+				var f := 1.0 - t * 0.17
+				var jit := Vector3(vr.randf_range(-0.08, 0.08), 0, vr.randf_range(-0.08, 0.08)) * r
+				var tilt := Basis(Vector3(vr.randf_range(-1, 1), 0, vr.randf_range(-1, 1)).normalized(), vr.randf_range(0.0, 0.08))
+				var shade := green.lightened(0.05) if t % 2 == 0 else green.darkened(0.06)
+				pines.append([Transform3D(tilt.scaled(Vector3(r * f, h * 0.34 * f, r * f)), pos + jit + Vector3(0, trunk_h + h * (0.06 + t * 0.16), 0)), shade])
+			pines.append([Transform3D(Basis().scaled(Vector3(r * 0.18, h * 0.22, r * 0.18)), pos + Vector3(0, trunk_h + h * 0.9, 0)), green.lightened(0.08)])
 			shadows.append(Transform3D(Basis().scaled(Vector3(r * 2.6, 1, r * 2.6)), pos + Vector3(0.6, 0.03, 0.3)))
 		else:
 			var r2: float = (2.0 + it.k * 3.0) * s
 			var leaf_c := (Color("#3e5a2e") if it.k > 0.25 else Color("#4c6a35")).lerp(Color("#6b7a3a"), vr.randf() * 0.35)
 			if birch:
 				leaf_c = Color("#6f8a3e")
-			crowns.append([Transform3D(Basis().scaled(Vector3(r2, r2 * 0.9, r2)), pos + Vector3(0, trunk_h + r2 * 0.55, 0)), leaf_c])
-			crowns.append([Transform3D(Basis().scaled(Vector3(r2, r2, r2) * 0.6), pos + Vector3(r2 * 0.45, trunk_h + r2 * 0.9, r2 * 0.2)), leaf_c.lightened(0.08)])
-			crowns.append([Transform3D(Basis().scaled(Vector3(r2, r2, r2) * 0.55), pos + Vector3(-r2 * 0.4, trunk_h + r2 * 0.75, -r2 * 0.25)), leaf_c.darkened(0.08)])
+			# main crown plus clumps of leaves round it, lighter on top where the sun hits
+			crowns.append([Transform3D(Basis().scaled(Vector3(r2, r2 * 0.85, r2) * 0.85), pos + Vector3(0, trunk_h + r2 * 0.55, 0)), leaf_c.darkened(0.05)])
+			for q in 6:
+				var ang := TAU * q / 6.0 + vr.randf_range(-0.4, 0.4)
+				var up := vr.randf_range(0.25, 1.05)
+				var cs := r2 * vr.randf_range(0.42, 0.62)
+				var off := Vector3(cos(ang) * r2 * 0.55, trunk_h + r2 * (0.3 + up * 0.55), sin(ang) * r2 * 0.55)
+				crowns.append([Transform3D(Basis().scaled(Vector3(cs, cs * 0.85, cs)), pos + off), leaf_c.lightened(0.03 + up * 0.08) if up > 0.6 else leaf_c.darkened(0.04)])
+			crowns.append([Transform3D(Basis().scaled(Vector3(r2, r2, r2) * 0.5), pos + Vector3(0, trunk_h + r2 * 1.15, 0)), leaf_c.lightened(0.12)])
+			# a few branches leaving the trunk into the crown
+			for q in 3:
+				var ang2 := TAU * q / 3.0 + vr.randf()
+				var dir := Vector3(cos(ang2) * 0.6, 1.0, sin(ang2) * 0.6).normalized()
+				var bl := r2 * 0.9
+				var bx := Vector3.UP.cross(dir).normalized()
+				var bz := bx.cross(dir).normalized()
+				var bb := Basis(bx * s * 0.45, dir * bl, bz * s * 0.45)
+				trunks.append([Transform3D(bb, pos + Vector3(0, trunk_h * 0.85, 0) + dir * bl * 0.5), bark.darkened(0.05)])
 			shadows.append(Transform3D(Basis().scaled(Vector3(r2 * 2.4, 1, r2 * 2.4)), pos + Vector3(r2 * 0.4, 0.03, r2 * 0.2)))
 
 	# grass tufts and rocks along the verges and median, and a dense treeline in the distance
@@ -298,7 +318,9 @@ func _build_trees() -> void:
 			var x4 := Data.RAIL + vr.randf_range(75.0, 170.0) if vr.randf() < 0.5 else OPP_X - Data.RAIL - vr.randf_range(75.0, 170.0)
 			var th := vr.randf_range(9.0, 16.0)
 			var tr := vr.randf_range(2.2, 3.6)
-			pines.append([Transform3D(Basis().scaled(Vector3(tr, th, tr)), Vector3(x4, th / 2.0, z4)), Color("#2a4229").lerp(Color("#3b5230"), vr.randf())])
+			var tc := Color("#2a4229").lerp(Color("#3b5230"), vr.randf())
+			pines.append([Transform3D(Basis().scaled(Vector3(tr, th * 0.62, tr)), Vector3(x4, th * 0.31, z4)), tc])
+			pines.append([Transform3D(Basis().scaled(Vector3(tr * 0.7, th * 0.55, tr * 0.7)), Vector3(x4, th * 0.7, z4)), tc.lightened(0.05)])
 
 	var trunk_mesh := CylinderMesh.new()
 	trunk_mesh.top_radius = 0.16
@@ -475,6 +497,7 @@ func _build_gantry() -> void:
 	lbl.pixel_size = 0.0075
 	lbl.modulate = Color("#f3f5ef")
 	lbl.position = Vector3(0, 5.5, 0.24)
+	_fit(lbl, 0.0075, 7.3, 1.4)
 	_gantry.add_child(lbl)
 	_gantry.visible = false
 
@@ -496,7 +519,9 @@ func _clear(n: Node3D) -> void:
 		c.queue_free()
 
 
-func _label(text: String, size: int, px: float, col: Color, pos: Vector3) -> Label3D:
+## Text for a sign. If max_w/max_h are given (metres), the text is shrunk so
+## it always stays inside the sign face.
+func _label(text: String, size: int, px: float, col: Color, pos: Vector3, max_w := 0.0, max_h := 0.0) -> Label3D:
 	var l := Label3D.new()
 	l.text = text
 	l.font_size = size
@@ -505,7 +530,19 @@ func _label(text: String, size: int, px: float, col: Color, pos: Vector3) -> Lab
 	l.position = pos
 	l.outline_size = 0
 	l.line_spacing = -4
+	if max_w > 0.0:
+		_fit(l, px, max_w, max_h)
 	return l
+
+
+static func _fit(l: Label3D, px: float, max_w: float, max_h: float) -> void:
+	var sz := ThemeDB.fallback_font.get_multiline_string_size(l.text, HORIZONTAL_ALIGNMENT_CENTER, -1, l.font_size, -1, TextServer.BREAK_MANDATORY)
+	var k := 1.0
+	if sz.x * px > max_w:
+		k = minf(k, max_w / (sz.x * px))
+	if max_h > 0.0 and sz.y * px > max_h:
+		k = minf(k, max_h / (sz.y * px))
+	l.pixel_size = px * k
 
 
 func _setup_sign_gantry(n: Node3D, k: int) -> void:
@@ -525,9 +562,9 @@ func _setup_sign_gantry(n: Node3D, k: int) -> void:
 	parts[M.white].append([Vector3(5.6, 5.0, 0.26), Vector3(2.4, 0.5, 0.05)])
 	n.add_child(_merged(parts))
 	var white := Color("#f3f5ef")
-	n.add_child(_label("%s\n%s" % [a, "1 km"], 150, 0.011, white, Vector3(3.7, 6.55, 0.32)))
-	n.add_child(_label("%s   %d\n%s   %d" % [b, 12 + posmod(k * 13, 60), c, 40 + posmod(k * 17, 90)], 130, 0.01, white, Vector3(-3.4, 6.5, 0.32)))
-	var ex := _label("EXIT %d" % exit_no, 90, 0.008, Color("#0d6a42"), Vector3(5.6, 5.0, 0.3))
+	n.add_child(_label("%s\n%s" % [a, "1 km"], 150, 0.011, white, Vector3(3.7, 6.5, 0.32), 5.6, 2.0))
+	n.add_child(_label("%s   %d\n%s   %d" % [b, 12 + posmod(k * 13, 60), c, 40 + posmod(k * 17, 90)], 130, 0.01, white, Vector3(-3.4, 6.5, 0.32), 5.6, 2.0))
+	var ex := _label("EXIT %d" % exit_no, 90, 0.008, Color("#0d6a42"), Vector3(5.6, 5.0, 0.3), 2.1, 0.4)
 	n.add_child(ex)
 
 
@@ -553,7 +590,7 @@ func _setup_overpass(n: Node3D, _k: int) -> void:
 		parts[M.concrete_dark].append([Vector3(ex, 2.3, 0), Vector3(16.0, 3.0, 14.0), Basis(Vector3.BACK, s * 0.42)])
 		parts[M.concrete].append([Vector3(ex - s * 7.8, 3.8, 0), Vector3(1.4, 7.6, 13.0)])
 	n.add_child(_merged(parts))
-	var stripe := _label("REDLINE COUNTY", 120, 0.012, Color("#5b5953"), Vector3(-2.0, 7.05, 6.02))
+	var stripe := _label("REDLINE COUNTY", 120, 0.012, Color("#5b5953"), Vector3(-2.0, 7.05, 6.02), 14.0, 0.6)
 	n.add_child(stripe)
 
 
@@ -575,8 +612,8 @@ func _setup_billboard(n: Node3D, k: int) -> void:
 	parts[bg].append([Vector3(0, 9.4, 0.08), Vector3(12.2, 4.4, 0.3)])
 	root.add_child(_merged(parts))
 	var fg := Color(ad[3])
-	root.add_child(_label(ad[0], 220, 0.02, fg, Vector3(0, 10.1, 0.26)))
-	root.add_child(_label(ad[1], 110, 0.016, fg, Vector3(0, 8.4, 0.26)))
+	root.add_child(_label(ad[0], 220, 0.02, fg, Vector3(0, 10.2, 0.26), 11.2, 1.9))
+	root.add_child(_label(ad[1], 110, 0.016, fg, Vector3(0, 8.4, 0.26), 11.2, 1.0))
 
 
 func _setup_farm(n: Node3D, k: int) -> void:
@@ -711,7 +748,10 @@ func update_view(base_z: float, finish_z: float, dt := 0.016) -> void:
 	if next_km < 1000.0:
 		next_km = 1000.0
 	_km_sign.position.z = -(next_km - base_z)
-	_km_label.text = "km %d" % int(next_km / 1000.0)
+	var km_text := "km %d" % int(next_km / 1000.0)
+	if _km_label.text != km_text:
+		_km_label.text = km_text
+		_fit(_km_label, 0.006, 1.25, 0.75)
 	_km_sign.visible = next_km - base_z < VIEW_AHEAD
 	if finish_z >= 0.0 and finish_z - base_z < VIEW_AHEAD and finish_z - base_z > -VIEW_BEHIND:
 		_gantry.visible = true

@@ -659,7 +659,7 @@ func banner(title: String, sub := "") -> void:
 
 
 func show_hint() -> void:
-	_hint.text = {"wheel": "Turn the wheel to steer", "buttons": "Hold the arrow buttons to steer"}.get(Save.setting("steer_mode"), "Swipe left or right anywhere to steer")
+	_hint.text = {"wheel": "Turn the wheel to steer", "buttons": "Hold the arrow buttons to steer", "tilt": "Tilt the phone to steer"}.get(Save.setting("steer_mode"), "Swipe left or right anywhere to steer")
 	if _hint_tween:
 		_hint_tween.kill()
 	_hint_tween = create_tween()
@@ -1106,7 +1106,7 @@ func _build_settings() -> void:
 	v.add_child(_eyebrow("Gameplay"))
 	_slider_row(v, "steer_sens", "set", "save")
 	_slider_row(v, "pedal_scale", "set", "save")
-	var toggles := [["steer_mode", "Steering"], ["orientation", "Screen"], ["assist", "Lane assist"], ["haptics", "Vibration"],
+	var toggles := [["steer_mode", "Steering"], ["tilt_invert", "Tilt direction"], ["orientation", "Screen"], ["assist", "Lane assist"], ["haptics", "Vibration"],
 		["shake", "Camera shake"], ["sound", "Engine sound"], ["units", "Speed units"]]
 	var grid := GridContainer.new()
 	grid.columns = 2
@@ -1149,7 +1149,8 @@ func render_settings() -> void:
 		"assist": "ON" if Save.data.assist else "OFF", "haptics": "ON" if Save.setting("haptics") else "OFF",
 		"shake": "ON" if Save.setting("shake") else "OFF", "sound": "ON" if Save.data.sound else "OFF",
 		"units": "MPH" if Save.setting("units") == "mph" else "KM/H",
-		"steer_mode": {"swipe": "SWIPE", "wheel": "WHEEL", "buttons": "BUTTONS"}.get(Save.setting("steer_mode"), "SWIPE"),
+		"steer_mode": {"swipe": "SWIPE", "wheel": "WHEEL", "buttons": "BUTTONS", "tilt": "TILT"}.get(Save.setting("steer_mode"), "SWIPE"),
+		"tilt_invert": "REVERSED" if Save.setting("tilt_invert") else "NORMAL",
 		"orientation": "LANDSCAPE" if Save.setting("orientation") == "landscape" else "PORTRAIT",
 	}
 	for key in states:
@@ -1170,7 +1171,7 @@ func layout_pedals() -> void:
 	var base_y := vp.y - _bottom - 30.0
 	var gas_c := Vector2(vp.x - 26 - gsz.x / 2.0, base_y - gsz.y / 2.0)
 	var brake_c := Vector2(26 + bsz.x / 2.0, base_y - bsz.y / 2.0)
-	if mode != "swipe":
+	if mode == "wheel" or mode == "buttons":
 		# steering control takes the bottom-left corner; the brake moves above the gas
 		brake_c = Vector2(vp.x - 26 - bsz.x / 2.0, base_y - gsz.y - 24.0 - bsz.y / 2.0)
 	_place_pedal(gas, gsz, Save.setting("gas_pos"), gas_c, vp)

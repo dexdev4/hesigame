@@ -11,8 +11,8 @@ const RAIL := 8.8        # guardrail position (m)
 const SHAPES := {
 	"hatch":  {"w": 1.76, "l": 4.0, "b": 0.84, "t": 1.47, "c0": 0.10, "c1": 0.64, "ins": 0.12},
 	"sedan":  {"w": 1.84, "l": 4.7, "b": 0.80, "t": 1.42, "c0": 0.27, "c1": 0.70, "ins": 0.14},
-	# compact performance saloon (proportions after a 2008 four-door sports sedan)
-	"msedan": {"w": 1.82, "l": 4.58, "b": 0.80, "t": 1.42, "c0": 0.22, "c1": 0.76, "ins": 0.13},
+	# compact performance saloon (proportions after the 2007 E90 M3)
+	"msedan": {"w": 1.82, "l": 4.58, "b": 0.80, "t": 1.43, "c0": 0.19, "c1": 0.68, "ins": 0.13},
 	"suv":    {"w": 1.96, "l": 4.8, "b": 1.02, "t": 1.80, "c0": 0.06, "c1": 0.72, "ins": 0.10},
 	"muscle": {"w": 1.94, "l": 4.8, "b": 0.82, "t": 1.32, "c0": 0.32, "c1": 0.64, "ins": 0.18, "spoiler": true},
 	"super":  {"w": 2.00, "l": 4.5, "b": 0.70, "t": 1.14, "c0": 0.30, "c1": 0.62, "ins": 0.22, "spoiler": true},
@@ -46,9 +46,9 @@ const CARS := [
 		"engine": {"cyl": 8, "idle": 720, "redline": 6800, "res": 1.5, "decay": 2.8, "var": 0.26, "uneven": 0.28, "rasp": 0.55, "pops": 1.0, "turbo": false},
 		"name": "Copperhead", "shape": "muscle", "color": "#c9652e", "accel": 7.6, "brake": 10.5, "grip": 11.0, "lat": 5.0, "top": 61.0, "price": 4000, "boss": 0,
 		"blurb": "Stage 1 boss car. Grippier than any muscle car should be."},
-	{"id": "marshal", "style": {"rim": "double", "rim_color": "#2a2d33", "dome": true, "gills": true, "split_grille": true, "ltail": true, "halo": true, "splitter": true, "lip": true, "caliper": "#1fa3ff", "badge": "MARSHAL", "plate": "BOSS 02"},
+	{"id": "marshal", "style": {"rim": "double", "rim_color": "#c3c8ce", "dome": true, "gills": true, "split_grille": true, "ltail": true, "halo": true, "lip": true, "crease": true, "m_bumper": true, "quad_diffuser": true, "caliper": "#1fa3ff", "badge": "MARSHAL", "plate": "BOSS 02"},
 		"engine": {"cyl": 8, "idle": 850, "redline": 8400, "res": 2.0, "decay": 2.4, "var": 0.12, "uneven": 0.1, "rasp": 0.42, "pops": 0.8, "turbo": false},
-		"name": "Night Marshal", "shape": "msedan", "color": "#1d2b47", "accel": 8.6, "brake": 11.5, "grip": 11.5, "lat": 5.2, "top": 66.0, "price": 9000, "boss": 1,
+		"name": "Night Marshal", "shape": "msedan", "color": "#26437c", "accel": 8.6, "brake": 11.5, "grip": 11.5, "lat": 5.2, "top": 66.0, "price": 9000, "boss": 1,
 		"blurb": "Stage 2 boss car. A four-door that hunts supercars: high-revving V8, quad exhausts, power-dome bonnet."},
 	{"id": "static", "style": {"rim": "mesh", "rim_color": "#f3f5ef", "stripes": true, "accent": "#f3f5ef", "intakes": true, "vents": true, "splitter": true, "caliper": "#1fa3ff", "badge": "BLUE STATIC", "plate": "BOSS 03"},
 		"engine": {"cyl": 6, "idle": 900, "redline": 8200, "res": 2.5, "decay": 2.2, "var": 0.05, "uneven": 0.02, "rasp": 0.3, "pops": 0.5, "turbo": true},

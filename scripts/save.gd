@@ -27,7 +27,8 @@ func defaults() -> Dictionary:
 const SETTING_DEFAULTS := {
 	"steer_sens": 1.0, "pedal_scale": 1.0, "haptics": true, "shake": true, "units": "kmh",
 	"gas_pos": [], "brake_pos": [], "wheel_pos": [], "arrows_pos": [],
-	"steer_mode": "swipe",        # swipe, wheel or buttons
+	"steer_mode": "swipe",        # swipe, wheel, buttons or tilt
+	"tilt_invert": false,
 	"orientation": "portrait",    # portrait or landscape; fixed, never follows the phone's sensor
 }
 

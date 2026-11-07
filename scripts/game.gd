@@ -123,6 +123,8 @@ func _ready() -> void:
 			Save.data.cam.mode = a.substr(6)
 		if a.begins_with("--steer="):  # swipe, wheel or buttons (not saved)
 			Save.data.settings.steer_mode = a.substr(8)
+		if a.begins_with("--fake-tilt="):
+			fake_tilt = float(a.substr(12))
 		if a.begins_with("--orient="):  # portrait or landscape (not saved)
 			Save.data.settings.orientation = a.substr(9)
 		if a.begins_with("--autospeed="):
@@ -913,6 +915,7 @@ func _start_run() -> void:
 	hud.set_play_visible(true)
 	hud.banner("STAGE 1", String(Data.boss_info(1).full).to_upper() + " WAITS AHEAD")
 	hud.show_hint()
+	_calibrate_tilt()
 
 
 func _end_run(reason: String) -> void:
@@ -1300,6 +1303,10 @@ func _analog_steer(dt: float) -> void:
 		var raw := hud.wheel.angle / SteerWheel.MAX_ANGLE
 		_steer_val = 0.0 if absf(raw) < 0.04 else raw
 		held = held or absf(_steer_val) > 0.0
+	elif mode == "tilt":
+		var raw := _tilt_value()
+		_steer_val = lerpf(_steer_val, raw, minf(1.0, dt * 12.0))
+		held = absf(_steer_val) > 0.03
 	elif mode == "buttons":
 		var want := (1.0 if right else 0.0) - (1.0 if left else 0.0)
 		_steer_val = move_toward(_steer_val, want, (4.0 if want != 0.0 else 7.0) * dt)  # eases in and out
@@ -1316,6 +1323,33 @@ func _analog_steer(dt: float) -> void:
 		_steer_active = false
 		# lane assist: settle into the lane the car is heading for
 		target_x = Data.LANES[Data.nearest_lane(player.x + player.vx * 0.3)] if Save.data.assist else player.x
+
+
+var _tilt_zero := 0.0
+var fake_tilt := 0.0  # --fake-tilt=DEGREES: pretend the phone is tilted (test aid)
+
+
+## The phone's left-right roll in radians, from the accelerometer (Godot
+## reports it relative to the current screen orientation).
+func _roll() -> float:
+	var a := Input.get_accelerometer()
+	if a.length() < 1.0:
+		return _tilt_zero + deg_to_rad(fake_tilt)
+	return atan2(a.x, sqrt(a.y * a.y + a.z * a.z)) + deg_to_rad(fake_tilt)
+
+
+## Hold the phone however is comfortable: the angle at the start of a run
+## (or when resuming) counts as straight ahead.
+func _calibrate_tilt() -> void:
+	_tilt_zero = _roll() - deg_to_rad(fake_tilt)
+
+
+## Tilt steering, -1 (full left) .. 1 (full right). 22 degrees is full lock.
+func _tilt_value() -> float:
+	var r := -(_roll() - _tilt_zero) / deg_to_rad(22.0)
+	if Save.setting("tilt_invert"):
+		r = -r
+	return 0.0 if absf(r) < 0.06 else clampf(r, -1.0, 1.0)
 
 
 func _refresh_inputs() -> void:
@@ -1435,6 +1469,7 @@ func _resume() -> void:
 		return
 	state = S.PLAY
 	hud.show_screen("")
+	_calibrate_tilt()
 
 
 func _on_act(action: String, arg: String) -> void:
@@ -1508,7 +1543,7 @@ func _on_act(action: String, arg: String) -> void:
 				"assist":
 					Save.data.assist = not Save.data.assist
 				"steer_mode":
-					var order := ["swipe", "wheel", "buttons"]
+					var order := ["swipe", "wheel", "buttons", "tilt"]
 					Save.data.settings.steer_mode = order[(order.find(Save.setting("steer_mode")) + 1) % order.size()]
 					hud.layout_pedals()
 				"orientation":

@@ -28,11 +28,13 @@ const PROFILES := {
 		"body": [[0.0, 1.0, 0.92], [0.12, 1.05, 0.98], [0.6, 1.08, 1.0], [3.6, 1.08, 1.0], [4.2, 1.02, 1.0], [4.62, 0.92, 0.96], [4.8, 0.72, 0.9]],
 		"gh": [0.22, 3.9, 0.36, 3.3, 1.08, 1.8, 0.95, 0.86], "pillars": [[0.0, 0.1], [0.36, 0.4], [0.66, 0.7], [0.94, 1.0]],
 		"wheel": [0.38, 0.92, 3.85], "exhaust": 1},
-	# compact performance saloon: long bonnet, short high boot, kinked C-pillar, quad exhausts
+	# compact performance saloon after the 2007 E90 M3: 4.58 m long, 1.82 m wide,
+	# 2.76 m wheelbase, short rear and front overhangs, long bonnet, high short
+	# boot, kinked C-pillar, quad exhausts
 	"msedan": {
-		"body": [[0.0, 0.74, 0.9], [0.12, 0.83, 0.97], [0.45, 0.89, 1.0], [1.0, 0.9, 1.0], [3.0, 0.88, 1.0], [3.55, 0.84, 1.0], [4.1, 0.76, 0.98], [4.45, 0.64, 0.92], [4.58, 0.5, 0.86]],
-		"gh": [0.98, 3.5, 1.45, 2.85, 0.88, 1.42, 0.94, 0.8], "pillars": [[0.0, 0.17], [0.5, 0.54], [0.93, 1.0]],
-		"kink": [0.17, 0.27, 0.38], "wheel": [0.34, 0.88, 3.64], "exhaust": 4, "exhaust_pairs": true},
+		"body": [[0.0, 0.76, 0.9], [0.08, 0.86, 0.96], [0.22, 0.92, 0.99], [0.85, 0.93, 1.0], [3.1, 0.92, 1.0], [3.6, 0.88, 1.0], [4.1, 0.83, 0.98], [4.44, 0.76, 0.94], [4.58, 0.62, 0.88]],
+		"gh": [0.88, 3.1, 1.42, 2.5, 0.92, 1.43, 0.93, 0.78], "pillars": [[0.0, 0.16], [0.47, 0.51], [0.92, 1.0]],
+		"kink": [0.16, 0.25, 0.34], "wheel": [0.335, 0.98, 3.74], "exhaust": 4, "exhaust_pairs": true},
 	"muscle": {
 		"body": [[0.0, 0.8, 0.92], [0.18, 0.86, 0.98], [1.2, 0.87, 1.0], [3.2, 0.86, 1.0], [4.35, 0.78, 0.98], [4.72, 0.62, 0.92], [4.8, 0.5, 0.88]],
 		"gh": [1.2, 3.3, 1.55, 2.86, 0.87, 1.32, 0.92, 0.76], "pillars": [[0.0, 0.2], [0.9, 1.0]],
@@ -343,7 +345,7 @@ static func _arch(st: SurfaceTool, x: float, cy: float, cz: float, r0: float, r1
 ## Builds (once) the shared meshes for a vehicle type.
 ## Body surfaces: 0 paint, 1 glass, 2 dark trim, 3 chrome, 4 plate, 5 headlights.
 ## Body options that change geometry. Anything else (rims, badges) is per instance.
-const KIT_KEYS := ["stripes", "scoop", "intakes", "roofwing", "wiper", "lightbar", "splitter", "vents", "dome", "gills", "split_grille", "ltail", "halo", "lip"]
+const KIT_KEYS := ["stripes", "scoop", "intakes", "roofwing", "wiper", "lightbar", "splitter", "vents", "dome", "gills", "split_grille", "ltail", "halo", "lip", "crease", "m_bumper", "quad_diffuser"]
 
 
 static func _kit(id: String, style := {}) -> Dictionary:
@@ -726,6 +728,30 @@ static func _style_extras(id: String, style: Dictionary, pr: Dictionary, station
 			_box(chrome, Vector3(sx * (hx + 0.006), g[4] - 0.2, -gd), Vector3(0.012, 0.08, 0.2))
 			for k in 2:
 				_box(dark, Vector3(sx * (hx + 0.01), g[4] - 0.22 + k * 0.035, -gd), Vector3(0.012, 0.012, 0.17))
+	if style.get("crease", false) and not g.is_empty():  # shoulder line running from the front wheel to the tail light
+		for sx in [-1.0, 1.0]:
+			var d0 := 0.3
+			var d1: float = pr.wheel[2] - pr.wheel[0] - 0.05
+			var steps := 6
+			for k in steps:
+				var da := lerpf(d0, d1, float(k) / steps)
+				var db := lerpf(d0, d1, float(k + 1) / steps)
+				var xa: float = sx * (w / 2.0 * _station_at(stations, da, 2) + 0.004)
+				var xb: float = sx * (w / 2.0 * _station_at(stations, db, 2) + 0.004)
+				var ya: float = g[4] - 0.11 - 0.03 * float(k) / steps
+				var yb2: float = g[4] - 0.11 - 0.03 * float(k + 1) / steps
+				_quad(dark, Vector3(xa, ya - 0.005, -da), Vector3(xb, yb2 - 0.005, -db), Vector3(xb, yb2 + 0.005, -db), Vector3(xa, ya + 0.005, -da), Vector3(sx, 0, 0))
+	if style.get("m_bumper", false):  # deep front bumper: big outer intakes either side of the centre intake
+		var fz2 := -l - 0.01
+		var fhw: float = w / 2.0 * stations[stations.size() - 1][2]
+		for sx in [-1.0, 1.0]:
+			_box(dark, Vector3(sx * fhw * 0.66, sill + 0.17, fz2 + 0.02), Vector3(0.24, 0.2, 0.04))
+			_box(chrome, Vector3(sx * fhw * 0.66, sill + 0.27, fz2 + 0.025), Vector3(0.24, 0.012, 0.03))
+	if style.get("quad_diffuser", false):  # black rear valance framing the four exhausts
+		var rhw: float = w / 2.0 * stations[0][2]
+		_box(dark, Vector3(0, sill + 0.03, 0.025), Vector3(rhw * 1.9, 0.14, 0.04))
+		for k in 4:
+			_box(dark, Vector3(-0.18 + k * 0.12, sill - 0.02, -0.1), Vector3(0.025, 0.08, 0.3))
 	if style.get("lip", false) and not g.is_empty():  # small boot-lid spoiler
 		_box(paint_st, Vector3(0, rear_top + 0.03, -0.1), Vector3(w * 0.7, 0.03, 0.1), Basis(Vector3.RIGHT, 0.18))
 	if style.get("vents", false) and not g.is_empty():

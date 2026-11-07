@@ -285,7 +285,6 @@ func _apply_safe_area() -> void:
 		top = maxf(0.0, safe.position.y) * k
 		bottom = maxf(0.0, win.y - safe.end.y) * k
 	_top_margin.add_theme_constant_override("margin_top", int(18 + top))
-	_goal.offset_top = 160 + top
 	_bottom = bottom
 	layout_pedals()
 	_kmh.get_parent().offset_bottom = -(26 + bottom)
@@ -317,45 +316,45 @@ func _build_play() -> void:
 	top.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_top_margin.add_child(top)
 
-	_lives_ctrl = Control.new()
-	_lives_ctrl.custom_minimum_size = Vector2(150, 40)
-	_lives_ctrl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_lives_ctrl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_lives_ctrl.draw.connect(_draw_lives)
-	top.add_child(_lives_ctrl)
-
+	# One slim band along the top of the screen, so the road ahead stays clear:
+	# lives and score on the left, the stage tracker in the middle, buttons right.
+	top.add_theme_constant_override("separation", 12)
 	var mid := VBoxContainer.new()
 	mid.alignment = BoxContainer.ALIGNMENT_BEGIN
+	mid.add_theme_constant_override("separation", 0)
+	mid.custom_minimum_size.x = 170
 	mid.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	top.add_child(mid)
-	_score = _label("0", 84, LINE, display_font)
-	_score.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_lives_ctrl = Control.new()
+	_lives_ctrl.custom_minimum_size = Vector2(170, 24)
+	_lives_ctrl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_lives_ctrl.draw.connect(_draw_lives)
+	mid.add_child(_lives_ctrl)
+	_score = _label("0", 54, LINE, display_font)
 	_score.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.5))
-	_score.add_theme_constant_override("shadow_offset_y", 4)
+	_score.add_theme_constant_override("shadow_offset_y", 3)
 	mid.add_child(_score)
-	var combo_row := _row(10)
-	combo_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	var combo_row := _row(8)
 	mid.add_child(combo_row)
 	_mult_bg = PanelContainer.new()
 	var msb := _flat(AMBER, 6)
 	msb.content_margin_left = 10
 	msb.content_margin_right = 10
 	_mult_bg.add_theme_stylebox_override("panel", msb)
-	_mult = _label("x1.0", 24, AMBER_INK, mono_font)
+	_mult = _label("x1.0", 20, AMBER_INK, mono_font)
 	_mult_bg.add_child(_mult)
 	combo_row.add_child(_mult_bg)
-	_combo = _bar(_fill_amber, 9)
-	_combo.custom_minimum_size.x = 110
+	_combo = _bar(_fill_amber, 7)
+	_combo.custom_minimum_size.x = 90
 	combo_row.add_child(_combo)
 
 	var right := HBoxContainer.new()
-	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	right.alignment = BoxContainer.ALIGNMENT_END
 	right.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	top.add_child(right)
 	pause_btn = Button.new()
 	pause_btn.text = "II"
-	pause_btn.custom_minimum_size = Vector2(72, 72)
+	pause_btn.custom_minimum_size = Vector2(60, 60)
 	pause_btn.add_theme_font_override("font", display_font)
 	pause_btn.add_theme_font_size_override("font_size", 28)
 	var pst := _flat(Color(0.04, 0.05, 0.06, 0.45), 36, Color(LINE, 0.7), 3)
@@ -369,46 +368,48 @@ func _build_play() -> void:
 	cam_btn.text = "CAM"
 	cam_btn.add_theme_font_size_override("font_size", 22)
 	cam_btn.pressed.connect(func() -> void: act.emit("cam_cycle", ""))
-	right.add_theme_constant_override("separation", 12)
+	right.add_theme_constant_override("separation", 8)
 	right.add_child(cam_btn)
 	right.add_child(pause_btn)
+	right.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 
 	# goal sign
 	_goal = PanelContainer.new()
-	_goal.anchor_left = 0.5
-	_goal.anchor_right = 0.5
-	_goal.offset_left = -250
-	_goal.offset_right = 250
-	_goal.offset_top = 160
+	_goal.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_goal.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	_goal.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var gs := _flat(SIGN, 14, LINE, 3)
-	gs.set_content_margin_all(12)
-	gs.content_margin_left = 18
-	gs.content_margin_right = 18
+	var gs := _flat(Color(SIGN, 0.88), 10, LINE, 2)
+	gs.set_content_margin_all(6)
+	gs.content_margin_left = 10
+	gs.content_margin_right = 10
 	_goal.add_theme_stylebox_override("panel", gs)
 	_g["style"] = gs
-	play_layer.add_child(_goal)
+	top.add_child(_goal)
+	top.move_child(_goal, 1)
 	var gv := VBoxContainer.new()
-	gv.add_theme_constant_override("separation", 4)
+	gv.add_theme_constant_override("separation", 1)
 	_goal.add_child(gv)
 	var head := _row(8)
 	gv.add_child(head)
-	_g["title"] = _label("STAGE 1", 28, LINE, display_font)
+	_g["title"] = _label("STAGE 1", 24, LINE, display_font)
 	_g["title"].size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(_g["title"])
-	_g["sub"] = _label("", 18, MUTED, display_font)
+	_g["sub"] = _label("", 17, MUTED, display_font)
+	_g["sub"].clip_text = true
+	_g["sub"].size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_g["sub"].horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_g["sub"].size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	head.add_child(_g["sub"])
 	for i in [1, 2]:
-		var r := _row(10)
+		var r := _row(6)
 		gv.add_child(r)
-		var l := _label("DIST", 16, MUTED, mono_font)
-		l.custom_minimum_size.x = 64
+		var l := _label("DIST", 15, MUTED, mono_font)
+		l.custom_minimum_size.x = 48
 		r.add_child(l)
-		var b := _bar(_fill_white, 10)
+		var b := _bar(_fill_white, 8)
 		r.add_child(b)
 		var v := _label("0", 17, LINE, mono_font)
-		v.custom_minimum_size.x = 150
+		v.custom_minimum_size.x = 128
 		v.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		r.add_child(v)
 		_g["l%d" % i] = l
@@ -495,6 +496,7 @@ func _build_play() -> void:
 
 func _draw_lives() -> void:
 	var c := _lives_ctrl
+	c.draw_set_transform(Vector2(0, -6), 0.0, Vector2(0.62, 0.62))
 	for i in _max_lives:
 		var x := 4.0 + i * 46.0
 		var y := 10.0
@@ -1193,6 +1195,8 @@ func layout_pedals() -> void:
 		if c.position.y + c.size.y > vp.y - 220.0 and c.position.x > vp.x / 2.0:
 			rgt = minf(rgt, c.position.x - 8.0)
 	var mid := (lft + rgt) / 2.0 if lft > 0.0 else vp.x / 2.0
+	if vp.x > vp.y:  # landscape: beside the gas pedal, clear of the car in the middle
+		mid = gas.position.x - 150.0
 	spd.anchor_left = 0.0
 	spd.anchor_right = 0.0
 	spd.offset_left = mid - 130.0

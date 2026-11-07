@@ -85,7 +85,9 @@ godot --headless --path . --export-debug "Android" build/redline-rush.apk
 | `scripts/game.gd` | Driving physics, traffic AI, boss race, scoring, run flow, camera, input |
 | `scripts/hud.gd` | HUD, pedals and every menu screen, built in code |
 | `scripts/scenery.gd` | Endless highway: both carriageways with oncoming traffic, overpasses, exit-sign gantries, billboards, farms, fences, power lines, trees, mountains and clouds |
-| `scripts/car_model.gd` | Builds the car, truck and van models and the player's cockpit interior |
+| `scripts/car_model.gd` | Car, truck and van models, materials and the player's cockpit interior |
+| `scripts/body_builder.gd` | Smooth one-piece car bodies: swept cross-sections, wheel-arch cut-outs, tinted see-through glass, wrap-round lamps, grille, mirrors, shut lines and baked shading |
+| `scripts/car_textures.gd` | Lamp lens and grille textures drawn in code |
 | `scripts/pedal.gd` | Draws the accelerator and brake pedals |
 | `scripts/engine_audio.gd` | Synthesised engine, wind and sound effects |
 | `scripts/data.gd` | Autoload `Data`: cars, bosses, upgrades, targets. Balance lives here |
@@ -108,7 +110,7 @@ Arguments placed after `--` on the command line:
 - `--idcolor`: draw each traffic car in a flat unique colour with no fog or scenery; with `--burst` it also logs where each car should be, to measure flicker.
 - `--demo-pops`: show a sample score message every second, to check where messages appear in each camera view.
 - `--burst=SECONDS:COUNT:DIR`: save COUNT consecutive frames from SECONDS onwards (for checking flicker).
-- `--showroom` / `--showroom=front` / `--showroom=close`: park every player and boss car in a row with the game frozen, to inspect the models.
+- `--showroom` / `--showroom=front` / `--showroom=close` (or `t_rear` / `t_front` for traffic models): park every player and boss car in a row with the game frozen, to inspect the models.
 
 ```bash
 godot --headless --path . -- --autotest --fast --quit-after=90

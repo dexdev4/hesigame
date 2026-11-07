@@ -205,8 +205,13 @@ func _build_showroom() -> void:
 	traffic.clear()
 	player.model.visible = false
 	hud.show_screen("")
-	for i in Data.CARS.size():
-		var car: Dictionary = Data.CARS[i]
+	var list: Array = Data.CARS
+	if showroom.begins_with("t_"):  # traffic models instead of the player cars
+		list = []
+		for sh in ["hatch", "sedan", "suv", "van", "truck", "sedan", "hatch", "suv"]:
+			list.append({"shape": sh, "color": Data.TRAFFIC_COLORS.pick_random(), "style": {"rim": "5spoke"}})
+	for i in list.size():
+		var car: Dictionary = list[i]
 		var m := CarModel.new()
 		m.build(car.shape, Color(car.color), Color("#b5322a"), car.style)
 		add_child(m)
@@ -1065,7 +1070,8 @@ func _process(delta: float) -> void:
 		var views := {"rear": [Vector3(-9.5, 2.4, 6.0), Vector3(-1.0, 0.6, -6.0)], "front": [Vector3(9.0, 2.2, -24.0), Vector3(-1.0, 0.6, -9.0)],
 			"close": [Vector3(-7.6, 1.5, 2.2), Vector3(-5.4, 0.7, -2.0)],
 			"m_front": [Vector3(1.6, 1.3, -21.0), Vector3(-1.8, 0.6, -15.4)], "m_rear": [Vector3(-4.6, 1.5, -7.4), Vector3(-1.8, 0.6, -15.0)],
-			"m_side": [Vector3(4.2, 1.1, -14.6), Vector3(-1.8, 0.6, -15.3)]}
+			"m_side": [Vector3(4.2, 1.1, -14.6), Vector3(-1.8, 0.6, -15.3)],
+			"t_rear": [Vector3(-9.5, 2.4, 6.0), Vector3(-1.0, 0.6, -6.0)], "t_front": [Vector3(9.0, 2.2, -24.0), Vector3(-1.0, 0.6, -9.0)]}
 		var v: Array = views.get(showroom, views.rear)
 		cam.global_transform = Transform3D(Basis(), v[0])
 		cam.look_at(v[1])

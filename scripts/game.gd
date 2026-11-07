@@ -1346,7 +1346,7 @@ func _calibrate_tilt() -> void:
 
 ## Tilt steering, -1 (full left) .. 1 (full right). 22 degrees is full lock.
 func _tilt_value() -> float:
-	var r := -(_roll() - _tilt_zero) / deg_to_rad(22.0)
+	var r := (_roll() - _tilt_zero) / deg_to_rad(22.0)  # sign matched to real phones (tilt right = steer right)
 	if Save.setting("tilt_invert"):
 		r = -r
 	return 0.0 if absf(r) < 0.06 else clampf(r, -1.0, 1.0)

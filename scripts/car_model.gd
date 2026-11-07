@@ -86,19 +86,22 @@ static func lamp(c: Color, glow: float) -> StandardMaterial3D:
 
 
 ## Glossy car paint with a clear coat.
+## Glossy metallic paint with a clear coat.
 static func paint(c: Color) -> StandardMaterial3D:
 	var key := "paint|%s" % c.to_html()
 	if _mats.has(key):
 		return _mats[key]
 	var m := StandardMaterial3D.new()
-	m.albedo_color = c
 	m.albedo_color = c.darkened(0.08)
 	m.metallic = 0.25
 	m.metallic_specular = 0.5
-	m.roughness = 0.32
+	m.roughness = 0.3
 	m.clearcoat_enabled = true
 	m.clearcoat = 1.0
-	m.clearcoat_roughness = 0.08
+	m.clearcoat_roughness = 0.06
+	m.rim_enabled = true  # sheen along panel edges facing away from the light
+	m.rim = 0.12
+	m.rim_tint = 0.6
 	_mats[key] = m
 	return m
 
@@ -983,10 +986,13 @@ static func _glass() -> StandardMaterial3D:
 	var key := "glass"
 	if not _mats.has(key):
 		var m := StandardMaterial3D.new()
-		m.albedo_color = Color("#141c25")
-		m.metallic = 0.9
-		m.metallic_specular = 0.8
-		m.roughness = 0.04
+		m.albedo_color = Color("#10161d")
+		m.metallic = 0.85
+		m.metallic_specular = 1.0
+		m.roughness = 0.02
+		m.rim_enabled = true  # brighter reflections at glancing angles, like real glass
+		m.rim = 0.35
+		m.rim_tint = 0.2
 		_mats[key] = m
 	return _mats[key]
 

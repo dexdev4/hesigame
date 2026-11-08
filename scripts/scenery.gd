@@ -689,7 +689,39 @@ func _update_slots(base_z: float) -> void:
 
 # ---------------------------------------------------------------- oncoming traffic
 
+var _replay_snap: Array = []  # oncoming cars' positions when the replay opened
+var _in_replay := false
+
+
+## While the replay plays, oncoming cars only move with replay time (which can
+## run backwards); none are added or removed. end_replay puts them back.
+## High graphics: fine asphalt grain catches the light.
+func set_detail(on: bool) -> void:
+	for m in _road_mats:
+		m.set_shader_parameter("detail", 1.0 if on else 0.0)
+
+
+func begin_replay() -> void:
+	_in_replay = true
+	_replay_snap = []
+	for c in _oncoming:
+		_replay_snap.append(c.z)
+
+
+func end_replay() -> void:
+	for i in mini(_replay_snap.size(), _oncoming.size()):
+		_oncoming[i].z = _replay_snap[i]
+	_replay_snap = []
+	_in_replay = false
+
+
 func _update_oncoming(base_z: float, dt: float) -> void:
+	if _in_replay:
+		for c in _oncoming:
+			c.z -= c.v * dt
+			c.model.position = Vector3(c.x, 0, -(c.z - base_z))
+			c.model.spin(c.v, absf(dt))
+		return
 	for i in range(_oncoming.size() - 1, -1, -1):
 		var c: Dictionary = _oncoming[i]
 		c.z -= c.v * dt

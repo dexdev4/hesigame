@@ -37,6 +37,7 @@ var _boost := 0.0
 var _live := false
 var _speed := 0.0
 var _interior := false
+var quiet := false  # replay paused: engine silent
 
 # synth state
 var _ph := 0.0
@@ -51,6 +52,22 @@ var _load_s := 0.0
 var _rpm_s := 900.0
 var _speed_s := 0.0
 var _decel := 0.0
+var _table_off := PackedFloat32Array()  # overrun: same engine, softer and hollower
+var _cyl := 4
+var _fire_i := -1      # cylinder that fired last, for per-firing variation
+var _fire_g := 1.0     # this firing's strength
+var _fire_gs := 1.0
+var _comb := PackedFloat32Array()  # exhaust pipe delay line
+var _comb_i := 0
+var _comb_lp := 0.0
+var _comb_d := 140
+var _cr_c := 1.0   # crank phasor (cos, sin) and its per-sample rotation
+var _cr_s := 0.0
+var _wh_c := 1.0   # gear whine phasor
+var _wh_s := 0.0
+var _shift_bark := 0.0
+var _st_d := PackedFloat32Array()  # short delay for stereo width
+var _st_i := 0
 
 var _sfx := {}
 var _players: Array[AudioStreamPlayer] = []
@@ -124,12 +141,29 @@ func set_car(car: Dictionary) -> void:
 	rpm = float(_eng.idle)
 	_rpm_s = rpm
 	gear = 1
-	_build_table(int(_eng.cyl), float(_eng.res), float(_eng.decay), float(_eng.var), float(_eng.uneven), hash(car.id))
+	_cyl = int(_eng.cyl)
+	_build_table(_cyl, float(_eng.res), float(_eng.decay), float(_eng.var), float(_eng.uneven), hash(car.id))
+	var on := _table.duplicate()
+	var env_on := _env.duplicate()
+	# overrun table: weaker combustion, lower resonance, so lifting off sounds hollow
+	_build_table(_cyl, float(_eng.res) * 0.72, float(_eng.decay) * 1.5, float(_eng.var) * 1.6, float(_eng.uneven), hash(car.id))
+	_table_off = _table
+	_table = on
+	_env = env_on
+	# exhaust length sets where the pipe resonates (bigger engines, longer pipes)
+	_comb_d = int(RATE * (0.0045 + 0.00035 * _cyl + float(hash(car.id) % 100) * 0.00002))
+	_comb.resize(_comb_d)
+	_comb.fill(0.0)
+	_comb_i = 0
+	_st_d.resize(17)
+	_st_d.fill(0.0)
 
 
 func _build_table(cyl: int, res: float, decay: float, variance: float, uneven: float, seed: int) -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed
+	_table = PackedFloat32Array()
+	_env = PackedFloat32Array()
 	_table.resize(TABLE)
 	_env.resize(TABLE)
 	_table.fill(0.0)
@@ -193,6 +227,7 @@ func drive(v: float, top: float, gas: bool, brake: bool, live: bool, dt: float) 
 		if gear < n and _rpm_for(v, top, gear) > redline * 0.95 and gas:
 			gear += 1
 			_shift_t = 0.24
+			_shift_bark = float(_eng.get("pops", 0.5))  # ignition cut on the upshift
 		elif gear > 1 and _rpm_for(v, top, gear) < redline * 0.42:
 			gear -= 1
 			_shift_t = 0.16
@@ -243,51 +278,156 @@ func _process(_delta: float) -> void:
 func synth(n: int) -> PackedVector2Array:
 	var buf := PackedVector2Array()
 	buf.resize(n)
-	if _table.is_empty():
+	if _table.is_empty() or _table_off.is_empty() or _comb.is_empty():
 		return buf
-	var target_vol := (0.38 if _live else 0.16)
-	var rasp := float(_eng.get("rasp", 0.4))
+	var target_vol := 0.0 if quiet else (0.38 if _live else 0.16)
+	var rasp := float(_eng.get("rasp", 0.4)) * 1.4
 	var pop_p := float(_eng.get("pops", 0.5)) * 0.00035 * _decel
+	var bark_p := 0.004 * _shift_bark if _shift_t > 0.1 else 0.0
 	var turbo: bool = _eng.get("turbo", false)
 	var step := 1.0 / maxf(1.0, n)
+	# crank rumble and gear whine oscillators, retuned once per buffer
+	var wc := TAU * rpm / 60.0 / RATE
+	var cr_cos := cos(wc)
+	var cr_sin := sin(wc)
+	var ww := TAU * minf(rpm / 60.0 * 17.0, 9000.0) / RATE
+	var wh_cos := cos(ww)
+	var wh_sin := sin(ww)
+	var crank_amp := 0.07 * (1.0 - rpm / redline) * (0.5 + 0.5 * _load)
+	var whine_amp := 0.006 * (1.0 if gear <= 3 else 0.4) * (0.4 + 0.6 * (1.0 - _load)) * minf(1.0, _speed / 8.0)
+	var fire_k := float(_cyl) / TABLE
+	var tb := _table
+	var tb_off := _table_off
+	var env := _env
+	var comb := _comb
+	var comb_d := _comb_d
+	var std := _st_d
+	# GDScript reads locals far faster than members, so the loop runs on copies
+	var nrm := sqrt(_cr_c * _cr_c + _cr_s * _cr_s)  # keep the phasors from drifting
+	var cr_c := _cr_c / nrm
+	var cr_s := _cr_s / nrm
+	nrm = sqrt(_wh_c * _wh_c + _wh_s * _wh_s)
+	var wh_c := _wh_c / nrm
+	var wh_s := _wh_s / nrm
+	var ph := _ph
+	var n1 := _n1
+	var n2 := _n2
+	var n3 := _n3
+	var pop := _pop
+	var pop_lp := _pop_lp
+	var fire_i := _fire_i
+	var fire_g := _fire_g
+	var fire_gs := _fire_gs
+	var comb_lp := _comb_lp
+	var comb_i := _comb_i
+	var vol_s := _vol_s
+	var speed_s := _speed_s
+	var speed_t := _speed
+	var st_i := _st_i
+	var tph := _tph
+	var boost := _boost
 	var rpm0 := _rpm_s
+	var drpm := (rpm - _rpm_s) * step
 	var load0 := _load_s
+	var dload := (_load - _load_s) * step
+	var inv_red := 1.0 / redline
+	var ph_k := TABLE / RATE / 120.0  # four-stroke: one firing cycle per two revolutions
 	for i in n:
 		# smooth control values across the buffer to avoid zipper noise
-		_rpm_s = lerpf(rpm0, rpm, (i + 1) * step)
-		_load_s = lerpf(load0, _load, (i + 1) * step)
-		_vol_s += 0.0005 * (target_vol - _vol_s)
-		_speed_s += 0.001 * (_speed - _speed_s)
-		var ld := _load_s
-		_ph += (_rpm_s / 120.0) * TABLE / RATE  # four-stroke: one firing cycle per two revolutions
-		if _ph >= TABLE:
-			_ph -= TABLE
-		var i0 := int(_ph)
-		var fr := _ph - i0
-		var s := lerpf(_table[i0], _table[(i0 + 1) & (TABLE - 1)], fr)
-		var e := _env[i0]
+		var rpm_s := rpm0 + drpm * (i + 1)
+		var ld := load0 + dload * (i + 1)
+		vol_s += 0.0005 * (target_vol - vol_s)
+		speed_s += 0.001 * (speed_t - speed_s)
+		ph += rpm_s * ph_k
+		if ph >= TABLE:
+			ph -= TABLE
+		var i0 := int(ph)
+		var fr := ph - i0
+		var i1 := (i0 + 1) & (TABLE - 1)
+		var s_on := tb[i0] + (tb[i1] - tb[i0]) * fr
+		var s_off := tb_off[i0]  # the soft overrun table needs no interpolation
+		var mixk := minf(ld * 1.3, 1.0)
+		var s := s_off + (s_on - s_off) * mixk
 		var nz := randf() * 2.0 - 1.0
-		_n1 += 0.3 * (nz - _n1)    # mid noise: exhaust rasp
-		_n2 += 0.04 * (nz - _n2)   # low noise: road rumble
-		_n3 += 0.6 * (nz - _n3)    # bright noise: intake hiss
-		var out := s * (0.32 + 0.68 * ld)
-		out += _n1 * e * rasp * (0.25 + 0.75 * ld) * 1.4
-		out += (_n3 - _n1) * ld * (_rpm_s / redline) * 0.12
-		# lift-off pops and crackles
-		if randf() < pop_p:
-			_pop = randf_range(0.5, 1.0)
-		_pop *= 0.9965
-		_pop_lp += 0.35 * (nz * _pop - _pop_lp)
-		out += _pop_lp * 1.3
-		out *= _vol_s
-		# turbo whine
+		# no two combustion strokes are identical: each firing gets its own
+		# strength, rougher at idle and off throttle
+		var fi := int(ph * fire_k)
+		if fi != fire_i:
+			fire_i = fi
+			fire_g = 1.0 + (0.09 + 0.12 * (1.0 - ld)) * (randf() * 2.0 - 1.0)
+		fire_gs += 0.05 * (fire_g - fire_gs)
+		n1 += 0.3 * (nz - n1)    # mid noise: exhaust rasp
+		n2 += 0.04 * (nz - n2)   # low noise: road rumble
+		n3 += 0.6 * (nz - n3)    # bright noise: intake hiss
+		var out := s * fire_gs * (0.32 + 0.68 * ld)
+		# crank rotation: a low lumpy rumble (rotating phasor, no sin() per sample)
+		var cr := cr_c * cr_cos - cr_s * cr_sin
+		cr_s = cr_c * cr_sin + cr_s * cr_cos
+		cr_c = cr
+		out += cr_s * crank_amp
+		out += n1 * env[i0] * rasp * (0.25 + 0.75 * ld)
+		out += (n3 - n1) * ld * (rpm_s * inv_red) * 0.12
+		# lift-off pops and crackles, and the bark of an upshift's ignition cut
+		if pop_p > 0.0 and randf() < pop_p:
+			pop = randf_range(0.5, 1.0)
+		elif bark_p > 0.0 and randf() < bark_p:
+			pop = randf_range(0.6, 1.0)
+		if pop > 0.001:
+			pop *= 0.9965
+			pop_lp += 0.35 * (nz * pop - pop_lp)
+			out += pop_lp * 1.3
+		# exhaust pipe: a feedback comb filter gives the hollow resonance of a
+		# real system, darkened in the loop like a muffler would
+		comb_lp += 0.45 * (comb[comb_i] - comb_lp)
+		var piped := out + comb_lp * 0.42
+		comb[comb_i] = piped
+		comb_i += 1
+		if comb_i >= comb_d:
+			comb_i = 0
+		out = (out * 0.3 + piped * 0.7) * 0.85
+		# gearbox whine, strongest in the low gears and on the overrun
+		var wr := wh_c * wh_cos - wh_s * wh_sin
+		wh_s = wh_c * wh_sin + wh_s * wh_cos
+		wh_c = wr
+		out = (out + wh_s * whine_amp) * vol_s
 		if turbo:
-			_tph = fmod(_tph + (900.0 + _boost * 2600.0) / RATE, 1.0)
-			out += sin(TAU * _tph) * _boost * 0.025
+			tph += (900.0 + boost * 2600.0) / RATE
+			if tph >= 1.0:
+				tph -= 1.0
+			out += sin(TAU * tph) * boost * 0.025
 		# road and wind
-		var sp := _speed_s / 70.0
-		out += _n2 * sp * 0.5 + _n1 * sp * sp * 0.08
-		buf[i] = Vector2(out, out)
+		var sp := speed_s / 70.0
+		out += n2 * sp * 0.5 + n1 * sp * sp * 0.08
+		# a few samples of delay on one side widens the sound without blurring it
+		var dl := std[st_i]
+		std[st_i] = out
+		st_i += 1
+		if st_i >= 17:
+			st_i = 0
+		buf[i] = Vector2(out * 0.92 + dl * 0.08, out * 0.8 + dl * 0.2)
+	_rpm_s = rpm
+	_load_s = _load
+	_ph = ph
+	_n1 = n1
+	_n2 = n2
+	_n3 = n3
+	_pop = pop
+	_pop_lp = pop_lp
+	_fire_i = fire_i
+	_fire_g = fire_g
+	_fire_gs = fire_gs
+	_comb = comb
+	_comb_lp = comb_lp
+	_comb_i = comb_i
+	_vol_s = vol_s
+	_speed_s = speed_s
+	_st_d = std
+	_st_i = st_i
+	_tph = tph
+	_cr_c = cr_c
+	_cr_s = cr_s
+	_wh_c = wh_c
+	_wh_s = wh_s
 	return buf
 
 

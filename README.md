@@ -12,7 +12,7 @@ A roguelike traffic-weaving racer built in **Godot 4** (GDScript). You drive an 
 
 There are no asset files to download: the cars, road, trees, UI and sounds are all generated in code.
 
-Each car has its own engine sound, generated live from a small engine model: cylinder count (from the hatch's four to the Last Exit's twelve), RPM through six gears with real shift points, throttle load, pops when you lift off and turbo whine and blow-off on the turbo cars. The HUD shows your gear and an RPM bar under the speedometer.
+Each car has its own engine sound, generated live from a small engine model: cylinder count (from the hatch's four to the Last Exit's twelve), RPM through six gears with real shift points, throttle load, pops when you lift off and turbo whine and blow-off on the turbo cars. On and off throttle use different combustion sounds, every firing varies slightly, the exhaust pipe resonates, and you hear crank rumble at low revs, gearbox whine and an ignition-cut bark on upshifts. The HUD shows your gear and an RPM bar under the speedometer.
 
 ### Controls
 
@@ -39,6 +39,8 @@ Open **Settings** from the main menu or the pause menu. The game keeps drawing b
 - **Gameplay:** steering sensitivity, pedal size, lane assist, vibration, camera shake, engine sound, and speed in km/h or mph.
 - **Steering:** **Swipe** anywhere on the screen, an on-screen **Wheel** you turn with your thumb (it springs back to centre when you let go), **Buttons** for left and right, or **Tilt** (tilt the phone; the angle you hold it at when a run starts or resumes counts as straight, and **Tilt direction** flips it if it feels backwards). With the wheel or buttons the car steers in proportion to your input, and lane assist settles it into a lane when you let go.
 - **Screen:** **Portrait** or **Landscape**. The game locks to the one you choose, so turning the phone never switches it by accident.
+- **Graphics:** **High** (full shadows, anti-aliasing, speed blur at the screen edges and a colour grade), **Medium** or **Low** for older phones. On the first run on a phone the game checks the frame rate and steps down a level if it's struggling.
+- **Developer tools:** **Infinite lives**, an **FPS counter**, **Unlock all cars**, **Max all upgrades**, **+$100,000 cash** and **Reset progress** (tap twice; keeps your settings).
 - **Pedal layout:** **Edit pedal layout** lets you drag the gas, brake and steering wheel or buttons anywhere on screen. **Swap pedals** puts the gas on the left, and **Reset pedals** returns them to the bottom corners.
 
 ### How a run works
@@ -48,6 +50,8 @@ Open **Settings** from the main menu or the pause menu. The game keeps drawing b
 - **Stages:** fill either the stage's distance bar or its points bar to trigger the next encounter.
 - **Police pursuit:** each trigger has a 30% chance to be a police car instead of the boss. It chases you down and tries to ram you: getting hit costs a life, but surviving 40 seconds untouched earns an extra life. Either way, the next trigger in that stage is always the real boss.
 - **Boss race:** you have 2 km to out-score the boss before the finish gantry. Win and you get prize money, choose 1 of 3 upgrades for the rest of the run, and the boss's car goes on sale in the Garage. Lose and it costs a life, followed by a rematch.
+- **Last-life crash:** losing your final life makes the car lose traction. It spins out in slow motion, leaving tyre marks and smoke, and at speed it can trip over and roll before it comes to rest.
+- **Replay editor:** the last 20 seconds are always recorded. Open it with **Watch replay** after a run or **Replay** in the pause menu. Play, pause, step frame by frame, scrub the timeline, play at 0.25x to 2x, and switch between Chase, Hood, Cockpit, Orbit (drag to turn), Trackside and Drone cameras. **Set in** and **Set out** trim the clip, which then loops; **Hide UI** shows it full screen.
 - **Between runs:** cash from score, distance and boss prizes buys permanent upgrades and new cars. Progress is saved to `user://save.json`.
 
 ### Build for Android
@@ -91,9 +95,11 @@ godot --headless --path . --export-debug "Android" build/redline-rush.apk
 | `scripts/car_textures.gd` | Lamp lens and grille textures drawn in code |
 | `scripts/pedal.gd` | Draws the accelerator and brake pedals |
 | `scripts/engine_audio.gd` | Synthesised engine, wind and sound effects |
+| `scripts/replay.gd`, `scripts/replay_bar.gd` | 20-second replay recording and the editor's timeline |
+| `scripts/skid_marks.gd` | Tyre marks laid on the road during a crash |
 | `scripts/data.gd` | Autoload `Data`: cars, bosses, upgrades, targets. Balance lives here |
 | `scripts/save.gd` | Autoload `Save`: persistent progress |
-| `shaders/` | Road surface (markings, wear, rumble strips, reflectors), grass and fields, distant mountains and clouds |
+| `shaders/` | Road surface (markings, wear, rumble strips, reflectors, asphalt grain), grass and fields, distant mountains and clouds, and the full-screen finishing pass |
 
 ### Test flags
 
@@ -102,6 +108,8 @@ Arguments placed after `--` on the command line:
 - `--autotest`: the car drives itself and the run loops, with status printed to the console. Combine it with `--headless` to run without a window.
 - `--fast`: shrinks stage and boss targets so you reach a boss within seconds.
 - `--cop`: the next encounter is always a police pursuit.
+- `--crash-at=SECONDS`: trigger the last-life crash at that time.
+- `--replay-at=SECONDS[:CAM]`: open the replay editor at that time, optionally with a camera (`chase`, `hood`, `cockpit`, `orbit`, `tv`, `drone`).
 - `--quit-after=SECONDS`: exit after that many seconds.
 - `--open=garage` / `--open=garage:up`: open the Garage on start.
 - `--shot=SECONDS:PATH`: save a screenshot.

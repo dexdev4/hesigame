@@ -7,7 +7,7 @@ extends Node3D
 ## is always at the scene origin), so the highway never runs out and floats
 ## never lose precision.
 
-enum S { MENU, GARAGE, PLAY, PAUSED, BOSS_INTRO, PICK, OVER }
+enum S { MENU, GARAGE, PLAY, PAUSED, BOSS_INTRO, PICK, OVER, REPLAY }
 
 
 class Vehicle:
@@ -32,7 +32,24 @@ class Vehicle:
 	var is_boss := false
 	var title := ""
 	var is_cop := false
+	var id := 0
 	var model: CarModel
+
+
+## The last-life crash: the car has lost traction and slides, spins and can
+## trip over and roll. Road coordinates, like everything else.
+class Crash:
+	var t := 0.0
+	var vel := Vector2.ZERO  # x: across the road, y: along it (m/s)
+	var yaw := 0.0           # heading, radians, + = nose to the right
+	var yaw_rate := 0.0
+	var roll := 0.0          # radians, + = right side up
+	var roll_rate := 0.0
+	var air := 0.0           # height off the road
+	var vy := 0.0
+	var can_trip := false
+	var settled := false
+	var face := 0            # which face it last landed on (multiples of 90 degrees)
 
 
 class Run:
@@ -113,6 +130,26 @@ var _id_log: FileAccess
 var demo_pops := false  # --demo-pops: show a sample score message every second (test aid)
 var _demo_t := 0.0  # [[seconds, path], ...] from --shot=SEC:PATH
 var _log_t := 0.0
+var crash: Crash = null
+var skids: SkidMarks
+var smoke: CPUParticles3D
+var _crash_cam_t := 0.0
+var replay := Replay.new()
+var _models := {}    # vehicle id -> CarModel, including cars kept only for the replay
+var _retired := {}   # vehicle id -> replay clock when the car left the road
+var _next_id := 1
+var _fps_t := 0.0
+var _env: Environment
+var _sky: Sky
+var _sun: DirectionalLight3D
+var _post: ColorRect
+var _post_mat: ShaderMaterial
+var _vig_mat: ShaderMaterial
+var _blur := 0.0
+var _test_crash := -1.0
+var _test_replay := -1.0
+var _test_replay_cam := ""
+var _probe := {}  # first-run frame-rate check that picks the graphics level
 
 
 func _ready() -> void:
@@ -139,6 +176,13 @@ func _ready() -> void:
 			Save.data.selected = a.substr(6)
 		if a == "--cop":  # every boss trigger is a police pursuit (test aid)
 			force_cop = true
+		if a.begins_with("--crash-at="):  # last-life crash at this many seconds (test aid)
+			_test_crash = float(a.substr(11))
+		if a.begins_with("--replay-at="):  # open the replay editor at this many seconds (test aid)
+			var rpa := a.substr(12).split(":")
+			_test_replay = float(rpa[0])
+			if rpa.size() > 1:
+				_test_replay_cam = rpa[1]
 		if a == "--idcolor":
 			idcolor = true
 		if a == "--demo-pops":
@@ -154,6 +198,7 @@ func _ready() -> void:
 	_build_environment()
 	scenery = Scenery.new()
 	add_child(scenery)
+	_apply_gfx()
 	cam = Camera3D.new()
 	cam.keep_aspect = Camera3D.KEEP_WIDTH
 	cam.near = 0.5
@@ -162,6 +207,9 @@ func _ready() -> void:
 	cam.current = true
 	sparks = _make_sparks()
 	dust = _make_dust()
+	smoke = _make_smoke()
+	skids = SkidMarks.new()
+	add_child(skids)
 	sound = EngineAudio.new()
 	add_child(sound)
 	sound.set_enabled(Save.data.sound)
@@ -234,8 +282,10 @@ func _build_environment() -> void:
 	# horizon, ACES tone mapping with a mild grade, and haze that takes its
 	# colour from the sky so distance reads naturally.
 	var env := Environment.new()
+	_env = env
 	env.background_mode = Environment.BG_SKY
 	var sky := Sky.new()
+	_sky = sky
 	var sm := ProceduralSkyMaterial.new()
 	sm.sky_top_color = Color("#2b5c96")
 	sm.sky_horizon_color = Color("#d9d2c2")
@@ -285,6 +335,7 @@ func _build_environment() -> void:
 	we.environment = env
 	add_child(we)
 	var sun := DirectionalLight3D.new()
+	_sun = sun
 	sun.light_color = Color("#fff0d8")
 	sun.light_energy = 1.4
 	sun.rotation_degrees = Vector3(-32, -40, 0)
@@ -298,6 +349,69 @@ func _build_environment() -> void:
 	sun.directional_shadow_max_distance = 90.0
 	sun.directional_shadow_fade_start = 0.65
 	add_child(sun)
+	# full-screen finishing pass, under the HUD
+	var layer := CanvasLayer.new()
+	layer.layer = 0
+	add_child(layer)
+	_post = ColorRect.new()
+	_post.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_post.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.add_child(_post)
+	_post_mat = ShaderMaterial.new()
+	_post_mat.shader = load("res://shaders/post.gdshader")
+	_vig_mat = ShaderMaterial.new()
+	_vig_mat.shader = load("res://shaders/vignette.gdshader")
+
+
+## Graphics quality: High (full shadows, anti-aliasing, speed blur and
+## grade), Medium (lighter shadows, slightly lower resolution, vignette only)
+## or Low (no shadows or glow, 75% resolution) for older phones.
+func _apply_gfx() -> void:
+	var g: String = Save.setting("gfx")
+	if g == "":
+		g = "high"
+		Save.data.settings.gfx = g
+		if OS.has_feature("mobile"):
+			_probe = {"t": 0.0, "n": 0}  # check the frame rate during the first run
+	var vp := get_viewport()
+	var high := g == "high"
+	var low := g == "low"
+	vp.msaa_3d = Viewport.MSAA_DISABLED if low else Viewport.MSAA_2X
+	vp.screen_space_aa = Viewport.SCREEN_SPACE_AA_FXAA if low or high else Viewport.SCREEN_SPACE_AA_DISABLED
+	vp.scaling_3d_scale = 1.0 if high else (0.88 if g == "medium" else 0.75)
+	_sun.shadow_enabled = not low
+	_sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS if high else DirectionalLight3D.SHADOW_ORTHOGONAL
+	_sun.directional_shadow_max_distance = 90.0 if high else 55.0
+	RenderingServer.directional_shadow_atlas_set_size(4096 if high else 2048, true)
+	_env.glow_enabled = not low
+	_env.glow_bloom = 0.03 if high else 0.0
+	_sky.radiance_size = Sky.RADIANCE_SIZE_256 if high else Sky.RADIANCE_SIZE_128
+	_post.visible = not low
+	_post.material = _post_mat if high else _vig_mat
+	scenery.set_detail(high)
+
+
+func _probe_gfx(delta: float) -> void:
+	if _probe.is_empty() or state != S.PLAY:
+		return
+	_probe.t += delta
+	if _probe.t < 3.0:
+		return  # let the run settle first
+	_probe.n += 1
+	if _probe.t < 9.0:
+		return
+	var fps: float = _probe.n / (_probe.t - 3.0)
+	var levels := ["high", "medium", "low"]
+	var i := levels.find(Save.setting("gfx"))
+	if fps < 45.0 and i < 2:
+		Save.data.settings.gfx = levels[i + 1]
+		_apply_gfx()
+		_probe = {"t": 0.0, "n": 0}
+		if i + 1 == 2:
+			_probe = {}
+	else:
+		_probe = {}
+	Save.persist()
 
 
 func _make_sparks() -> CPUParticles3D:
@@ -349,6 +463,57 @@ func _make_dust() -> CPUParticles3D:
 	return p
 
 
+## Grey tyre smoke for the crash.
+func _make_smoke() -> CPUParticles3D:
+	var p := CPUParticles3D.new()
+	p.emitting = false
+	p.amount = 60
+	p.lifetime = 1.6
+	p.emission_shape = CPUParticles3D.EMISSION_SHAPE_BOX
+	p.emission_box_extents = Vector3(0.9, 0.1, 2.0)
+	p.direction = Vector3(0, 1, 0.4)
+	p.spread = 40.0
+	p.initial_velocity_min = 0.6
+	p.initial_velocity_max = 2.0
+	p.gravity = Vector3(0, 0.6, 0)
+	p.damping_min = 0.5
+	p.damping_max = 1.0
+	p.scale_amount_min = 0.7
+	p.scale_amount_max = 1.6
+	var curve := Curve.new()
+	curve.add_point(Vector2(0.0, 0.4))
+	curve.add_point(Vector2(1.0, 1.6))
+	p.scale_amount_curve = curve
+	var grad := Gradient.new()
+	grad.set_color(0, Color(0.85, 0.85, 0.85, 0.32))
+	grad.set_color(1, Color(0.9, 0.9, 0.9, 0.0))
+	p.color_ramp = grad
+	var m := QuadMesh.new()
+	m.size = Vector2(1.6, 1.6)
+	p.mesh = m
+	var puff := GradientTexture2D.new()
+	puff.fill = GradientTexture2D.FILL_RADIAL
+	puff.fill_from = Vector2(0.5, 0.5)
+	puff.fill_to = Vector2(0.5, 0.0)
+	puff.width = 64
+	puff.height = 64
+	var pg := Gradient.new()
+	pg.set_color(0, Color(1, 1, 1, 1))
+	pg.set_color(1, Color(1, 1, 1, 0))
+	pg.add_point(0.45, Color(1, 1, 1, 0.55))
+	puff.gradient = pg
+	var mat := StandardMaterial3D.new()
+	mat.albedo_texture = puff
+	mat.vertex_color_use_as_albedo = true
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+	mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+	p.material_override = mat
+	add_child(p)
+	return p
+
+
 # ---------------------------------------------------------------- setup
 
 func _set_player_car() -> void:
@@ -381,9 +546,13 @@ func _compute_stats() -> void:
 
 
 func _reset_world() -> void:
+	_end_crash()
 	for c in traffic:
+		_models.erase(c.id)
 		c.model.queue_free()
 	traffic.clear()
+	_free_retired()
+	replay.clear()
 	_remove_boss()
 	finish_z = -1.0
 	player.z = 0.0
@@ -447,6 +616,7 @@ func _try_spawn(z: float, lane_hint := -1, v_override := 0.0) -> bool:
 		c.model.build(shape, Color(Data.TRAFFIC_COLORS.pick_random()), Color("#b5322a"), {"rim": ["steel", "5spoke", "5spoke", "multi"].pick_random()})
 	c.model.position = Vector3(c.x, 0.0, -(c.z - player.z))  # place before it is first drawn
 	add_child(c.model)
+	_register(c)
 	traffic.append(c)
 	if idcolor:
 		_paint_id(c)
@@ -538,7 +708,7 @@ func _update_traffic(dt: float) -> void:
 	for i in range(traffic.size() - 1, -1, -1):
 		var c := traffic[i]
 		if c.z < player.z - 90.0 or c.z > player.z + 1100.0:
-			c.model.queue_free()
+			_retire(c)
 			traffic.remove_at(i)
 	# keep the road populated
 	var dens := minf(7.2, 3.3 + run.stage * 0.55) if run else 3.4
@@ -586,8 +756,34 @@ func _boss_leader(b: Vehicle) -> Array:
 
 func _remove_boss() -> void:
 	if boss:
-		boss.model.queue_free()
+		_retire(boss)
 		boss = null
+
+
+## Give a new vehicle an id so the replay can find its model.
+func _register(c: Vehicle) -> void:
+	c.id = _next_id
+	_next_id += 1
+	_models[c.id] = c.model
+
+
+func _free_retired() -> void:
+	for id in _retired:
+		if _models.has(id):
+			(_models[id] as CarModel).queue_free()
+			_models.erase(id)
+	_retired.clear()
+
+
+## A vehicle left the road. Its model is kept, hidden, while the replay can
+## still show it, then freed.
+func _retire(c: Vehicle) -> void:
+	if state == S.MENU or state == S.GARAGE:
+		_models.erase(c.id)
+		c.model.queue_free()
+		return
+	c.model.visible = false
+	_retired[c.id] = replay.clock
 
 
 func _start_boss() -> void:
@@ -627,6 +823,7 @@ func _start_boss() -> void:
 	boss.model.add_child(tag)
 	boss.model.position = Vector3(boss.x, 0.0, -(boss.z - player.z))  # place before it is first drawn
 	add_child(boss.model)
+	_register(boss)
 	run.phase = "boss"
 	run.b_dist = 0.0
 	run.b_score = 0
@@ -817,7 +1014,16 @@ func _autopilot(dt: float) -> void:
 func _hit(reason: String, other: Vehicle = null) -> void:
 	if not _live() or run.invuln > 0.0:
 		return
-	run.lives -= 1
+	if not Save.setting("dev_lives"):
+		run.lives -= 1
+	var v0 := player.v
+	var side := 0.0  # which side the hit came from (+ = right)
+	if other:
+		side = signf(other.x - player.x)
+	elif absf(player.x) > Data.ROAD_HALF:
+		side = signf(player.x)  # guardrail
+	if side == 0.0:
+		side = 1.0 if randf() < 0.5 else -1.0
 	run.invuln = 2.4
 	run.combo = 0
 	run.combo_t = 0.0
@@ -838,13 +1044,141 @@ func _hit(reason: String, other: Vehicle = null) -> void:
 	sound.play("crash")
 	_vib(180)
 	if run.lives <= 0:
-		run.dying = 1.7
+		_start_crash(v0, side, other)
 		_notify(reason, "bad")
 	else:
 		_notify(reason + " · -1 LIFE", "bad")
 
 
+# ---------------------------------------------------------------- last-life crash
+
+func _start_crash(v0: float, side: float, other: Vehicle) -> void:
+	crash = Crash.new()
+	_crash_cam_t = 0.0
+	var k := clampf(v0 / 30.0, 0.5, 1.6)
+	crash.yaw = atan2(player.vx, maxf(v0, 4.0)) * 0.9
+	# knocked away from whatever it hit, nose swung towards it
+	crash.vel = Vector2(player.vx * 0.4 - side * randf_range(2.5, 4.5) * k, v0 * 0.86)
+	crash.yaw_rate = side * randf_range(1.7, 2.8) * k
+	if other and other.z < player.z:  # hit from behind (the police): shoved forward
+		crash.vel.y = maxf(crash.vel.y, other.v * 0.9)
+	# fast enough and the tyres can dig in sideways and trip it over
+	crash.can_trip = v0 > 19.0 and randf() < clampf((v0 - 19.0) / 22.0, 0.35, 0.9)
+	run.dying = 8.0
+	player.v = maxf(crash.vel.y, 0.0)
+	hud.set_play_visible(false)  # let the crash play out full screen
+	shake = 1.4
+
+
+func _update_crash(dt: float) -> void:
+	var c := crash
+	c.t += dt
+	var h := Vector2(sin(c.yaw), cos(c.yaw))  # where the nose points (x, z)
+	var right := Vector2(h.y, -h.x)
+	var f := c.vel.dot(h)
+	var sl := c.vel.dot(right)
+	var grounded := c.air <= 0.0
+	var on_wheels := absf(wrapf(c.roll, -PI, PI)) < 0.35
+	var scraping := false
+	if grounded:
+		if on_wheels:
+			# traction is gone: the tyres scrub sideways and roll on slowly
+			sl = move_toward(sl, 0.0, 6.5 * dt)
+			f = move_toward(f, 0.0, (2.6 + 3.0 * absf(sl) / maxf(c.vel.length(), 1.0)) * dt)
+			c.yaw_rate = move_toward(c.yaw_rate, 0.0, 1.1 * dt)
+			if c.can_trip and absf(sl) > 6.5 and c.t > 0.2:
+				# the leading tyres dig in and the car flips over sideways
+				c.can_trip = false
+				c.roll_rate = -signf(sl) * clampf(absf(sl) * 0.6, 5.0, 8.5)
+				c.vy = minf(1.6 + absf(sl) * 0.1, 3.4)
+				c.air = 0.001
+				c.yaw_rate *= 0.4
+				sl *= 0.6
+				sound.play("crash", 0.9, 0.0)
+				shake = maxf(shake, 1.2)
+				_vib(120)
+		else:
+			# on its side or roof: steel on asphalt
+			var fr := 8.0 * dt
+			sl = move_toward(sl, 0.0, fr)
+			f = move_toward(f, 0.0, fr)
+			c.yaw_rate = move_toward(c.yaw_rate, 0.0, 2.6 * dt)
+			scraping = c.vel.length() > 3.0
+		var face := roundi(c.roll / (PI / 2.0))
+		var off := c.roll - face * PI / 2.0
+		if absf(c.roll_rate) > 2.5:
+			# tumbling: each landing on a new face costs energy and bounces it
+			c.roll_rate *= exp(-0.55 * dt)
+			var tumble := 9.0 * dt
+			f = move_toward(f, 0.0, tumble)
+			sl = move_toward(sl, 0.0, tumble)
+			c.yaw_rate = move_toward(c.yaw_rate, 0.0, 1.5 * dt)
+			if face != c.face and absf(off) < 0.25:
+				c.face = face
+				c.roll_rate *= 0.8
+				c.vy = minf(absf(c.roll_rate) * 0.12, 1.2)
+				c.air = 0.001
+				shake = maxf(shake, 0.7)
+				sound.play("crash", randf_range(0.8, 1.05), -5.0)
+				_vib(60)
+		else:
+			# slow: it falls onto its wheels or its roof, whichever is nearer
+			var rest := roundf(c.roll / PI) * PI
+			c.roll_rate += (rest - c.roll) * 26.0 * dt
+			c.roll_rate *= exp(-5.0 * dt)
+	else:
+		c.vy -= 9.8 * dt
+		c.air += c.vy * dt
+		if c.air <= 0.0:
+			c.air = 0.0
+			if c.vy < -2.5:
+				c.vy = -c.vy * 0.3
+				c.air = 0.001
+				sound.play("crash", 1.1, -8.0)
+			else:
+				c.vy = 0.0
+	c.roll += c.roll_rate * dt
+	c.yaw += c.yaw_rate * dt
+	c.vel = h * f + right * sl
+	player.x += c.vel.x * dt
+	player.z += maxf(c.vel.y, 0.0) * dt
+	var lim := Data.RAIL - player.w / 2.0
+	if absf(player.x) > lim:
+		var s := signf(player.x)
+		player.x = s * lim
+		if c.vel.x * s > 0.0:
+			if absf(c.vel.x) > 2.5:
+				sound.play("crash", 1.2, -6.0)
+				_spark_at(Vector3(s * Data.RAIL - player.x, 0.6, -player.l * 0.5))
+			c.vel.x = -c.vel.x * 0.3
+			c.yaw_rate += -s * 0.8
+	player.v = maxf(c.vel.y, 0.0)
+	player.vx = c.vel.x
+	if scraping and fmod(c.t, 0.12) < dt:
+		_spark_at(Vector3(0, 0.3, -player.l * 0.5))
+	if not c.settled and grounded and c.air <= 0.0 and c.vel.length() < 0.4 and absf(c.roll_rate) < 0.3:
+		c.settled = true
+		if run:
+			run.dying = minf(run.dying, 2.2)
+
+
+func _spark_at(pos: Vector3) -> void:
+	sparks.position = pos
+	sparks.restart()
+	sparks.emitting = true
+
+
+func _end_crash() -> void:
+	crash = null
+	if player.model:
+		player.model.clear_crash_pose()
+	skids.clear_all()
+
+
 func _update_player(dt: float) -> void:
+	if crash:
+		_update_crash(dt)
+		return
 	var live := _live()
 	if not live or autotest:
 		_autopilot(dt)
@@ -979,7 +1313,7 @@ func _end_run(reason: String) -> void:
 	state = S.OVER
 	hud.set_play_visible(false)
 	hud.show_over(reason, Fmt.num(score), Fmt.km(dist), str(bosses), "+$" + Fmt.num(earned), " ".join(notes))
-	if autotest:
+	if autotest and _test_replay < 0.0:
 		_start_run()
 
 
@@ -1064,6 +1398,7 @@ func _start_cop() -> void:
 	boss.model.add_child(tag)
 	boss.model.position = Vector3(boss.x, 0.0, -(boss.z - player.z))
 	add_child(boss.model)
+	_register(boss)
 	run.phase = "cop"
 	run.cop_t = 0.0
 	run.siren_t = 0.0
@@ -1227,10 +1562,21 @@ func _process(delta: float) -> void:
 		hud.set_play_visible(false)
 		_check_shots()
 		return
+	_fps_t -= delta
+	if _fps_t <= 0.0:
+		_fps_t = 0.5
+		hud.fps_label.visible = Save.setting("dev_fps")
+		hud.fps_label.text = "%d FPS" % Engine.get_frames_per_second()
+	if state == S.REPLAY:
+		_replay_frame(delta)
+		_post_speed()
+		_check_shots()
+		return
 	var dt := minf(delta, 0.05)
 	if _sim_running():
-		if run and run.dying > 0.0:
-			dt *= 0.35
+		if crash and state == S.PLAY:
+			# slow motion as the car lets go, easing back to real time
+			dt *= lerpf(0.35, 1.0, clampf((crash.t - 0.9) / 1.4, 0.0, 1.0))
 		var h := dt / 2.0
 		for i in 2:
 			t += h
@@ -1242,6 +1588,22 @@ func _process(delta: float) -> void:
 				_update_run(h)
 			if not _sim_running():
 				break
+	if state == S.PLAY and run:
+		_record(dt)
+	_probe_gfx(delta)
+	_post_speed()
+	var now := Time.get_ticks_msec() / 1000.0
+	if _test_crash > 0.0 and now > _test_crash and _live():
+		_test_crash = -1.0
+		run.lives = 1
+		run.invuln = 0.0
+		_hit("TEST CRASH", traffic[0] if not traffic.is_empty() else null)
+	if _test_replay > 0.0 and now > _test_replay:
+		_test_replay = -1.0
+		_open_replay()
+		if _test_replay_cam != "":
+			rp.cam = _test_replay_cam
+		print("[autotest] replay opened, %.1f s recorded" % replay.duration())
 	shake = maxf(0.0, shake - delta * 2.2)
 	_flash.color.a = maxf(0.0, _flash.color.a - delta * 0.8)
 	_sync_visuals(delta)
@@ -1256,6 +1618,8 @@ func _process(delta: float) -> void:
 			if run:
 				print("[autotest] t=%.0f stage=%d phase=%s lives=%d score=%d v=%.0fkm/h dist=%.0f cars=%d" % [
 					Time.get_ticks_msec() / 1000.0, run.stage, run.phase, run.lives, run.score, player.v * 3.6, run.dist, traffic.size()])
+		if crash:
+			print("[autotest] crash t=%.2f x=%.2f vel=%s yaw=%.2f roll=%.2f rr=%.2f air=%.2f settled=%s" % [crash.t, player.x, crash.vel, crash.yaw, crash.roll, crash.roll_rate, crash.air, crash.settled])
 	if demo_pops and run:
 		_demo_t += delta
 		if _demo_t > 1.0:
@@ -1307,8 +1671,14 @@ func _sync_visuals(delta: float) -> void:
 	if boss:
 		_place(boss, delta)
 	_place(player, delta)
-	player.model.set_roll(clampf(-player.vx * 0.025, -0.06, 0.06))
-	player.model.set_pitch(clampf(-player_accel * 0.0028, -0.022, 0.03))
+	if crash:
+		player.model.set_crash_pose(player.x, crash.yaw, crash.roll, crash.air)
+		_crash_marks()
+	else:
+		player.model.set_roll(clampf(-player.vx * 0.025, -0.06, 0.06))
+		player.model.set_pitch(clampf(-player_accel * 0.0028, -0.022, 0.03))
+		smoke.emitting = false
+	skids.update_view(player.z)
 	var cam_mode: String = Save.data.cam.mode
 	hud.set_speedo_visible(cam_mode != "cockpit")
 	# Invulnerability used to blink the car on and off, which in the chase view
@@ -1317,13 +1687,29 @@ func _sync_visuals(delta: float) -> void:
 	player.model.visible = not idcolor
 	player.model.set_ghost(run != null and run.invuln > 0.0 and run.dying <= 0.0, t)
 	player.model.set_gauges(player.v * 3.6 / 300.0, sound.rpm / (sound.redline * 1.1))
-	player.model.set_steer(clampf(player.vx * 0.3, -1.4, 1.4))
+	player.model.set_steer(clampf(player.vx * 0.3, -1.4, 1.4) if crash == null else 0.0)
 	player.model.set_gear(sound.gear, delta)
 	var sp := _speed_text()
 	player.model.set_display(sound.gear, sp[0], sp[1], "%.1f km" % ((run.dist if run else player.z) / 1000.0))
 	dust.position = Vector3(player.x, 0.2, 0.0)
 	dust.emitting = on_shoulder and player.v > 8.0
 	_update_camera(delta, cam_mode)
+
+
+## Tyre marks and smoke while the crashed car slides on its wheels.
+func _crash_marks() -> void:
+	var c := crash
+	var h := Vector2(sin(c.yaw), cos(c.yaw))
+	var sl := absf(c.vel.dot(Vector2(h.y, -h.x)))
+	var sliding := c.air <= 0.0 and absf(wrapf(c.roll, -PI, PI)) < 0.3 and (sl > 1.6 or c.t < 0.5) and c.vel.length() > 1.0
+	var contacts := player.model.wheel_contacts()
+	for i in contacts.size():
+		if sliding:
+			skids.add_point(i, contacts[i].x, player.z - contacts[i].z, clampf(sl / 6.0, 0.4, 1.0))
+		else:
+			skids.lift(i)
+	smoke.emitting = sliding or (c.air <= 0.0 and c.vel.length() > 3.0)
+	smoke.position = Vector3(player.x, 0.3, -player.l * 0.5)
 
 
 func _speed_text() -> Array:
@@ -1361,6 +1747,13 @@ func _update_camera(delta: float, mode: String) -> void:
 		cam.fov = 75.0
 		cam.global_transform = player.model.body_node().global_transform * Transform3D(Basis.looking_at(Vector3(e.x * 0.6, e.y - 0.35, e.z - 0.7) - from), from)
 		return
+	if crash and state != S.REPLAY:
+		_crash_cam_t += delta
+		# swing round from behind to a rear three-quarter view, then hold
+		# (towards the middle of the road, so it never ends up out on the verge)
+		var toward := 1.0 if player.x <= 0.0 else -1.0
+		_orbit_cam(toward * (0.9 * smoothstep(0.0, 3.5, _crash_cam_t) + 0.04 * _crash_cam_t), 9.5, 3.2)
+		return
 	var cfg := Save.cam(mode)
 	# portrait keeps the horizontal field of view; landscape keeps a vertical one
 	var land := get_viewport().get_visible_rect().size.x > get_viewport().get_visible_rect().size.y
@@ -1388,6 +1781,31 @@ func _update_camera(delta: float, mode: String) -> void:
 	cam.global_transform = player.model.body_node().global_transform * Transform3D(pitch, eye + buzz)
 
 
+## Speed blur strength for the High graphics pass.
+func _post_speed() -> void:
+	if _post.material != _post_mat:
+		return
+	var k := 0.0
+	var mode: String = rp.cam if state == S.REPLAY else Save.data.cam.mode
+	if (state == S.PLAY or state == S.REPLAY) and crash == null and mode in ["chase", "hood", "cockpit"]:
+		k = clampf((player.v - 22.0) / maxf(float(st.top) - 22.0, 1.0), 0.0, 1.0) * (0.6 if mode == "cockpit" else 1.0)
+	_blur = lerpf(_blur, k, 0.08)
+	_post_mat.set_shader_parameter("speed", _blur)
+
+
+## Look at the player's car from `ang` radians round from straight behind.
+func _orbit_cam(ang: float, radius: float, height: float) -> void:
+	var centre := Vector3(player.x, 0.7, -player.l * 0.5)
+	cam.near = 0.1
+	cam.fov = 60.0
+	var land := get_viewport().get_visible_rect().size.x > get_viewport().get_visible_rect().size.y
+	cam.keep_aspect = Camera3D.KEEP_HEIGHT if land else Camera3D.KEEP_WIDTH
+	var jitter := Vector3(randf_range(-1, 1), randf_range(-1, 1), 0) * 0.25 * shake * _shake_k()
+	var from := centre + Vector3(sin(ang) * radius, height, cos(ang) * radius)
+	from.x = clampf(from.x, -Data.RAIL - 1.0, Data.RAIL + 1.0)
+	cam.global_transform = Transform3D(Basis.looking_at(centre - from), from + jitter)
+
+
 func _update_hud() -> void:
 	if run == null:
 		return
@@ -1405,6 +1823,7 @@ func _update_hud() -> void:
 		"fast": player.v > 33.0,
 		"boss": run.phase == "boss",
 		"cop": run.phase == "cop",
+		"inf": Save.setting("dev_lives"),
 	}
 	if run.phase == "cop":
 		var gp: float = maxf(0.0, player.z - (boss.z + boss.l)) if boss else 99.0
@@ -1532,6 +1951,9 @@ func _refresh_inputs() -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if state == S.REPLAY:
+		_replay_input(event)
+		return
 	if event is InputEventScreenTouch:
 		var e := event as InputEventScreenTouch
 		if e.pressed:
@@ -1597,7 +2019,9 @@ func _notification(what: int) -> void:
 			if state == S.PLAY and not autotest:
 				_pause()
 		NOTIFICATION_WM_GO_BACK_REQUEST:
-			if hud.screens.pedals.visible:
+			if state == S.REPLAY:
+				_close_replay()
+			elif hud.screens.pedals.visible:
 				_on_act("pedal_done", "")
 			elif hud.screens.settings.visible:
 				_on_act("settings_back", "")
@@ -1612,6 +2036,8 @@ func _notification(what: int) -> void:
 # ---------------------------------------------------------------- screens
 
 func _go_menu() -> void:
+	_end_crash()
+	_free_retired()
 	state = S.MENU
 	hud.set_play_visible(false)
 	hud.render_menu()
@@ -1638,14 +2064,47 @@ func _resume() -> void:
 	_calibrate_tilt()
 
 
+var _reset_armed := 0  # msec until which a second RESET PROGRESS tap wipes the save
+
+
+func _dev_tool(id: String) -> void:
+	match id:
+		"cars":
+			Save.unlock_all_cars()
+			hud.dev_note("Every car is unlocked and in your Garage.")
+		"upgrades":
+			Save.max_all_upgrades()
+			_compute_stats()
+			hud.dev_note("Every Garage upgrade is at its top level.")
+		"cash":
+			Save.data.cash += 100000
+			Save.persist()
+			hud.dev_note("Added $100,000. You now have $%s." % Fmt.num(Save.data.cash))
+		"reset":
+			if Time.get_ticks_msec() < _reset_armed:
+				_reset_armed = 0
+				Save.reset_progress()
+				if run == null:
+					_set_player_car()
+				_compute_stats()
+				hud.dev_note("Progress reset. Settings were kept.")
+			else:
+				_reset_armed = Time.get_ticks_msec() + 3000
+				hud.dev_note("Tap RESET PROGRESS again within 3 seconds to wipe cars, cash and upgrades.")
+				return
+	sound.play("ding", 1.4)
+
+
 func _on_act(action: String, arg: String) -> void:
 	# a drag that scrolled a menu must not also press the button it started on
-	if hud and hud.clicks_blocked() and not action in ["cam_set", "set", "cam_save", "save", "pause", "cam_cycle"]:
+	if hud and hud.clicks_blocked() and not action in ["cam_set", "set", "cam_save", "save", "pause", "cam_cycle", "rp", "rp_scrub"]:
 		return
 	match action:
 		"start":
 			_start_run()
 		"garage":
+			_end_crash()
+			_free_retired()
 			state = S.GARAGE
 			hud.render_garage()
 			hud.show_screen("garage")
@@ -1717,10 +2176,25 @@ func _on_act(action: String, arg: String) -> void:
 					_apply_orientation()
 				"units":
 					Save.data.settings.units = "kmh" if Save.setting("units") == "mph" else "mph"
+				"gfx":
+					var levels := ["high", "medium", "low"]
+					Save.data.settings.gfx = levels[(levels.find(Save.setting("gfx")) + 1) % levels.size()]
+					_apply_gfx()
 				_:
 					Save.data.settings[arg] = not Save.setting(arg)
 			Save.persist()
 			hud.render_settings()
+		"dev":
+			_dev_tool(arg)
+		"replay":
+			_open_replay()
+		"rp":
+			if state == S.REPLAY:
+				_replay_act(arg)
+		"rp_scrub":
+			if state == S.REPLAY:
+				rp.play = false
+				rp.t = lerpf(replay.start_t(), replay.end_t(), clampf(float(arg), 0.0, 1.0))
 		"pedal_edit":
 			hud.begin_pedal_edit()
 		"pedal_done":
@@ -1784,3 +2258,271 @@ func _on_act(action: String, arg: String) -> void:
 				state = S.PLAY
 				hud.show_screen("")
 				_end_run("You ended the run")
+
+
+# ---------------------------------------------------------------- replay
+
+const REPLAY_CAMS := ["chase", "hood", "cockpit", "orbit", "tv", "drone"]
+const REPLAY_CAM_NAMES := {"chase": "CHASE", "hood": "HOOD", "cockpit": "COCKPIT", "orbit": "ORBIT", "tv": "TRACKSIDE", "drone": "DRONE"}
+const REPLAY_SPEEDS := [1.0, 0.5, 0.25, 2.0]
+
+var rp := {}  # replay editor state while state == S.REPLAY
+
+
+## Store one frame of the run for the replay.
+func _record(dt: float) -> void:
+	if not replay.tick(dt):
+		return
+	var pv := PackedFloat32Array()
+	pv.resize(13)
+	pv[Replay.P_X] = player.x
+	pv[Replay.P_Z] = player.z
+	pv[Replay.P_V] = player.v
+	pv[Replay.P_VX] = player.vx
+	if crash:
+		pv[Replay.P_YAW] = crash.yaw
+		pv[Replay.P_ROLL] = crash.roll
+		pv[Replay.P_AIR] = crash.air
+		pv[Replay.P_CRASH] = 1.0
+	else:
+		pv[Replay.P_YAW] = atan2(player.vx, maxf(player.v, 4.0)) * 0.9
+		pv[Replay.P_ROLL] = clampf(-player.vx * 0.025, -0.06, 0.06)
+		pv[Replay.P_PITCH] = clampf(-player_accel * 0.0028, -0.022, 0.03)
+	var live := _live()
+	pv[Replay.P_GAS] = 1.0 if (in_gas if live and not autotest else ap_gas) else 0.0
+	pv[Replay.P_BRAKE] = 1.0 if player.braking else 0.0
+	pv[Replay.P_STEER] = clampf(player.vx * 0.3, -1.4, 1.4) if crash == null else 0.0
+	pv[Replay.P_GHOST] = 1.0 if run.invuln > 0.0 and run.dying <= 0.0 else 0.0
+	var cars := {}
+	var all: Array[Vehicle] = traffic.duplicate()
+	if boss:
+		all.append(boss)
+	for c in all:
+		if c.z > player.z - 130.0 and c.z < player.z + 420.0:
+			var dir := 0
+			if c.tlane >= 0 and c.tlane != c.lane:
+				dir = -1 if Data.LANES[c.tlane] < c.x else 1
+			cars[c.id] = PackedFloat32Array([c.x, c.z, c.v, c.vx, 1.0 if c.braking else 0.0, dir])
+	var f := {"p": pv, "cars": cars, "finish": finish_z, "gear": sound.gear, "rpm": sound.rpm}
+	if boss and boss.is_cop:
+		f["cop"] = boss.id
+	replay.push(f)
+	# forget cars that have dropped out of the recording
+	for id in _retired.keys():
+		if replay.clock - float(_retired[id]) > Replay.LENGTH + 1.0:
+			if _models.has(id):
+				(_models[id] as CarModel).queue_free()
+				_models.erase(id)
+			_retired.erase(id)
+
+
+func _open_replay() -> void:
+	if replay.empty():
+		hud.pop("NOTHING RECORDED YET", "small")
+		return
+	rp = {"from": state, "t": replay.start_t(), "play": true, "speed": 1.0, "cam": "chase",
+		"a": replay.start_t(), "b": replay.end_t(), "orbit": 0.0, "tv_z": -1.0, "tv_x": 0.0, "hide": false,
+		"live": [player.x, player.z, player.v, player.vx], "drag": -1}
+	if Save.data.cam.mode in REPLAY_CAMS:
+		rp.cam = Save.data.cam.mode
+	state = S.REPLAY
+	touches.clear()
+	key_gas = false
+	key_brake = false
+	_refresh_inputs()
+	sparks.emitting = false
+	smoke.emitting = false
+	dust.emitting = false
+	scenery.begin_replay()
+	hud.show_screen("")
+	hud.set_play_visible(false)
+	hud.show_replay(true)
+	_replay_show(rp.t, 0.0)
+
+
+func _close_replay() -> void:
+	if state != S.REPLAY:
+		return
+	scenery.end_replay()
+	var lv: Array = rp.live
+	player.x = lv[0]
+	player.z = lv[1]
+	player.v = lv[2]
+	player.vx = lv[3]
+	for id in _models:
+		(_models[id] as CarModel).visible = not _retired.has(id)
+	if crash == null:
+		player.model.clear_crash_pose()
+	skids.visible = true
+	sound.quiet = false
+	state = rp.from
+	hud.show_replay(false)
+	if run and crash == null:
+		hud.set_play_visible(true)
+	match state:
+		S.OVER:
+			hud.show_screen("over")
+		S.PAUSED:
+			hud.show_screen("pause")
+	_sync_visuals(0.0)
+
+
+func _replay_frame(delta: float) -> void:
+	var prev: float = rp.t
+	if rp.play:
+		rp.t += delta * rp.speed
+		if rp.t >= rp.b:
+			rp.t = rp.a  # loop the clip
+			prev = rp.t
+	if rp.cam == "orbit" and rp.drag < 0:
+		rp.orbit += delta * 0.25
+	_replay_show(rp.t, rp.t - prev)
+	_replay_cam(delta)
+	var s := replay.start_t()
+	var e := replay.end_t()
+	var span := maxf(e - s, 0.001)
+	hud.update_replay({"pos": (rp.t - s) / span, "a": (rp.a - s) / span, "b": (rp.b - s) / span,
+		"time": "%.1f s" % (rp.t - rp.a), "clip": "%.1f s" % (rp.b - rp.a), "play": rp.play,
+		"speed": {1.0: "1x", 0.5: "0.5x", 0.25: "0.25x", 2.0: "2x"}.get(rp.speed, "1x"), "cam": REPLAY_CAM_NAMES[rp.cam], "len": span})
+
+
+## Put the world, every car and the player where they were at time t.
+func _replay_show(t: float, dt: float) -> void:
+	var f := replay.sample(t)
+	if f.is_empty():
+		return
+	var p: PackedFloat32Array = f.p
+	var pz: float = p[Replay.P_Z]
+	player.x = p[Replay.P_X]
+	player.z = pz
+	player.v = p[Replay.P_V]
+	player.vx = p[Replay.P_VX]
+	scenery.update_view(pz, f.finish, dt)
+	var crashed := p[Replay.P_CRASH] > 0.5
+	skids.visible = crashed
+	skids.update_view(pz)
+	var seen := {}
+	var cars: Dictionary = f.cars
+	for id in cars:
+		var m: CarModel = _models.get(id)
+		if m == null:
+			continue
+		var v: PackedFloat32Array = cars[id]
+		m.visible = true
+		m.position = Vector3(v[Replay.C_X], 0.0, -(v[Replay.C_Z] - pz))
+		m.rotation.y = -atan2(v[Replay.C_VX], maxf(v[Replay.C_V], 4.0)) * 0.9
+		m.spin(v[Replay.C_V], absf(dt))
+		m.set_brake(v[Replay.C_BRAKE] > 0.5)
+		m.set_signal(roundi(v[Replay.C_SIG]), fmod(t * 2.6, 1.0) < 0.55)
+		seen[id] = true
+	for id in _models:
+		if not seen.has(id):
+			(_models[id] as CarModel).visible = false
+	if f.has("cop") and _models.has(f.cop):
+		(_models[f.cop] as CarModel).flash_lightbar(t)
+	var pm := player.model
+	pm.spin(p[Replay.P_V], absf(dt))
+	if crashed:
+		pm.set_crash_pose(p[Replay.P_X], p[Replay.P_YAW], p[Replay.P_ROLL], p[Replay.P_AIR])
+	else:
+		pm.clear_crash_pose()
+		pm.position = Vector3(p[Replay.P_X], 0.0, 0.0)
+		pm.rotation.y = -p[Replay.P_YAW]
+		pm.set_roll(p[Replay.P_ROLL])
+		pm.set_pitch(p[Replay.P_PITCH])
+	pm.set_brake(p[Replay.P_BRAKE] > 0.5)
+	pm.set_ghost(p[Replay.P_GHOST] > 0.5, t)
+	pm.set_steer(p[Replay.P_STEER])
+	pm.set_gear(int(f.gear), absf(dt))
+	pm.set_gauges(p[Replay.P_V] * 3.6 / 300.0, float(f.rpm) / (sound.redline * 1.1))
+	sound.quiet = not rp.play
+	sound.drive(p[Replay.P_V], st.top, p[Replay.P_GAS] > 0.5, p[Replay.P_BRAKE] > 0.5, true, absf(dt) if absf(dt) > 0.0 else 0.016)
+
+
+func _replay_cam(delta: float) -> void:
+	match rp.cam:
+		"orbit":
+			_orbit_cam(rp.orbit, 8.0, 2.4)
+		"tv":
+			# a camera operator at the roadside who pans and zooms as the car goes by
+			var pz := player.z
+			if rp.tv_z < 0.0 or pz - rp.tv_z > 40.0 or rp.tv_z - pz > 160.0:
+				rp.tv_z = pz + 70.0 + player.v * 0.8
+				rp.tv_x = (Data.RAIL + 2.5) * (1.0 if randf() < 0.5 else -1.0)
+			var from := Vector3(rp.tv_x, 1.5, -(rp.tv_z - pz))
+			var centre := Vector3(player.x, 0.8, -player.l * 0.5)
+			var dist := from.distance_to(centre)
+			cam.near = 0.2
+			cam.fov = clampf(rad_to_deg(2.0 * atan(5.5 / dist)), 6.0, 55.0)
+			cam.keep_aspect = Camera3D.KEEP_HEIGHT
+			cam.global_transform = Transform3D(Basis.looking_at(centre - from), from)
+		"drone":
+			var centre := Vector3(player.x, 0.0, -player.l * 0.5)
+			var from := centre + Vector3(0.0, 26.0, 16.0)
+			cam.near = 0.5
+			cam.fov = 50.0
+			cam.global_transform = Transform3D(Basis.looking_at(centre + Vector3(0, 0, -14.0) - from), from)
+		_:
+			_update_camera(delta, rp.cam)
+
+
+func _replay_act(arg: String) -> void:
+	match arg:
+		"play":
+			rp.play = not rp.play
+			if rp.play and rp.t >= rp.b - 0.05:
+				rp.t = rp.a
+		"back", "fwd":
+			rp.play = false
+			rp.t = clampf(rp.t + (-1.0 if arg == "back" else 1.0) / Replay.RATE, replay.start_t(), replay.end_t())
+		"speed":
+			rp.speed = REPLAY_SPEEDS[(REPLAY_SPEEDS.find(rp.speed) + 1) % REPLAY_SPEEDS.size()]
+		"cam":
+			rp.cam = REPLAY_CAMS[(REPLAY_CAMS.find(rp.cam) + 1) % REPLAY_CAMS.size()]
+			rp.tv_z = -1.0
+		"in":
+			rp.a = minf(rp.t, rp.b - 0.5)
+		"out":
+			rp.b = maxf(rp.t, rp.a + 0.5)
+		"clear":
+			rp.a = replay.start_t()
+			rp.b = replay.end_t()
+		"start":
+			rp.t = rp.a
+		"hide":
+			rp.hide = true
+			hud.replay_ui_visible(false)
+		"done":
+			_close_replay()
+
+
+func _replay_input(event: InputEvent) -> void:
+	if rp.hide:
+		if event is InputEventScreenTouch and (event as InputEventScreenTouch).pressed:
+			rp.hide = false
+			hud.replay_ui_visible(true)
+			get_viewport().set_input_as_handled()
+		return
+	if event is InputEventScreenTouch:
+		var e := event as InputEventScreenTouch
+		if e.pressed and not hud.replay_ui_at(e.position):
+			rp.drag = e.index
+		elif not e.pressed and e.index == rp.drag:
+			rp.drag = -1
+	elif event is InputEventScreenDrag:
+		var e := event as InputEventScreenDrag
+		if e.index == rp.drag:
+			if rp.cam != "orbit":
+				rp.cam = "orbit"
+				rp.orbit = 0.0
+			rp.orbit -= e.relative.x * 0.01
+	elif event is InputEventKey and (event as InputEventKey).pressed:
+		match (event as InputEventKey).keycode:
+			KEY_SPACE:
+				_replay_act("play")
+			KEY_LEFT:
+				_replay_act("back")
+			KEY_RIGHT:
+				_replay_act("fwd")
+			KEY_ESCAPE:
+				_close_replay()

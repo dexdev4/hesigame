@@ -67,6 +67,7 @@ var _editing := false
 var _drag := {}
 var _over := {}
 var garage_tab := "cars"
+var fps_label: Label
 
 
 func _ready() -> void:
@@ -102,6 +103,14 @@ func _ready() -> void:
 	_build_over()
 	_build_settings()
 	_build_pedal_editor()
+	_build_replay()
+	fps_label = _label("", 20, AMBER, mono_font)
+	fps_label.position = Vector2(22, 0)
+	fps_label.anchor_top = 0.15
+	fps_label.anchor_bottom = 0.15
+	fps_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.8))
+	fps_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(fps_label)
 	get_viewport().size_changed.connect(_apply_safe_area)
 	_apply_safe_area()
 
@@ -513,6 +522,8 @@ func _draw_lives() -> void:
 			c.draw_polyline(body, col, 2.0)
 		c.draw_circle(Vector2(x + 9, y + 21), 4.5, col if on else Color(LINE, 0.25))
 		c.draw_circle(Vector2(x + 31, y + 21), 4.5, col if on else Color(LINE, 0.25))
+	if Save.setting("dev_lives"):  # developer tools: infinite lives
+		c.draw_string(display_font, Vector2(8.0 + _max_lives * 46.0, 34), "INF", HORIZONTAL_ALIGNMENT_LEFT, -1, 30, AMBER)
 
 
 func set_play_visible(on: bool) -> void:
@@ -559,7 +570,11 @@ func update_play(d: Dictionary) -> void:
 	_mult.text = d.mult
 	_mult_bg.modulate = Color(1, 1, 1, 1) if d.combo_on else Color(1, 1, 1, 0.45)
 	_combo.value = d.combo_frac
-	if d.lives != _lives or d.max_lives != _max_lives:
+	if d.lives != _lives or d.max_lives != _max_lives or d.get("inf", false) != _lives_ctrl.has_meta("inf"):
+		if d.get("inf", false):
+			_lives_ctrl.set_meta("inf", true)
+		else:
+			_lives_ctrl.remove_meta("inf")
 		_lives = d.lives
 		_max_lives = d.max_lives
 		_lives_ctrl.queue_redraw()
@@ -965,7 +980,10 @@ func _build_pause() -> void:
 	v.add_child(btns)
 	btns.add_child(_button("RESUME", "amber", "resume"))
 	btns.add_child(_button("END RUN", "ghost", "quit"))
-	v.add_child(_button("SETTINGS", "light", "settings"))
+	var btns2 := _row(14)
+	v.add_child(btns2)
+	btns2.add_child(_button("REPLAY", "light", "replay"))
+	btns2.add_child(_button("SETTINGS", "light", "settings"))
 
 
 var _knob_tex: ImageTexture
@@ -1039,7 +1057,10 @@ func _build_over() -> void:
 	v.add_child(btns)
 	btns.add_child(_button("RUN AGAIN", "amber", "start"))
 	btns.add_child(_button("GARAGE", "light", "garage"))
-	v.add_child(_button("MENU", "ghost", "menu"))
+	var btns2 := _row(14)
+	v.add_child(btns2)
+	btns2.add_child(_button("WATCH REPLAY", "light", "replay"))
+	btns2.add_child(_button("MENU", "ghost", "menu"))
 
 
 func show_over(reason: String, score: String, dist: String, bosses: String, cash: String, note: String) -> void:
@@ -1109,7 +1130,7 @@ func _build_settings() -> void:
 	_slider_row(v, "steer_sens", "set", "save")
 	_slider_row(v, "pedal_scale", "set", "save")
 	var toggles := [["steer_mode", "Steering"], ["tilt_invert", "Tilt direction"], ["orientation", "Screen"], ["assist", "Lane assist"], ["haptics", "Vibration"],
-		["shake", "Camera shake"], ["sound", "Engine sound"], ["units", "Speed units"]]
+		["shake", "Camera shake"], ["sound", "Engine sound"], ["units", "Speed units"], ["gfx", "Graphics"]]
 	var grid := GridContainer.new()
 	grid.columns = 2
 	grid.add_theme_constant_override("h_separation", 12)
@@ -1129,8 +1150,37 @@ func _build_settings() -> void:
 	for b in [_button("SWAP PEDALS", "ghost", "pedal_swap"), _button("RESET PEDALS", "ghost", "pedal_reset")]:
 		b.add_theme_font_size_override("font_size", 26)
 		pr.add_child(b)
+	# developer tools
+	v.add_child(_eyebrow("Developer tools"))
+	v.add_child(_wrap("For testing. Unlocks change your saved progress.", 20, MUTED))
+	var dev := GridContainer.new()
+	dev.columns = 2
+	dev.add_theme_constant_override("h_separation", 12)
+	dev.add_theme_constant_override("v_separation", 12)
+	v.add_child(dev)
+	for t in [["dev_lives", "Infinite lives"], ["dev_fps", "FPS counter"]]:
+		var b := _toggle(t[1], "toggle")
+		var key: String = t[0]
+		for c in b.pressed.get_connections():
+			b.pressed.disconnect(c.callable)
+		b.pressed.connect(func() -> void: act.emit("toggle", key))
+		dev.add_child(b)
+		_set["t_" + key] = b
+	for d in [["UNLOCK ALL CARS", "cars"], ["MAX ALL UPGRADES", "upgrades"], ["+$100,000 CASH", "cash"], ["RESET PROGRESS", "reset"]]:
+		var b := _button(d[0], "ghost", "dev", d[1])
+		b.add_theme_font_size_override("font_size", 24)
+		dev.add_child(b)
+		_set["dev_" + d[1]] = b
+	_set["dev_note"] = _wrap("", 20, AMBER)
+	v.add_child(_set.dev_note)
 	v.add_child(_button("BACK", "light", "settings_back"))
 	(screens.settings.get_child(0) as ColorRect).color = Color(0.03, 0.04, 0.05, 0.3)
+
+
+## Feedback line under the developer tools.
+func dev_note(text: String) -> void:
+	_set.dev_note.text = text
+	_set.dev_reset.text = "TAP AGAIN TO RESET" if text.begins_with("Tap") else "RESET PROGRESS"
 
 
 func render_settings() -> void:
@@ -1154,6 +1204,8 @@ func render_settings() -> void:
 		"steer_mode": {"swipe": "SWIPE", "wheel": "WHEEL", "buttons": "BUTTONS", "tilt": "TILT"}.get(Save.setting("steer_mode"), "SWIPE"),
 		"tilt_invert": "REVERSED" if Save.setting("tilt_invert") else "NORMAL",
 		"orientation": "LANDSCAPE" if Save.setting("orientation") == "landscape" else "PORTRAIT",
+		"gfx": String(Save.setting("gfx")).to_upper(),
+		"dev_lives": "ON" if Save.setting("dev_lives") else "OFF", "dev_fps": "ON" if Save.setting("dev_fps") else "OFF",
 	}
 	for key in states:
 		var b: Button = _set["t_" + key]
@@ -1263,6 +1315,129 @@ func end_pedal_edit() -> void:
 	_hint.modulate.a = 0.0
 	layout_pedals()
 	play_layer.visible = _play_on
+
+
+# ---------------------------------------------------------------- replay editor
+
+var replay_ui: Control
+var _rp := {}
+
+
+func _rp_button(text: String, arg: String, kind := "ghost") -> Button:
+	var b := _button(text, kind, "rp", arg)
+	b.add_theme_font_size_override("font_size", 23)
+	b.custom_minimum_size.y = 62
+	for k in ["normal", "hover", "pressed"]:
+		var sb := (b.get_theme_stylebox(k) as StyleBoxFlat).duplicate() as StyleBoxFlat
+		sb.content_margin_left = 6
+		sb.content_margin_right = 6
+		sb.content_margin_top = 8
+		sb.content_margin_bottom = 8
+		b.add_theme_stylebox_override(k, sb)
+	return b
+
+
+func _build_replay() -> void:
+	replay_ui = Control.new()
+	replay_ui.set_anchors_preset(Control.PRESET_FULL_RECT)
+	replay_ui.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	replay_ui.visible = false
+	root.add_child(replay_ui)
+	# top: title, clip time, done
+	var top := MarginContainer.new()
+	top.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	for side in ["left", "right"]:
+		top.add_theme_constant_override("margin_" + side, 22)
+	top.add_theme_constant_override("margin_top", 22)
+	replay_ui.add_child(top)
+	_rp["top"] = top
+	var tr := _row(12)
+	top.add_child(tr)
+	var tv := VBoxContainer.new()
+	tv.add_theme_constant_override("separation", 0)
+	tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tr.add_child(tv)
+	var title := _label("REPLAY", 46, LINE, display_font)
+	title.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.6))
+	title.add_theme_constant_override("shadow_offset_y", 3)
+	tv.add_child(title)
+	_rp["time"] = _label("0.0 s", 22, AMBER, mono_font)
+	_rp.time.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.8))
+	tv.add_child(_rp.time)
+	var done := _button("DONE", "light", "rp", "done")
+	done.add_theme_font_size_override("font_size", 28)
+	done.size_flags_horizontal = Control.SIZE_SHRINK_END
+	done.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	tr.add_child(done)
+	# bottom: timeline and controls
+	var panel := PanelContainer.new()
+	panel.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	var ps := _flat(Color(0.03, 0.04, 0.05, 0.72), 0)
+	ps.set_content_margin_all(14)
+	ps.content_margin_left = 20
+	ps.content_margin_right = 20
+	panel.add_theme_stylebox_override("panel", ps)
+	replay_ui.add_child(panel)
+	_rp["panel"] = panel
+	_rp["panel_style"] = ps
+	var pv := VBoxContainer.new()
+	pv.add_theme_constant_override("separation", 10)
+	panel.add_child(pv)
+	var bar := ReplayBar.new()
+	bar.scrub.connect(func(f: float) -> void: act.emit("rp_scrub", str(f)))
+	pv.add_child(bar)
+	_rp["bar"] = bar
+	var r1 := _row(8)
+	pv.add_child(r1)
+	r1.add_child(_rp_button("<", "back"))
+	_rp["play"] = _rp_button("PAUSE", "play", "amber")
+	_rp.play.size_flags_stretch_ratio = 1.6
+	r1.add_child(_rp.play)
+	r1.add_child(_rp_button(">", "fwd"))
+	_rp["speed"] = _rp_button("1x", "speed")
+	r1.add_child(_rp.speed)
+	_rp["cam"] = _rp_button("CHASE", "cam", "light")
+	_rp.cam.size_flags_stretch_ratio = 2.0
+	r1.add_child(_rp.cam)
+	var r2 := _row(8)
+	pv.add_child(r2)
+	r2.add_child(_rp_button("SET IN", "in"))
+	r2.add_child(_rp_button("SET OUT", "out"))
+	r2.add_child(_rp_button("RESET CLIP", "clear"))
+	r2.add_child(_rp_button("HIDE UI", "hide"))
+	_rp["help"] = _label("Drag the view to orbit the car  ·  clip %s", 18, MUTED, mono_font)
+	_rp.help.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_rp.help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	pv.add_child(_rp.help)
+
+
+func show_replay(on: bool) -> void:
+	replay_ui.visible = on
+	replay_ui_visible(true)
+	if on:
+		_rp.top.add_theme_constant_override("margin_top", _top_margin.get_theme_constant("margin_top"))
+		(_rp.panel_style as StyleBoxFlat).content_margin_bottom = 14 + _bottom
+
+
+## HIDE UI: the clip plays full screen until the next tap.
+func replay_ui_visible(on: bool) -> void:
+	for c in replay_ui.get_children():
+		c.visible = on
+
+
+## True if a touch at pos lands on the replay controls rather than the view.
+func replay_ui_at(pos: Vector2) -> bool:
+	return (_rp.panel as Control).get_global_rect().has_point(pos) or (_rp.top as Control).get_global_rect().has_point(pos)
+
+
+func update_replay(d: Dictionary) -> void:
+	(_rp.bar as ReplayBar).set_state(d.pos, d.a, d.b, d.len)
+	_rp.time.text = "%s  /  %s" % [d.time, d.clip]
+	_rp.play.text = "PAUSE" if d.play else "PLAY"
+	_rp.speed.text = d.speed
+	_rp.cam.text = d.cam
+	_rp.help.text = "Drag the view to orbit the car  ·  SET IN / SET OUT trim the clip (up to 20 s)"
 
 
 # ---------------------------------------------------------------- menu scrolling

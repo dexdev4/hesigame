@@ -30,6 +30,10 @@ const SETTING_DEFAULTS := {
 	"steer_mode": "swipe",        # swipe, wheel, buttons or tilt
 	"tilt_invert": false,
 	"orientation": "portrait",    # portrait or landscape; fixed, never follows the phone's sensor
+	"gfx": "",                    # high, medium or low; empty until the first launch picks one
+	# developer tools
+	"dev_lives": false,           # infinite lives
+	"dev_fps": false,             # frame-rate counter
 }
 
 
@@ -92,6 +96,35 @@ func persist() -> void:
 	var f := FileAccess.open(PATH, FileAccess.WRITE)
 	if f:
 		f.store_string(JSON.stringify(data))
+
+
+## Developer tools: own and unlock every car.
+func unlock_all_cars() -> void:
+	for c in Data.CARS:
+		if not data.owned.has(c.id):
+			data.owned.append(c.id)
+		if c.boss >= 0 and not data.unlocked.has(c.id):
+			data.unlocked.append(c.id)
+	persist()
+
+
+## Developer tools: every permanent upgrade at its top level.
+func max_all_upgrades() -> void:
+	for p in Data.PERM:
+		data.perm[p.id] = int(p.max)
+	persist()
+
+
+## Developer tools: wipe cars, cash and upgrades but keep settings and camera.
+func reset_progress() -> void:
+	var keep_settings: Dictionary = data.settings
+	var keep_cam: Dictionary = data.cam
+	var keep := {"sound": data.sound, "assist": data.assist}
+	data = defaults()
+	data.settings = keep_settings
+	data.cam = keep_cam
+	data.merge(keep, true)
+	persist()
 
 
 func perm_level(id: String) -> int:

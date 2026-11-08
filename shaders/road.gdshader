@@ -9,6 +9,7 @@ uniform float road_half = 7.2;
 uniform vec3 asphalt : source_color = vec3(0.17, 0.18, 0.2);
 uniform vec3 shoulder : source_color = vec3(0.3, 0.3, 0.31);
 uniform vec3 paint : source_color = vec3(0.91, 0.89, 0.83);
+uniform float detail = 1.0;        // 1: asphalt grain bends the light (High graphics)
 
 const float PERIOD = 3600.0;
 
@@ -90,6 +91,19 @@ void fragment() {
 	}
 	col = mix(col, vec3(1.0, 0.86, 0.45), marker);
 
+	// asphalt grain: tilt the surface normal with fine noise so low sun
+	// glints off the aggregate. Fades out with distance so it never shimmers.
+	if (detail > 0.5) {
+		float fade = 1.0 - smoothstep(6.0, 30.0, length(VERTEX));
+		if (fade > 0.0) {
+			float e = 0.015;
+			float g0 = pnoise(vec2(x * 16.0, z * 16.0), PERIOD * 16.0);
+			float gx = pnoise(vec2((x + e) * 16.0, z * 16.0), PERIOD * 16.0);
+			float gz = pnoise(vec2(x * 16.0, (z + e) * 16.0), PERIOD * 16.0);
+			vec3 bump = vec3(g0 - gx, 0.0, gz - g0) / e * 0.0035 * fade * (1.0 - 0.7 * max(edge, lanes));
+			NORMAL = normalize(NORMAL + (VIEW_MATRIX * vec4(bump, 0.0)).xyz);
+		}
+	}
 	ALBEDO = col;
 	EMISSION = vec3(1.0, 0.75, 0.3) * marker * 0.5;
 	ROUGHNESS = 0.9 - 0.25 * track - 0.3 * max(edge, lanes);

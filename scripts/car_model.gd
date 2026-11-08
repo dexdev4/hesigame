@@ -802,6 +802,7 @@ var _msg_until := 0
 var _hands: Array[MeshInstance3D] = []
 var _arms: Array = []
 var _shoulders: Array = []
+var _shadow_mi: MeshInstance3D
 
 
 ## Cars further away than this are fully hidden by haze, so they are not drawn.
@@ -898,6 +899,7 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a"), style 
 	sh.scale = Vector3(shape.w + 0.7, 1.0, shape.l + 0.9)
 	sh.position = Vector3(0, 0.02, -shape.l / 2.0)
 	add_child(sh)
+	_shadow_mi = sh
 	_set_draw_distance(self)
 
 
@@ -1051,6 +1053,37 @@ func set_signal(dir: int, lit: bool) -> void:
 func set_roll(r: float) -> void:
 	if _body:
 		_body.rotation.z = r
+
+
+## Crash pose: the whole car (body and wheels) turned by `heading` (radians,
+## + = nose to the right) and rolled by `roll` (radians, + = right side up),
+## pivoting on its centre so it never sinks into the road. `air` lifts it.
+func set_crash_pose(x: float, heading: float, roll: float, air: float) -> void:
+	var hw: float = shape.w / 2.0
+	var hh: float = shape.t / 2.0
+	var b := Basis(Vector3.UP, -heading) * Basis(Vector3.BACK, roll)
+	var cy := hw * absf(sin(roll)) + hh * absf(cos(roll)) + air
+	var centre := Vector3(0, hh, -shape.l / 2.0)
+	transform = Transform3D(b, Vector3(x, cy, -shape.l / 2.0) - b * centre)
+	if _body:
+		_body.rotation = Vector3.ZERO
+	if _shadow_mi:  # the contact shadow only suits a car standing on its wheels
+		_shadow_mi.visible = absf(roll) < 0.3 and air < 0.1
+
+
+## Back on its wheels after a crash pose.
+func clear_crash_pose() -> void:
+	rotation = Vector3.ZERO
+	if _shadow_mi:
+		_shadow_mi.visible = true
+
+
+## World positions of the four tyre contact patches.
+func wheel_contacts() -> Array[Vector3]:
+	var out: Array[Vector3] = []
+	for wn in _wheels:
+		out.append(wn.global_position - global_transform.basis.y * _wheel_r)
+	return out
 
 
 ## Pitch the body: positive dips the nose (braking), negative squats (accelerating).

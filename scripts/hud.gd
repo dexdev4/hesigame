@@ -1381,6 +1381,11 @@ func _build_replay() -> void:
 	_rp["time"] = _label("0.0 s", 22, AMBER, mono_font)
 	_rp.time.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.8))
 	tv.add_child(_rp.time)
+	var hide := _button("HIDE UI", "ghost", "rp", "hide")
+	hide.add_theme_font_size_override("font_size", 24)
+	hide.size_flags_horizontal = Control.SIZE_SHRINK_END
+	hide.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	tr.add_child(hide)
 	var done := _button("DONE", "light", "rp", "done")
 	done.add_theme_font_size_override("font_size", 28)
 	done.size_flags_horizontal = Control.SIZE_SHRINK_END
@@ -1422,7 +1427,7 @@ func _build_replay() -> void:
 	r2.add_child(_rp_button("SET IN", "in"))
 	r2.add_child(_rp_button("SET OUT", "out"))
 	r2.add_child(_rp_button("RESET CLIP", "clear"))
-	r2.add_child(_rp_button("HIDE UI", "hide"))
+
 	var r3 := _row(8)
 	pv.add_child(r3)
 	var kadd := _rp_button("+ KEY", "key_add", "amber")
@@ -1432,6 +1437,18 @@ func _build_replay() -> void:
 	r3.add_child(_rp_button("< KEY", "key_prev"))
 	r3.add_child(_rp_button("KEY >", "key_next"))
 	r3.add_child(_rp_button("CLEAR", "key_clear"))
+	# with the controls hidden, only this faint button stays (a tap also works)
+	var show := _button("SHOW UI", "ghost", "rp", "show")
+	show.add_theme_font_size_override("font_size", 20)
+	show.modulate.a = 0.45
+	show.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	show.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	show.offset_left = -150
+	show.offset_right = -18
+	show.offset_top = 18
+	show.size_flags_horizontal = Control.SIZE_SHRINK_END
+	replay_ui.add_child(show)
+	_rp["show"] = show
 	_rp["help"] = _label("Drag the view to orbit the car  ·  clip %s", 18, MUTED, mono_font)
 	_rp.help.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_rp.help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -1449,12 +1466,18 @@ func show_replay(on: bool) -> void:
 ## HIDE UI: the clip plays full screen until the next tap.
 func replay_ui_visible(on: bool) -> void:
 	for c in replay_ui.get_children():
-		c.visible = on
+		c.visible = on if c != _rp.show else not on
+	if not on:
+		(_rp.show as Control).offset_top = 18 + _top_margin.get_theme_constant("margin_top") - 18
 
 
 ## True if a touch at pos lands on the replay controls rather than the view.
 func replay_ui_at(pos: Vector2) -> bool:
-	return (_rp.panel as Control).get_global_rect().has_point(pos) or (_rp.top as Control).get_global_rect().has_point(pos)
+	for k in ["panel", "top", "show"]:
+		var c: Control = _rp[k]
+		if c.visible and c.get_global_rect().grow(8).has_point(pos):
+			return true
+	return false
 
 
 func update_replay(d: Dictionary) -> void:

@@ -677,14 +677,25 @@ func _update_traffic(dt: float) -> void:
 	everyone.append(player)
 	if boss:
 		everyone.append(boss)
+	# a crashed car sliding or lying across the road blocks its whole footprint
+	var p_half := player.w / 2.0
+	var p_z0 := player.z
+	if crash:
+		var hl := player.l / 2.0
+		var hw := player.w / 2.0
+		var ez := absf(hl * cos(crash.yaw)) + absf(hw * sin(crash.yaw))
+		p_half = absf(hl * sin(crash.yaw)) + absf(hw * cos(crash.yaw))
+		p_z0 = player.z + hl - ez
 	for c in traffic:
 		var gap := 1e9
 		var lead: Vehicle = null
 		for o in everyone:
 			if o == c:
 				continue
-			if absf(o.x - c.x) < (o.w + c.w) / 2.0 + 0.35 and o.z > c.z:
-				var g := o.z - (c.z + c.l)
+			var half := p_half if o == player else o.w / 2.0
+			var oz := p_z0 if o == player else o.z
+			if absf(o.x - c.x) < half + c.w / 2.0 + 0.35 and oz > c.z:
+				var g := oz - (c.z + c.l)
 				if g < gap:
 					gap = g
 					lead = o
@@ -1223,7 +1234,7 @@ func _hit(reason: String, other: Vehicle = null) -> void:
 			s = 1.0
 		player.vx = -s * 3.2
 		target_x = Data.LANES[Data.nearest_lane(player.x - s * 1.5)]
-	sparks.position = Vector3(0, 0.6, -player.l * 0.5)
+	sparks.position = Vector3(player.x, 0.6, -player.l * 0.5)
 	sparks.restart()
 	sparks.emitting = true
 	sound.play("crash")
@@ -1248,7 +1259,9 @@ func _start_crash(v0: float, side: float, other: Vehicle) -> void:
 	if other and other.z < player.z:  # hit from behind (the police): shoved forward
 		crash.vel.y = maxf(crash.vel.y, other.v * 0.9)
 	# fast enough and the tyres can dig in sideways and trip it over
-	crash.can_trip = v0 > 19.0 and randf() < clampf((v0 - 19.0) / 22.0, 0.35, 0.9)
+	# on its own a sliding car only sometimes digs in and flips; hitting
+	# something side-on while sliding (see _crash_collide) is what usually rolls it
+	crash.can_trip = v0 > 26.0 and randf() < clampf((v0 - 26.0) / 50.0, 0.08, 0.3)
 	run.dying = 8.0
 	player.v = maxf(crash.vel.y, 0.0)
 	hud.set_play_visible(false)  # let the crash play out full screen
@@ -1274,14 +1287,8 @@ func _update_crash(dt: float) -> void:
 			if c.can_trip and absf(sl) > 6.5 and c.t > 0.2:
 				# the leading tyres dig in and the car flips over sideways
 				c.can_trip = false
-				c.roll_rate = -signf(sl) * clampf(absf(sl) * 0.6, 5.0, 8.5)
-				c.vy = minf(1.6 + absf(sl) * 0.1, 3.4)
-				c.air = 0.001
-				c.yaw_rate *= 0.4
+				_crash_trip(signf(sl), absf(sl))
 				sl *= 0.6
-				sound.play("crash", 0.9, 0.0)
-				shake = maxf(shake, 1.2)
-				_vib(120)
 		else:
 			# on its side or roof: steel on asphalt
 			var fr := 8.0 * dt
@@ -1334,17 +1341,114 @@ func _update_crash(dt: float) -> void:
 		if c.vel.x * s > 0.0:
 			if absf(c.vel.x) > 2.5:
 				sound.play("crash", 1.2, -6.0)
-				_spark_at(Vector3(s * Data.RAIL - player.x, 0.6, -player.l * 0.5))
+				_spark_at(Vector3(s * Data.RAIL, 0.6, -player.l * 0.5))
+			# sliding sideways into the barrier can trip it over too
+			var side_on := absf(sin(c.yaw)) > 0.5
+			if side_on and absf(c.vel.x) > 6.0 and absf(wrapf(c.roll, -PI, PI)) < 0.35 and randf() < 0.4:
+				_crash_trip(signf(c.vel.dot(Vector2(cos(c.yaw), -sin(c.yaw)))), absf(c.vel.x))
 			c.vel.x = -c.vel.x * 0.3
 			c.yaw_rate += -s * 0.8
+	var solid: Array[Vehicle] = traffic.duplicate()
+	if boss:
+		solid.append(boss)
+	for o in solid:
+		_crash_collide(o)
 	player.v = maxf(c.vel.y, 0.0)
 	player.vx = c.vel.x
 	if scraping and fmod(c.t, 0.12) < dt:
-		_spark_at(Vector3(0, 0.3, -player.l * 0.5))
+		_spark_at(Vector3(player.x, 0.3, -player.l * 0.5))
 	if not c.settled and grounded and c.air <= 0.0 and c.vel.length() < 0.4 and absf(c.roll_rate) < 0.3:
 		c.settled = true
 		if run:
 			run.dying = minf(run.dying, 2.2)
+
+
+## Flip the car over sideways. `side` is the direction it is sliding across
+## its own right (+1) or left (-1); `speed` how fast.
+func _crash_trip(side: float, speed: float) -> void:
+	var c := crash
+	if c.air > 0.0 or absf(c.roll_rate) > 2.5:
+		return
+	if autotest:
+		print("[autotest] crash TRIP speed=%.1f" % speed)
+	c.roll_rate = -side * clampf(speed * 0.6, 5.0, 8.5)
+	c.vy = minf(1.6 + speed * 0.1, 3.4)
+	c.air = 0.001
+	c.yaw_rate *= 0.4
+	sound.play("crash", 0.9, 0.0)
+	shake = maxf(shake, 1.2)
+	_vib(120)
+
+
+## The crashing car against another vehicle: both are boxes seen from above
+## (the crashing one turned to its heading). Overlap is pushed apart, the
+## impact trades momentum, spins the car, and the other car is knocked and
+## brakes to a stop. A side-on hit while sliding is what trips a car over.
+func _crash_collide(o: Vehicle) -> void:
+	var c := crash
+	var hl := player.l * 0.5
+	var hw := player.w * 0.5
+	var pc := Vector2(player.x, player.z + hl)
+	var oc := Vector2(o.x, o.z + o.l * 0.5)
+	var ohw := o.w * 0.5
+	var ohl := o.l * 0.5
+	var d := oc - pc
+	if absf(d.y) > ohl + hl + 0.5 or absf(d.x) > ohw + hl + 0.5:
+		return
+	var h := Vector2(sin(c.yaw), cos(c.yaw))
+	var r := Vector2(h.y, -h.x)
+	var best := 1e9
+	var n := Vector2.ZERO
+	for ax: Vector2 in [Vector2(1, 0), Vector2(0, 1), h, r]:
+		var reach := hl * absf(h.dot(ax)) + hw * absf(r.dot(ax)) + ohw * absf(ax.x) + ohl * absf(ax.y)
+		var dist := d.dot(ax)
+		var ov := reach - absf(dist)
+		if ov <= 0.0:
+			return  # a gap on this axis: no contact
+		if ov < best:
+			best = ov
+			n = ax * (1.0 if dist >= 0.0 else -1.0)  # from the crashing car to the other one
+	# push apart, the lighter car moving more (a truck barely moves)
+	var mp := 1.0
+	var mo := 3.5 if o.truck else 1.0
+	var kp := mo / (mp + mo)
+	player.x -= n.x * best * kp
+	player.z -= n.y * best * kp
+	o.x += n.x * best * (1.0 - kp)
+	o.z += n.y * best * (1.0 - kp)
+	var vo := Vector2(o.vx, o.v)
+	var vn := (c.vel - vo).dot(n)
+	if vn <= 0.0:
+		return  # already moving apart
+	var j := 1.3 * vn / (1.0 / mp + 1.0 / mo)
+	c.vel -= n * (j / mp)
+	# the other car is knocked along and gives up: it brakes to a stop
+	o.v = maxf(0.0, o.v + n.y * j / mo)
+	o.x += n.x * minf(j / mo * 0.04, 0.35)
+	if not o.hit:
+		o.hit = true
+		o.cruise = 0.0
+		o.lc_t = 1e9
+		o.tlane = o.lane
+	# an off-centre hit spins the car
+	var contact := pc + d.normalized() * minf(d.length(), hl)
+	var arm := contact - pc
+	var imp := -n * j
+	var inertia := (player.w * player.w + player.l * player.l) / 12.0
+	c.yaw_rate -= (arm.x * imp.y - arm.y * imp.x) / inertia * 0.6
+	if autotest and j > 1.0:
+		print("[autotest] crash contact j=%.1f side=%.2f %s" % [j, n.dot(r), "truck" if o.truck else ""])
+	if j > 2.0:
+		sound.play("crash", randf_range(0.85, 1.1), clampf(-14.0 + j, -14.0, 0.0))
+		shake = maxf(shake, minf(1.2, j * 0.08))
+		_vib(int(clampf(j * 8.0, 30.0, 150.0)))
+		_spark_at(Vector3(contact.x, 0.5, -(contact.y - player.z)))
+	# hit side-on while sliding sideways: the wheels catch and it rolls
+	var side := n.dot(r)
+	var slip := absf(c.vel.dot(r)) + absf(vn)
+	if absf(side) > 0.55 and absf(wrapf(c.roll, -PI, PI)) < 0.35 and slip > 5.0:
+		if randf() < clampf(0.2 + j * 0.03 + slip * 0.025, 0.0, 0.85):
+			_crash_trip(signf(side), slip)
 
 
 func _spark_at(pos: Vector3) -> void:
@@ -1399,7 +1503,7 @@ func _update_player(dt: float) -> void:
 		player.x = s * lim
 		player.vx = -s * 2.6
 		target_x = Data.LANES[3 if s > 0.0 else 0]
-		sparks.position = Vector3(s * Data.RAIL - player.x, 0.6, -2.0)
+		sparks.position = Vector3(s * Data.RAIL, 0.6, -2.0)
 		sparks.restart()
 		sparks.emitting = true
 		if live:
@@ -1784,7 +1888,27 @@ func _process(delta: float) -> void:
 		_test_crash = -1.0
 		run.lives = 1
 		run.invuln = 0.0
-		_hit("TEST CRASH", traffic[0] if not traffic.is_empty() else null)
+		var other: Vehicle = null
+		if not traffic.is_empty():
+			# test aid: put a car alongside so the crash runs into it
+			other = traffic[0]
+			var lane := Data.nearest_lane(player.x)
+			var nl := lane + (1 if lane < 2 else -1)
+			other.lane = nl
+			other.tlane = nl
+			other.x = Data.LANES[nl]
+			other.z = player.z + 6.0
+			other.v = player.v * 0.7
+			if traffic.size() > 1:  # and one on the side it will be knocked towards
+				var o2: Vehicle = traffic[1]
+				var l2 := lane - (nl - lane)
+				if l2 >= 0 and l2 < 4:
+					o2.lane = l2
+					o2.tlane = l2
+					o2.x = Data.LANES[l2]
+					o2.z = player.z + 14.0
+					o2.v = player.v * 0.6
+		_hit("TEST CRASH", other)
 	if _test_replay > 0.0 and now > _test_replay:
 		_test_replay = -1.0
 		_open_replay()
@@ -2549,6 +2673,7 @@ func _open_replay() -> void:
 func _close_replay() -> void:
 	if state != S.REPLAY:
 		return
+	_replay_ui(true)  # restores name tags hidden for a clean view
 	scenery.end_replay()
 	var lv: Array = rp.live
 	player.x = lv[0]
@@ -2741,26 +2866,40 @@ func _replay_act(arg: String) -> void:
 		"start":
 			rp.t = rp.a
 		"hide":
-			rp.hide = true
-			hud.replay_ui_visible(false)
+			_replay_ui(false)
+		"show":
+			_replay_ui(true)
 		"done":
 			_close_replay()
 
 
+## Clean view: no controls and no floating name tags or score messages, so
+## the clip looks like footage. The camera can still be moved; a tap (or the
+## faint SHOW UI button) brings the controls back.
+func _replay_ui(on: bool) -> void:
+	rp.hide = not on
+	hud.replay_ui_visible(on)
+	var models: Array = _models.values()
+	models.append(player.model)
+	for m in models:
+		for ch in (m as Node).get_children():
+			if ch is Label3D:
+				(ch as Label3D).visible = on
+
+
 func _replay_input(event: InputEvent) -> void:
-	if rp.hide:
-		if event is InputEventScreenTouch and (event as InputEventScreenTouch).pressed:
-			rp.hide = false
-			hud.replay_ui_visible(true)
-			get_viewport().set_input_as_handled()
-		return
 	var touch: Dictionary = rp.touch
 	if event is InputEventScreenTouch:
 		var e := event as InputEventScreenTouch
 		if e.pressed and not hud.replay_ui_at(e.position):
 			touch[e.index] = e.position
+			rp["tap"] = [e.position, Time.get_ticks_msec()]
 		elif not e.pressed:
 			touch.erase(e.index)
+			# a quick tap without dragging brings the hidden controls back
+			if rp.hide and rp.has("tap") and e.position.distance_to(rp.tap[0]) < 14.0 and Time.get_ticks_msec() - int(rp.tap[1]) < 350:
+				_replay_ui(true)
+			rp.erase("tap")
 	elif event is InputEventScreenDrag:
 		var e := event as InputEventScreenDrag
 		if not touch.has(e.index):

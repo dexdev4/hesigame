@@ -1170,17 +1170,9 @@ func _end_battle() -> void:
 ## chase view, low on screen from the bonnet, and on the infotainment screen
 ## in the cockpit, so they never cover the traffic ahead.
 func _notify(text: String, kind := "") -> void:
-	var mode: String = Save.data.cam.mode
-	if mode == "cockpit":
-		player.model.show_message(text, kind)
-		return
-	var vp := get_viewport().get_visible_rect().size
-	var pos := Vector2(vp.x / 2.0, vp.y * 0.66)
-	if mode == "chase":
-		var above := player.model.global_position + Vector3(0, float(Data.SHAPES[Data.car_by_id(Save.data.selected).shape].t) + 0.35, -player.l * 0.5)
-		if not cam.is_position_behind(above):
-			pos = cam.unproject_position(above)
-	hud.pop_at(text, kind, pos)
+	if Save.data.cam.mode == "cockpit":
+		player.model.show_message(text, kind)  # on the infotainment screen as well
+	hud.pop_feed(text, kind)
 
 
 func _mult() -> float:
@@ -2320,6 +2312,11 @@ func _analog_steer(dt: float) -> void:
 		var raw := _tilt_value()
 		_steer_val = lerpf(_steer_val, raw, minf(1.0, dt * 12.0))
 		held = absf(_steer_val) > 0.03
+	elif mode == "stick":
+		# analog: the push sets the steering directly, easing back to straight on release
+		var want := hud.stick.value()
+		_steer_val = move_toward(_steer_val, want, (10.0 if want != 0.0 else 6.0) * dt)
+		held = absf(_steer_val) > 0.01
 	elif mode == "buttons":
 		var want := (1.0 if right else 0.0) - (1.0 if left else 0.0)
 		_steer_val = move_toward(_steer_val, want, (4.0 if want != 0.0 else 7.0) * dt)  # eases in and out
@@ -2371,6 +2368,8 @@ func _tilt_value() -> float:
 
 
 func _refresh_inputs() -> void:
+	if hud and hud.stick.active and not touches.values().any(func(t: Dictionary) -> bool: return t.role == "stick"):
+		hud.stick.release()  # its finger was let go of (or the touches were cleared)
 	var tg := false
 	var tb := false
 	for k in touches:
@@ -2394,11 +2393,15 @@ func _input(event: InputEvent) -> void:
 			if role == "":
 				role = "steer"
 			touches[e.index] = {"role": role, "x": e.position.x}
+			if role == "stick":
+				hud.stick.press(e.position)
 			if role == "wheel":
 				touches[e.index]["a"] = (e.position - hud.wheel.centre()).angle()
 		else:
 			var tt: Variant = touches.get(e.index)
 			touches.erase(e.index)
+			if tt and tt.role == "stick":
+				hud.stick.release()
 			if tt and tt.role == "steer" and Save.data.assist and _live():
 				var others := false
 				for k in touches:
@@ -2414,6 +2417,8 @@ func _input(event: InputEvent) -> void:
 			return
 		var dx: float = e.position.x - tt.x
 		tt.x = e.position.x
+		if tt.role == "stick":
+			hud.stick.drag(e.position)
 		if tt.role == "wheel":
 			var a: float = (e.position - hud.wheel.centre()).angle()
 			hud.wheel.angle = clampf(hud.wheel.angle + wrapf(a - tt.a, -PI, PI), -SteerWheel.MAX_ANGLE, SteerWheel.MAX_ANGLE)
@@ -2603,7 +2608,7 @@ func _on_act(action: String, arg: String) -> void:
 				"assist":
 					Save.data.assist = not Save.data.assist
 				"steer_mode":
-					var order := ["swipe", "wheel", "buttons", "tilt"]
+					var order := ["swipe", "wheel", "buttons", "tilt", "stick"]
 					Save.data.settings.steer_mode = order[(order.find(Save.setting("steer_mode")) + 1) % order.size()]
 					hud.layout_pedals()
 				"orientation":

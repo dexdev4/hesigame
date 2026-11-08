@@ -73,6 +73,8 @@ var _fuel_val: Label
 var _fuel_next: Label
 var _rf := {}
 var mirror: RearMirror
+var stick: FloatStick
+var _feed: VBoxContainer
 
 
 func _ready() -> void:
@@ -431,6 +433,11 @@ func _build_play() -> void:
 		_g["b%d" % i] = b
 		_g["v%d" % i] = v
 
+	# scoring messages: a short feed just under the score counter, out of the way of the road
+	_feed = VBoxContainer.new()
+	_feed.add_theme_constant_override("separation", -4)
+	_feed.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	play_layer.add_child(_feed)
 	_pops = VBoxContainer.new()
 	_pops.anchor_left = 0.0
 	_pops.anchor_right = 1.0
@@ -521,6 +528,8 @@ func _build_play() -> void:
 	play_layer.add_child(gas)
 	wheel = SteerWheel.new()
 	play_layer.add_child(wheel)
+	stick = FloatStick.new()
+	play_layer.add_child(stick)
 	arrows = ArrowPad.new()
 	play_layer.add_child(arrows)
 	mirror = RearMirror.new()
@@ -572,11 +581,14 @@ func role_at(pos: Vector2) -> String:
 		var side := arrows.side_at(pos)
 		if side != "":
 			return side
-	if Save.setting("steer_mode") != "swipe":
-		return "none"  # only the steering control steers in wheel and button modes
 	if pause_btn.get_global_rect().grow(12).has_point(pos) or cam_btn.get_global_rect().grow(12).has_point(pos):
 		return "ui"
-	return ""
+	match Save.setting("steer_mode"):
+		"swipe":
+			return ""
+		"stick":
+			return "stick"  # the stick appears wherever the finger lands
+	return "none"  # only the steering control steers in wheel and button modes
 
 
 ## The dashboard gauges show speed and gear in the cockpit, so the HUD speedo hides there.
@@ -592,6 +604,7 @@ func set_pedals(g: bool, b: bool) -> void:
 
 
 func update_play(d: Dictionary) -> void:
+	_feed.position = Vector2(_mult_bg.global_position.x, _mult_bg.global_position.y + _mult_bg.size.y + 6.0) - play_layer.global_position
 	_score.text = d.score
 	_mult.text = d.mult
 	_mult_bg.modulate = Color(1, 1, 1, 1) if d.combo_on else Color(1, 1, 1, 0.45)
@@ -663,6 +676,37 @@ func pop(text: String, kind := "") -> void:
 	tw.tween_callback(l.queue_free)
 
 
+## A scoring message in the feed under the score counter: newest on top,
+## a few at most, each fading out after a moment.
+func pop_feed(text: String, kind := "") -> void:
+	var col := LINE
+	var size := 19
+	if kind == "hot":
+		col = AMBER
+		size = 21
+	elif kind == "bad":
+		col = TAIL
+	elif kind == "small":
+		col = MUTED
+	var l := _label(text, size, col, display_font)
+	l.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.7))
+	l.add_theme_constant_override("shadow_offset_y", 2)
+	l.add_theme_constant_override("outline_size", 5)
+	l.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.45))
+	l.modulate.a = 0.0
+	_feed.add_child(l)
+	_feed.move_child(l, 0)
+	while _feed.get_child_count() > 4:
+		var old := _feed.get_child(_feed.get_child_count() - 1)
+		_feed.remove_child(old)
+		old.queue_free()
+	var tw := l.create_tween()
+	tw.tween_property(l, "modulate:a", 1.0, 0.08)
+	tw.tween_interval(1.3)
+	tw.tween_property(l, "modulate:a", 0.0, 0.3)
+	tw.tween_callback(l.queue_free)
+
+
 ## Small floating message at a screen position (usually just above the car).
 ## It rises and fades; several in a row stack upwards instead of overlapping.
 func pop_at(text: String, kind: String, pos: Vector2) -> void:
@@ -712,7 +756,8 @@ func banner(title: String, sub := "") -> void:
 
 
 func show_hint() -> void:
-	_hint.text = {"wheel": "Turn the wheel to steer", "buttons": "Hold the arrow buttons to steer", "tilt": "Tilt the phone to steer"}.get(Save.setting("steer_mode"), "Swipe left or right anywhere to steer")
+	_hint.text = {"wheel": "Turn the wheel to steer", "buttons": "Hold the arrow buttons to steer", "tilt": "Tilt the phone to steer",
+		"stick": "Touch anywhere and push left or right to steer"}.get(Save.setting("steer_mode"), "Swipe left or right anywhere to steer")
 	if _hint_tween:
 		_hint_tween.kill()
 	_hint_tween = create_tween()
@@ -1239,7 +1284,7 @@ func render_settings() -> void:
 		"assist": "ON" if Save.data.assist else "OFF", "haptics": "ON" if Save.setting("haptics") else "OFF",
 		"shake": "ON" if Save.setting("shake") else "OFF", "sound": "ON" if Save.data.sound else "OFF",
 		"units": "MPH" if Save.setting("units") == "mph" else "KM/H",
-		"steer_mode": {"swipe": "SWIPE", "wheel": "WHEEL", "buttons": "BUTTONS", "tilt": "TILT"}.get(Save.setting("steer_mode"), "SWIPE"),
+		"steer_mode": {"swipe": "SWIPE", "wheel": "WHEEL", "buttons": "BUTTONS", "tilt": "TILT", "stick": "STICK"}.get(Save.setting("steer_mode"), "SWIPE"),
 		"tilt_invert": "REVERSED" if Save.setting("tilt_invert") else "NORMAL",
 		"orientation": "LANDSCAPE" if Save.setting("orientation") == "landscape" else "PORTRAIT",
 		"gfx": String(Save.setting("gfx")).to_upper(),

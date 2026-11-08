@@ -39,7 +39,7 @@ Tap **CAM** (top right) to switch between **Chase**, **Hood** and **Cockpit** vi
 Open **Settings** from the main menu or the pause menu. The game keeps drawing behind it, so camera changes preview live.
 - **Camera:** choose a view and set its field of view, height, distance (forward/back for hood and cockpit) and angle. **Reset this view** restores the defaults.
 - **Gameplay:** steering sensitivity, pedal size, lane assist, vibration, camera shake, engine sound, and speed in km/h or mph.
-- **Steering:** **Swipe** anywhere on the screen, an on-screen **Wheel** you turn with your thumb (it springs back to centre when you let go), **Buttons** for left and right, or **Tilt** (tilt the phone; the angle you hold it at when a run starts or resumes counts as straight, and **Tilt direction** flips it if it feels backwards). With the wheel or buttons the car steers in proportion to your input, and lane assist settles it into a lane when you let go.
+- **Steering:** **Stick**: a floating analog stick that appears wherever you put your finger (away from the pedals) and steers as far as you push it left or right; **Swipe** anywhere on the screen, an on-screen **Wheel** you turn with your thumb (it springs back to centre when you let go), **Buttons** for left and right, or **Tilt** (tilt the phone; the angle you hold it at when a run starts or resumes counts as straight, and **Tilt direction** flips it if it feels backwards). With the wheel or buttons the car steers in proportion to your input, and lane assist settles it into a lane when you let go.
 - **Screen:** **Portrait** or **Landscape**. The game locks to the one you choose, so turning the phone never switches it by accident.
 - **Graphics:** **High** (full shadows, anti-aliasing, speed blur at the screen edges and a colour grade), **Medium** or **Low** for older phones. On the first run on a phone the game checks the frame rate and steps down a level if it's struggling.
 - **Developer tools:** **Infinite lives**, an **FPS counter**, **Unlock all cars**, **Max all upgrades**, **+$100,000 cash** and **Reset progress** (tap twice; keeps your settings).
@@ -49,7 +49,7 @@ Open **Settings** from the main menu or the pause menu. The game keeps drawing b
 ### How a run works
 
 - **Lives:** 3. Touching a car, the rival or the guardrail costs one. The Spare chassis upgrade adds more.
-- **Scoring:** a pass is worth more the faster you go. Passing within 1 m is a **near miss** and within 35 cm is a **razor pass**. A lane change right beside a car is a **close cut**. Each of those adds to a combo multiplier (up to x8) that resets after 3.5 s without one. Above 120 km/h you also earn points every second.
+- **Scoring:** score messages appear in a short list just under the score counter, clear of the road. A pass is worth more the faster you go. Passing within 1 m is a **near miss** and within 35 cm is a **razor pass**. A lane change right beside a car is a **close cut**. Each of those adds to a combo multiplier (up to x8) that resets after 3.5 s without one. Above 120 km/h you also earn points every second.
 - **Stages:** fill either the stage's distance bar or its points bar to trigger the next encounter.
 - **Police pursuit:** each trigger has a 30% chance to be a police car instead of the boss. It chases you down and tries to ram you: getting hit costs a life, but surviving 40 seconds untouched earns an extra life. Either way, the next trigger in that stage is always the real boss.
 - **Boss race:** you have 2 km to out-score the boss before the finish gantry. Bosses score exactly as you do (near misses, razor passes, close cuts, combos and speed) and drive to get them: they pick lanes with slow cars to skim past and hug the car they're passing. Each boss is better at it than the last: Copperhead is a rookie, Last Exit a legend, and every lap of the four bosses gets harder again. Win and you get prize money, choose 1 of 3 upgrades for the rest of the run, and the boss's car goes on sale in the Garage. Lose and it costs a life, followed by a rematch.
@@ -130,7 +130,7 @@ Arguments placed after `--` on the command line:
 - `--cam=chase|hood|cockpit`: start in that camera view (not saved). `--cam=inspect` looks across the cabin from the back seat.
 - `--open=settings` / `--open=pedal_edit`: open the settings screen or the pedal editor on start.
 - `--car=ID` / `--autospeed=M/S`: test-drive another car (not saved) and set how fast the test driver goes.
-- `--steer=swipe|wheel|buttons|tilt` (with `--fake-tilt=DEGREES` to simulate tilting) / `--orient=portrait|landscape`: try a steering method or orientation without saving it.
+- `--steer=swipe|wheel|buttons|tilt|stick` (with `--fake-tilt=DEGREES` to simulate tilting) / `--orient=portrait|landscape`: try a steering method or orientation without saving it.
 - `--idcolor`: draw each traffic car in a flat unique colour with no fog or scenery; with `--burst` it also logs where each car should be, to measure flicker.
 - `--demo-pops`: show a sample score message every second, to check where messages appear in each camera view.
 - `--burst=SECONDS:COUNT:DIR`: save COUNT consecutive frames from SECONDS onwards (for checking flicker).

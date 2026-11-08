@@ -7,7 +7,7 @@ extends Node3D
 ## is always at the scene origin), so the highway never runs out and floats
 ## never lose precision.
 
-enum S { MENU, GARAGE, PLAY, PAUSED, BOSS_INTRO, PICK, OVER, REPLAY }
+enum S { MENU, GARAGE, PLAY, PAUSED, BOSS_INTRO, PICK, OVER, REPLAY, REFUEL }
 
 
 class Vehicle:
@@ -89,6 +89,15 @@ class Run:
 	var cop_t := 0.0
 	var cop_due := false     # a pursuit happened this stage, so the next trigger is the boss
 	var siren_t := 0.0
+	# fuel
+	var fuel := 0.0          # litres in the tank
+	var fuel_warned := 0     # low-fuel warnings given so far (at 25 % and 10 %)
+	var fuel_paid := 0       # dollars spent on fuel this run
+	var fuel_from_run := 0   # ...of which came out of this run's earnings
+	var dry_t := 0.0         # seconds stood still with an empty tank
+	var pit := {}            # pulling in to the pumps, refuelling, pulling out
+	var pit_skip := -1.0     # a fuel stop passed too fast to pull in
+	var heads_up := -1.0     # the fuel stop already announced
 
 
 var state := S.MENU
@@ -157,6 +166,11 @@ var _vig_mat: ShaderMaterial
 var _blur := 0.0
 var _test_crash := -1.0
 var _test_stage := 0
+var _test_fuel := 1.0
+var _test_first_station := -1.0
+var station := {}       # the next fuel stop: {z, name, color, prices: {regular, mid, premium}}
+var last_station := {}  # the one before (still shown in replays)
+var pump := {}          # the refuel screen: {litres, bill, on, auto, t}
 var godmode := false
 var _test_replay := -1.0
 var _test_replay_cam := ""
@@ -193,6 +207,12 @@ func _ready() -> void:
 			Save.data.selected = a.substr(6)
 		if a == "--cop":  # every boss trigger is a police pursuit (test aid)
 			force_cop = true
+		if a.begins_with("--stations="):  # a fuel stop every KM km, tank range scaled to match (test aid)
+			Data.station_scale = float(a.substr(11)) / Data.STATION_EVERY_KM
+		if a.begins_with("--first-station="):  # the first fuel stop this many metres in (test aid)
+			_test_first_station = float(a.substr(16))
+		if a.begins_with("--fuel="):  # start runs with this fraction of a tank (test aid)
+			_test_fuel = float(a.substr(7))
 		if a.begins_with("--start-stage="):  # begin runs at this stage (test aid)
 			_test_stage = int(a.substr(14))
 		if a == "--godmode":  # infinite lives without saving it (test aid)
@@ -574,6 +594,8 @@ func _compute_stats() -> void:
 		"grip": c.grip * (1.0 + 0.06 * Save.perm_level("handling")) * m.handling,
 		"lat": c.lat * (1.0 + 0.04 * Save.perm_level("handling")) * sqrt(m.handling),
 		"top": c.top * (1.0 + 0.04 * Save.perm_level("top")) * m.top,
+		"tank": float(c.get("tank", 45)),
+		"grade": String(c.get("fuel", "regular")),
 	}
 
 
@@ -835,6 +857,7 @@ func _retire(c: Vehicle) -> void:
 
 
 func _start_boss() -> void:
+	_clear_station_for(run.b_len + 300.0)
 	var bi := Data.boss_info(run.stage)
 	var car := Data.car_by_id(bi.car)
 	var sh: Dictionary = Data.SHAPES[car.shape]
@@ -1129,7 +1152,8 @@ func _end_battle() -> void:
 		sound.play("ding", 1.26, 3.0)
 		_show_pick(bi, unlocked_new)
 	else:
-		run.lives -= 1
+		if not (Save.setting("dev_lives") or godmode):  # infinite lives covers lost races too
+			run.lives -= 1
 		run.combo = 0
 		_vib(200)
 		if run.lives <= 0:
@@ -1206,6 +1230,13 @@ func _autopilot(dt: float) -> void:
 	if ap_t > 0.0:
 		return
 	ap_t = 0.3
+	if run and not station.is_empty() and run.pit.is_empty() and state == S.PLAY:
+		var rel := player.z - float(station.z)
+		if rel > -GasStation.EXIT_FULL - 60.0 and rel < -GasStation.FORE and run.fuel < st.tank * 0.8:
+			target_x = GasStation.LANE_X  # pull in for fuel
+			ap_brake = player.v > 34.0
+			ap_gas = player.v < 28.0
+			return
 	var cur := Data.nearest_lane(player.x)
 	var best := cur
 	var best_d := -1e9
@@ -1487,16 +1518,23 @@ func _update_player(dt: float) -> void:
 	if crash:
 		_update_crash(dt)
 		return
+	if run and not run.pit.is_empty():
+		_update_pit(dt)
+		return
 	var live := _live()
 	if not live or autotest:
 		_autopilot(dt)
 	var gas := (in_gas if live else ap_gas) if not autotest else ap_gas
+	if run and run.fuel <= 0.0 and state == S.PLAY:
+		gas = false  # the tank is dry: the engine has nothing to burn
 	var brk := (in_brake if live else ap_brake) if not autotest else ap_brake
 	var vr: float = player.v / st.top
 	var a := 0.0
 	if gas:
 		a += st.accel * maxf(0.0, 1.0 - pow(vr, 3.0)) * (1.15 if player.v < 10.0 else 1.0)
 	a -= 0.3 + 0.00022 * player.v * player.v
+	if run and run.fuel <= 0.0 and state == S.PLAY:
+		a -= 1.8  # a dry engine drags the car down
 	if brk:
 		a -= st.brake * (1.0 if player.v > 3.0 else 0.4)
 	if on_shoulder:
@@ -1504,6 +1542,14 @@ func _update_player(dt: float) -> void:
 	var v_before := player.v
 	player.v = maxf(0.0, player.v + a * dt)
 	player.braking = brk
+	if run and state == S.PLAY and run.dying <= 0.0:
+		# fuel: a full tank lasts FUEL_RANGE_KM flat out, longer driven gently
+		var lpm: float = st.tank / (Data.FUEL_RANGE_KM * 1000.0 * Data.station_scale)
+		lpm *= 0.55 + (0.25 if gas else 0.0) + 0.2 * clampf(vr * vr, 0.0, 1.0)
+		run.fuel = maxf(0.0, run.fuel - lpm * player.v * dt)
+		if live and _pit_ready():
+			_start_pit()
+			return
 	player_accel = lerpf(player_accel, (player.v - v_before) / maxf(dt, 0.0001), minf(1.0, dt * 6.0))
 	# steering: chase the swipe target with limited lateral speed and grip
 	var speed_k := clampf(player.v / 12.0, 0.25, 1.0)
@@ -1515,9 +1561,16 @@ func _update_player(dt: float) -> void:
 	player.vx += clampf(desired - player.vx, -grip * dt, grip * dt)
 	player.x += player.vx * dt
 	player.z += player.v * dt
-	on_shoulder = absf(player.x) + player.w / 2.0 > Data.ROAD_HALF + 0.25
-	var lim := Data.RAIL - player.w / 2.0
-	if absf(player.x) > lim:
+	on_shoulder = absf(player.x) + player.w / 2.0 > Data.ROAD_HALF + 0.25 and not (player.x > 0.0 and _in_station_zone())
+	var side := signf(player.x)
+	var lim := (_right_limit() if side > 0.0 else Data.RAIL) - player.w / 2.0
+	if absf(player.x) > lim and side > 0.0 and _in_station_zone():
+		# the fuel stop's tapers and rails: a scrape along them, not a crash
+		player.x = lim
+		player.vx = minf(player.vx, 0.0) - 0.4
+		player.v = maxf(0.0, player.v - 3.0 * dt)
+		target_x = minf(target_x, lim - 0.2)
+	elif absf(player.x) > lim:
 		var s := signf(player.x)
 		player.x = s * lim
 		player.vx = -s * 2.6
@@ -1534,7 +1587,7 @@ func _overlap(a: Vehicle, b: Vehicle) -> bool:
 
 
 func _collisions() -> void:
-	if not _live():
+	if not _live() or not run.pit.is_empty():
 		return
 	var p := player
 	for c in traffic:
@@ -1572,10 +1625,14 @@ func _start_run() -> void:
 	_set_player_car()
 	run = Run.new()
 	run.lives = 3 + Save.perm_level("lives")
+	station = {}
+	last_station = {}
 	if _test_stage > 1:
 		run.stage = _test_stage
 	_compute_stats()
 	_reset_world()
+	run.fuel = st.tank * _test_fuel
+	_new_station(player.z)
 	touches.clear()
 	_refresh_inputs()
 	state = S.PLAY
@@ -1589,7 +1646,7 @@ func _start_run() -> void:
 func _end_run(reason: String) -> void:
 	if run == null:
 		return
-	var earned := run.score / 40 + int(run.dist / 50.0) + run.cash_bonus
+	var earned := maxi(0, _gross_earnings() - run.fuel_from_run)
 	Save.data.cash += earned
 	var best: bool = run.score > Save.data.best
 	if best:
@@ -1601,6 +1658,8 @@ func _end_run(reason: String) -> void:
 		notes.append("New best run.")
 	if run.cash_bonus > 0:
 		notes.append("Includes $%s in boss prize money." % Fmt.num(run.cash_bonus))
+	if run.fuel_paid > 0:
+		notes.append("Fuel cost $%s this run." % Fmt.num(run.fuel_paid))
 	var next_car := {}
 	for c in Data.CARS:
 		if not Save.owns(c.id) and (c.boss < 0 or Save.is_unlocked(c.id)):
@@ -1631,8 +1690,11 @@ func _show_pick(bi: Dictionary, unlocked_new: bool) -> void:
 	state = S.PICK
 	var pool: Array = []
 	for b in Data.BOONS:
-		if b.id != "life" or run.lives < Data.MAX_LIVES:
-			pool.append(b)
+		if b.id == "life" and run.lives >= Data.MAX_LIVES:
+			continue
+		if b.id == "fuel" and run.fuel > st.tank * 0.85:
+			continue  # a refuel is only offered when the tank could use it
+		pool.append(b)
 	pool.shuffle()
 	var opts := pool.slice(0, 3)
 	var line := "Choose one upgrade for the rest of this run."
@@ -1655,6 +1717,9 @@ func _apply_boon(id: String) -> void:
 		"life": run.lives = mini(Data.MAX_LIVES, run.lives + 1)
 		"score": run.mods.score *= 1.15
 		"combo": run.combo_time += 1.0
+		"fuel":
+			run.fuel = st.tank
+			run.fuel_warned = 0
 	_compute_stats()
 	run.stage += 1
 	run.cop_due = false
@@ -1678,6 +1743,7 @@ const COP_TIME := 40.0    # seconds to survive to escape
 ## Police pursuit: a cop car comes up from behind and tries to ram you.
 ## Survive COP_TIME seconds for an extra life; get rammed and you lose one.
 func _start_cop() -> void:
+	_clear_station_for(COP_TIME * 85.0)
 	_remove_boss()
 	var sh: Dictionary = Data.SHAPES.sedan
 	boss = Vehicle.new()
@@ -1816,16 +1882,22 @@ func _update_run(dt: float) -> void:
 			run.stage_score += n
 			if run.phase == "boss":
 				run.b_score += n
+	_update_fuel(dt)
+	if run == null:
+		return  # ran dry
 	if run.phase == "cruise":
 		run.stage_dist += d
 		if run.rematch_t > 0.0:
 			run.rematch_t -= dt
 			if run.rematch_t <= 0.0:
-				_start_boss()
-				hud.banner("REMATCH", "OUT-SCORE HIM IN %s" % Fmt.km(run.b_len))
+				if _station_busy():
+					run.rematch_t = 0.5  # after the fuel stop
+				else:
+					_start_boss()
+					hud.banner("REMATCH", "OUT-SCORE HIM IN %s" % Fmt.km(run.b_len))
 			return
 		var r := Data.stage_req(run.stage)
-		if run.stage_dist >= r.d or run.stage_score >= r.p:
+		if (run.stage_dist >= r.d or run.stage_score >= r.p) and not _station_busy():
 			if not run.cop_due and (force_cop or randf() < COP_CHANCE):
 				_start_cop()
 			else:
@@ -1851,7 +1923,7 @@ func _update_run(dt: float) -> void:
 # ---------------------------------------------------------------- frame
 
 func _sim_running() -> bool:
-	return state == S.PLAY or state == S.MENU or state == S.GARAGE or state == S.OVER
+	return state == S.PLAY or state == S.MENU or state == S.GARAGE or state == S.OVER or state == S.REFUEL
 
 
 func _process(delta: float) -> void:
@@ -1911,6 +1983,8 @@ func _process(delta: float) -> void:
 				break
 	if state == S.PLAY and run:
 		_record(dt)
+	if state == S.REFUEL and run:
+		_pump_frame(delta)
 	_probe_gfx(delta)
 	_post_speed()
 	var now := Time.get_ticks_msec() / 1000.0
@@ -1950,6 +2024,8 @@ func _process(delta: float) -> void:
 	_sync_visuals(delta)
 	_update_hud()
 	var snd_gas := ((in_gas if _live() else ap_gas) if not autotest else ap_gas) and state != S.PAUSED
+	if run and run.pit.get("step", "") == "out":
+		snd_gas = true  # driving itself back out onto the highway
 	var snd_brake := (in_brake if _live() else ap_brake) if not autotest else ap_brake
 	sound.drive(player.v, st.top, snd_gas, snd_brake, state == S.PLAY, delta)
 	if autotest:
@@ -2031,7 +2107,7 @@ func _sync_visuals(delta: float) -> void:
 	player.model.set_steer(clampf(player.vx * 0.3, -1.4, 1.4) if crash == null else 0.0)
 	player.model.set_gear(sound.gear, delta)
 	var sp := _speed_text()
-	player.model.set_display(sound.gear, sp[0], sp[1], "%.1f km" % ((run.dist if run else player.z) / 1000.0))
+	player.model.set_display(sound.gear, sp[0], sp[1], ("Fuel %d L" % ceili(run.fuel)) if run else ("%.1f km" % (player.z / 1000.0)))
 	# rear-view mirror camera: above the tail of the car, looking back
 	var sh: Dictionary = player.model.shape
 	var eye := Transform3D(Basis.looking_at(Vector3(0.0, -0.045, 1.0)), Vector3(0.0, float(sh.t) * 0.92, 0.45))
@@ -2109,6 +2185,14 @@ func _update_camera(delta: float, mode: String) -> void:
 	var pitch := Basis(Vector3.RIGHT, deg_to_rad(cfg.angle))
 	cam_x = lerpf(cam_x, player.x * 0.62, minf(1.0, delta * 3.5))
 	sound.set_interior(mode == "cockpit")
+	if mode == "chase" and run and not run.pit.is_empty():
+		# at the fuel stop: drop under the canopy and follow the car right in
+		cam.near = 0.3
+		cam.fov = cfg.fov * fov_k
+		cam_x = lerpf(cam_x, player.x - 1.2, minf(1.0, delta * 3.0))
+		var low := Basis(Vector3.RIGHT, deg_to_rad(-11.0))
+		cam.global_transform = Transform3D(low, Vector3(cam_x, 3.0, 7.2))
+		return
 	if mode == "chase":
 		# high chase view so the next few cars are readable
 		cam.near = 0.5
@@ -2170,6 +2254,9 @@ func _update_hud() -> void:
 		"boss": run.phase == "boss",
 		"cop": run.phase == "cop",
 		"inf": Save.setting("dev_lives") or godmode,
+		"fuel": run.fuel / maxf(st.tank, 1.0),
+		"fuel_l": "%d L" % ceili(run.fuel),
+		"fuel_next": _fuel_next_text(),
 	}
 	if run.phase == "cop":
 		var gp: float = maxf(0.0, player.z - (boss.z + boss.l)) if boss else 99.0
@@ -2243,12 +2330,12 @@ func _analog_steer(dt: float) -> void:
 		return
 	if held:
 		var lead := 1.7 * float(Save.setting("steer_sens"))
-		target_x = clampf(player.x + _steer_val * lead, -(Data.RAIL + 1.0), Data.RAIL + 1.0)
+		target_x = clampf(player.x + _steer_val * lead, -(Data.RAIL + 1.0), _right_limit() + 1.0)
 		_steer_active = true
 	elif _steer_active and Save.data.assist:
 		_steer_active = false
 		# lane assist: settle into the lane the car is heading for
-		target_x = Data.LANES[Data.nearest_lane(player.x + player.vx * 0.3)]
+		target_x = _nearest_x(player.x + player.vx * 0.3)
 	elif not Save.data.assist:
 		# no input and no assist: the steering is straight, so the car just keeps
 		# going where it is (the target follows it instead of pulling it back)
@@ -2318,7 +2405,7 @@ func _input(event: InputEvent) -> void:
 					if touches[k].role == "steer":
 						others = true
 				if not others:
-					target_x = Data.LANES[Data.nearest_lane(target_x)]
+					target_x = _nearest_x(target_x)
 		_refresh_inputs()
 	elif event is InputEventScreenDrag:
 		var e := event as InputEventScreenDrag
@@ -2334,7 +2421,7 @@ func _input(event: InputEvent) -> void:
 		if tt.role == "steer" and _live():
 			var vw := get_viewport().get_visible_rect().size
 			var sens: float = (16.0 if vw.y > vw.x else 13.0) * float(Save.setting("steer_sens"))
-			target_x = clampf(target_x + dx / vw.x * sens, -(Data.RAIL + 1.0), Data.RAIL + 1.0)
+			target_x = clampf(target_x + dx / vw.x * sens, -(Data.RAIL + 1.0), _right_limit() + 1.0)
 	elif event is InputEventKey:
 		var k := event as InputEventKey
 		if k.echo:
@@ -2346,10 +2433,10 @@ func _input(event: InputEvent) -> void:
 				key_brake = k.pressed
 			KEY_LEFT, KEY_A:
 				if k.pressed and _live():
-					target_x = Data.LANES[maxi(0, Data.nearest_lane(target_x) - 1)]
+					target_x = _step_lane(target_x, -1)
 			KEY_RIGHT, KEY_D:
 				if k.pressed and _live():
-					target_x = Data.LANES[mini(3, Data.nearest_lane(target_x) + 1)]
+					target_x = _step_lane(target_x, 1)
 			KEY_ESCAPE, KEY_P:
 				if k.pressed:
 					if state == S.PLAY:
@@ -2367,6 +2454,8 @@ func _notification(what: int) -> void:
 		NOTIFICATION_WM_GO_BACK_REQUEST:
 			if state == S.REPLAY:
 				_close_replay()
+			elif state == S.REFUEL:
+				_pay_and_go()
 			elif hud.screens.pedals.visible:
 				_on_act("pedal_done", "")
 			elif hud.screens.settings.visible:
@@ -2443,7 +2532,7 @@ func _dev_tool(id: String) -> void:
 
 func _on_act(action: String, arg: String) -> void:
 	# a drag that scrolled a menu must not also press the button it started on
-	if hud and hud.clicks_blocked() and not action in ["cam_set", "set", "cam_save", "save", "pause", "cam_cycle", "rp", "rp_scrub"]:
+	if hud and hud.clicks_blocked() and not action in ["cam_set", "set", "cam_save", "save", "pause", "cam_cycle", "rp", "rp_scrub", "pump", "fill", "pay"]:
 		return
 	match action:
 		"start":
@@ -2535,6 +2624,17 @@ func _on_act(action: String, arg: String) -> void:
 			hud.render_settings()
 		"dev":
 			_dev_tool(arg)
+		"pump":
+			if state == S.REFUEL:
+				pump.on = arg == "on"
+				pump.auto = false
+		"fill":
+			if state == S.REFUEL:
+				pump.on = true
+				pump.auto = true
+		"pay":
+			if state == S.REFUEL:
+				_pay_and_go()
 		"replay":
 			_open_replay()
 		"rp":
@@ -3039,3 +3139,282 @@ func _keyed_cam(t: float) -> Dictionary:
 	out.pitch = clampf(out.pitch, -0.08, 1.5)
 	out.dist = clampf(out.dist, 2.5, 60.0)
 	return out
+
+
+# ---------------------------------------------------------------- fuel
+
+## Plan the next fuel stop about STATION_EVERY_KM past after_z, on one of the
+## scenery's station sites, with its own name and prices.
+func _new_station(after_z: float) -> void:
+	if not station.is_empty():
+		last_station = station
+	var km := randf_range(0.96, 1.08) * Data.STATION_EVERY_KM * Data.station_scale
+	if _test_first_station > 0.0 and station.is_empty():
+		km = _test_first_station / 1000.0
+	var n := ceili((after_z + km * 1000.0 - Scenery.SITE) / Scenery.TREE_PERIOD)
+	var reg := randf_range(2.4, 4.4)
+	var price := func(v: float) -> float:
+		return floorf(v * 10.0) / 10.0 + 0.09  # pump prices end in 9
+	station = {"z": Scenery.site_z(n), "name": Data.STATION_NAMES.pick_random(), "color": Data.STATION_COLORS.pick_random(),
+		"prices": {"regular": price.call(reg), "mid": price.call(reg + 5.0 + randf_range(-0.8, 0.8)),
+			"premium": price.call(reg + 15.0 + randf_range(-1.6, 1.6))}}
+	_send_stations()
+
+
+func _send_stations() -> void:
+	var list: Array = [station]
+	if not last_station.is_empty():
+		list.append(last_station)
+	scenery.set_stations(list)
+
+
+## Road distance of the player from the next fuel stop's pumps (negative before them).
+func _station_rel() -> float:
+	return player.z - float(station.z) if not station.is_empty() else -1.0e9
+
+
+func _in_station_zone() -> bool:
+	var rel := _station_rel()
+	return rel > -GasStation.EXIT_START and rel < GasStation.MERGE_END
+
+
+func _right_limit() -> float:
+	return GasStation.right_edge(_station_rel()) if run and not station.is_empty() else Data.RAIL
+
+
+## The exit lane counts as a lane (for lane assist and the arrow keys) while
+## it is there to turn into.
+func _exit_open() -> bool:
+	if run == null or station.is_empty() or not run.pit.is_empty() or run.pit_skip == float(station.z):
+		return false
+	var rel := _station_rel()
+	return rel > -GasStation.EXIT_FULL - 30.0 and rel < -GasStation.FORE + 5.0
+
+
+func _lane_xs() -> Array:
+	var xs: Array = Data.LANES.duplicate()
+	if _exit_open():
+		xs.append(GasStation.LANE_X)
+	return xs
+
+
+func _nearest_x(x: float) -> float:
+	var best: float = Data.LANES[0]
+	for lx in _lane_xs():
+		if absf(float(lx) - x) < absf(best - x):
+			best = lx
+	return best
+
+
+func _step_lane(x: float, dir: int) -> float:
+	var xs := _lane_xs()
+	var i := xs.find(_nearest_x(x))
+	return xs[clampi(i + dir, 0, xs.size() - 1)]
+
+
+## A fuel stop is close (or the car is at the pumps): hold back the boss and
+## the police until it is behind.
+func _station_busy() -> bool:
+	if run == null or station.is_empty():
+		return false
+	if not run.pit.is_empty():
+		return true
+	var ahead := float(station.z) - player.z
+	return ahead < GasStation.SIGNS[0] + 760.0 and ahead > -GasStation.MERGE_END - 30.0
+
+
+## A race or pursuit is starting: if the next fuel stop would come up during
+## it, move the stop to just after (it is still out of sight).
+func _clear_station_for(span: float) -> void:
+	if station.is_empty():
+		return
+	if float(station.z) - player.z < span + 400.0:
+		var n := ceili((player.z + span + 600.0 - Scenery.SITE) / Scenery.TREE_PERIOD)
+		station.z = Scenery.site_z(n)
+		_send_stations()
+
+
+func _gross_earnings() -> int:
+	return run.score / 40 + int(run.dist / 50.0) + run.cash_bonus
+
+
+## Money that can pay for fuel: the bank, plus what this run has earned so far.
+func _funds() -> Dictionary:
+	var from_run := maxi(0, _gross_earnings() - run.fuel_from_run)
+	return {"bank": Save.data.cash, "run": from_run, "total": Save.data.cash + from_run}
+
+
+func _fuel_next_text() -> String:
+	if station.is_empty() or run == null:
+		return ""
+	var ahead := float(station.z) - player.z
+	if ahead < -GasStation.FORE:
+		return ""
+	if ahead > 3000.0 and run.fuel > st.tank * 0.3:
+		return ""
+	return "FUEL %s" % Fmt.km(maxf(ahead, 0.0))
+
+
+## Warnings, the heads-up for the next stop, running dry, and moving on to
+## the next stop once this one is behind.
+func _update_fuel(dt: float) -> void:
+	var frac: float = run.fuel / maxf(st.tank, 1.0)
+	if frac > 0.3:
+		run.fuel_warned = 0
+	elif frac < 0.1 and run.fuel_warned < 2 and run.fuel > 0.0:
+		run.fuel_warned = 2
+		_notify("FUEL CRITICAL", "bad")
+		sound.play("ding", 0.55, 0.0)
+	elif frac < 0.25 and run.fuel_warned < 1:
+		run.fuel_warned = 1
+		_notify("LOW FUEL", "bad")
+		sound.play("ding", 0.6, -2.0)
+	if not station.is_empty():
+		var ahead := float(station.z) - player.z
+		if ahead < 1000.0 and ahead > 600.0 and run.heads_up != float(station.z):
+			run.heads_up = float(station.z)
+			var g: String = st.grade
+			hud.pop("%s IN 1 KM · %s $%.2f/L" % [String(station.name).to_upper(), Data.FUEL_GRADES[g].short, station.prices[g]], "small")
+		if ahead < 450.0 and ahead > 250.0 and run.heads_up != -float(station.z) and run.fuel < st.tank * 0.9:
+			run.heads_up = -float(station.z)
+			hud.pop("MOVE RIGHT INTO THE EXIT LANE TO PULL IN", "small")
+		if ahead < -GasStation.MERGE_END - 30.0 and run.pit.is_empty():
+			_new_station(float(station.z))
+	if run.fuel <= 0.0 and run.pit.is_empty():
+		if run.dry_t == 0.0:
+			hud.banner("OUT OF FUEL", "COASTING")
+		run.dry_t += dt if player.v < 1.0 else 0.0001
+		if run.dry_t > 1.2:
+			_end_run("Ran out of fuel")
+
+
+## In the exit lane, early enough to stop at the pumps: pull in.
+func _pit_ready() -> bool:
+	if station.is_empty() or run.phase != "cruise" or run.pit_skip == float(station.z):
+		return false
+	var rel := _station_rel()
+	return rel > -GasStation.EXIT_FULL + 5.0 and rel < -GasStation.FORE + 6.0 and player.x > Data.ROAD_HALF + 1.0
+
+
+func _start_pit() -> void:
+	var zs: float = station.z
+	var need := player.v * player.v / (2.0 * 13.0)  # the hardest the car will brake
+	if player.z + need > zs + GasStation.FORE - 6.0:
+		run.pit_skip = zs
+		_notify("TOO FAST TO PULL IN", "bad")
+		return
+	var stop := clampf(player.z + player.v * player.v / (2.0 * 7.5), zs - 6.0, zs + GasStation.FORE - 6.0)
+	run.pit = {"step": "in", "z0": player.z, "x0": player.x, "v0": maxf(player.v, 3.0), "stop": stop}
+	run.combo = 0
+	touches.clear()
+	_refresh_inputs()
+	_notify("PULLING IN", "small")
+
+
+## The car drives itself into the station, stops at a pump, and afterwards
+## drives back out along the slip road to merge into the right-hand lane.
+func _update_pit(dt: float) -> void:
+	var pt: Dictionary = run.pit
+	var zs: float = station.z
+	var nx := player.x
+	match pt.step:
+		"in":
+			var total: float = maxf(float(pt.stop) - float(pt.z0), 0.5)
+			var left: float = float(pt.stop) - player.z
+			var a: float = float(pt.v0) * float(pt.v0) / (2.0 * total)
+			player.v = maxf(sqrt(maxf(0.0, 2.0 * a * left)), 1.0 if left > 0.3 else 0.0)
+			player.z = minf(player.z + player.v * dt, float(pt.stop))
+			var lane_x := lerpf(float(pt.x0), GasStation.LANE_X, smoothstep(float(pt.z0), float(pt.z0) + 30.0, player.z))
+			nx = lerpf(lane_x, GasStation.PUMP_X, smoothstep(zs - GasStation.FORE - 6.0, float(pt.stop) - 4.0, player.z))
+			player.braking = true
+			if player.z >= float(pt.stop) - 0.01:
+				player.v = 0.0
+				nx = GasStation.PUMP_X
+				pt.step = "fuel"
+				_open_refuel()
+		"fuel":
+			player.v = 0.0
+		"out":
+			player.v = minf(player.v + 6.0 * dt, 26.0)
+			player.z += player.v * dt
+			player.braking = false
+			var to_lane := lerpf(GasStation.PUMP_X, GasStation.LANE_X, smoothstep(float(pt.stop) + 3.0, zs + GasStation.FORE + 10.0, player.z))
+			nx = lerpf(to_lane, Data.LANES[3], smoothstep(zs + GasStation.FORE + 25.0, zs + GasStation.MERGE_END - 20.0, player.z))
+			if player.z >= zs + GasStation.MERGE_END - 20.0:
+				nx = Data.LANES[3]
+				run.pit = {}
+				target_x = nx
+				run.invuln = maxf(run.invuln, 1.6)
+	player.vx = (nx - player.x) / maxf(dt, 0.0001)
+	player.x = nx
+	player_accel = 0.0
+
+
+func _open_refuel() -> void:
+	state = S.REFUEL
+	pump = {"litres": 0.0, "bill": 0.0, "on": false, "auto": false, "t": 0.0, "msg": ""}
+	touches.clear()
+	key_gas = false
+	key_brake = false
+	_refresh_inputs()
+	hud.set_play_visible(false)
+	hud.show_refuel(_refuel_view())
+	sound.play("ding", 0.8, -6.0)
+	if autotest:
+		print("[autotest] fuel stop %s: %.1f of %.0f L, %s $%.2f/L, funds $%d" % [station.name, run.fuel, st.tank, st.grade, station.prices[st.grade], _funds().total])
+
+
+func _pump_frame(dt: float) -> void:
+	pump.t += dt
+	var price: float = station.prices[st.grade]
+	if pump.on:
+		var room: float = st.tank - run.fuel
+		var afford: float = (float(_funds().total) - float(pump.bill)) / price
+		var add := minf((32.0 if pump.auto else 14.0) * dt, minf(room, afford))
+		if add <= 0.0005:
+			pump.on = false
+			pump.auto = false
+			pump.msg = "Tank full." if room <= 0.01 else "That's all the money you have."
+			sound.play("ding", 1.2, -4.0)
+		else:
+			run.fuel += add
+			pump.litres += add
+			pump.bill += add * price
+	hud.update_refuel(_refuel_view())
+	if autotest:
+		if pump.t > 0.5 and float(pump.litres) == 0.0 and not pump.on:
+			pump.on = true
+			pump.auto = true
+		elif pump.t > 3.0 and not pump.on:
+			_pay_and_go()
+
+
+func _refuel_view() -> Dictionary:
+	var f := _funds()
+	var price: float = station.prices[st.grade]
+	return {"name": station.name, "grade": st.grade, "prices": station.prices, "fuel": run.fuel, "tank": st.tank,
+		"litres": pump.litres, "bill": pump.bill, "pumping": pump.on, "bank": f.bank, "run": f.run, "total": f.total,
+		"to_fill": (st.tank - run.fuel) * price, "price": price, "msg": pump.msg,
+		"car": Data.car_by_id(Save.data.selected).name}
+
+
+## Pay what was pumped (this run's earnings first, then the bank) and drive on.
+func _pay_and_go() -> void:
+	if state != S.REFUEL:
+		return
+	var bill := ceili(float(pump.bill) - 0.0001)
+	if bill > 0:
+		var from_run := mini(bill, maxi(0, _gross_earnings() - run.fuel_from_run))
+		run.fuel_from_run += from_run
+		Save.data.cash = maxi(0, Save.data.cash - (bill - from_run))
+		run.fuel_paid += bill
+		Save.persist()
+		_notify("PAID $%s · %.1f L" % [Fmt.num(bill), pump.litres], "hot")
+		if autotest:
+			print("[autotest] paid $%d for %.1f L (%d from this run), tank %.1f L" % [bill, pump.litres, from_run, run.fuel])
+	pump.on = false
+	state = S.PLAY
+	hud.show_screen("")
+	hud.set_play_visible(true)
+	run.pit.step = "out"
+	run.dry_t = 0.0

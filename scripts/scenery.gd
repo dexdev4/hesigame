@@ -53,6 +53,17 @@ func _ready() -> void:
 	M.sign = CarModel.mat(Color("#0d6a42"), 0.0, 0.5)
 	M.wood = CarModel.mat(Color("#6b5238"), 0.0, 0.95)
 	M.wire = CarModel.mat(Color("#2a2c2e"), 0.0, 0.6)
+	# the right-hand rail, its posts and markers get a gap where a fuel stop's exit lane leaves
+	M.steel_cut = _cut_mat(Color("#b9bfc5"), 0.35, 0.6)
+	M.steel_dark_cut = _cut_mat(Color("#6c7278"), 0.6, 0.4)
+	M.wire_cut = _cut_mat(Color("#2a2c2e"), 0.6, 0.0)
+	M.white_cut = _cut_mat(Color("#eceae2"), 0.7, 0.0)
+	M.amber_cut = _cut_mat(Color("#ffb020"), 0.5, 0.0, 2.5)
+	for k in 2:
+		var gs := GasStation.new()
+		gs.visible = false
+		add_child(gs)
+		_station_nodes.append(gs)
 
 	var length := VIEW_AHEAD + VIEW_BEHIND
 	var mid_z := -(VIEW_AHEAD - VIEW_BEHIND) / 2.0
@@ -89,6 +100,8 @@ func _ready() -> void:
 	var rails := [Data.RAIL, -Data.RAIL, OPP_X + Data.RAIL, OPP_X - Data.RAIL]
 	var static_parts := {M.steel: [], M.wire: [], M.wood: []}
 	for x in rails:
+		if x == Data.RAIL:
+			continue  # the right-hand rail is built in 4 m pieces (_build_loops) so fuel stops can open it
 		var face: float = -0.04 * signf(x)  # lobes sit on the road side of the posts
 		static_parts[M.steel].append([Vector3(x + face, 0.71, mid_z), Vector3(0.1, 0.13, length)])
 		static_parts[M.steel].append([Vector3(x + face, 0.55, mid_z), Vector3(0.1, 0.13, length)])
@@ -111,6 +124,88 @@ func _ready() -> void:
 	_add_slot(350.0, 90.0, 3, _setup_farm)
 
 
+# ---------------------------------------------------------------- fuel stops
+
+## Fuel stops only ever stand at these sites: SITE metres into every
+## TREE_PERIOD of road (game.gd places them). The repeating tree pattern
+## keeps the ground there clear for the exit lane and the forecourt.
+const SITE := 300.0
+
+var _station_nodes: Array[GasStation] = []
+var _stations: Array = []  # info dictionaries from game.gd: {z, name, prices, color}
+
+
+## True if a tree, bush or rock at pattern position pz (and side x) would stand
+## on a fuel stop's exit lane, forecourt or signs.
+static func site_clear(pz: float, x: float) -> bool:
+	if x < 0.0:
+		return false
+	# road distance from the site, in -300..300 (pattern z maps to road z - VIEW_BEHIND)
+	var rel := fposmod(pz - VIEW_BEHIND - SITE + TREE_PERIOD / 2.0, TREE_PERIOD) - TREE_PERIOD / 2.0
+	if x < GasStation.OUTER_X + 2.5 and rel > -GasStation.EXIT_START - 15.0 and rel < GasStation.MERGE_END + 15.0:
+		return true
+	if x < Data.RAIL + 14.5 and rel > -GasStation.FORE - 25.0 and rel < GasStation.FORE + 15.0:
+		return true  # forecourt, kiosk and price pylon, back to the farm fence
+	for sign_rel in [-300.0, 0.0]:  # the approach signs (the one 600 m out lands on the previous site)
+		if x < Data.RAIL + 5.0 and absf(rel - sign_rel) < 8.0:
+			return true
+	return false
+
+
+## Road z of station site n.
+static func site_z(n: int) -> float:
+	return n * TREE_PERIOD + SITE
+
+
+## The fuel stops to show (the next one, and the last one for the replay).
+func set_stations(list: Array) -> void:
+	_stations = list
+	for i in _station_nodes.size():
+		var node := _station_nodes[i]
+		if i < list.size():
+			var info: Dictionary = list[i]
+			if node.get_meta("info_id", -1.0) != float(info.z):
+				node.set_meta("info_id", float(info.z))
+				node.set_info(info)
+		else:
+			node.visible = false
+
+
+func _near_station(z_road: float) -> bool:
+	for st in _stations:
+		var rel: float = z_road - float(st.z)
+		if rel > -GasStation.SIGNS[0] - 50.0 and rel < GasStation.MERGE_END + 60.0:
+			return true
+	return false
+
+
+func _update_stations(base_z: float) -> void:
+	var cuts := [Vector2(-1.0e6, -1.0e6), Vector2(-1.0e6, -1.0e6)]
+	for i in _station_nodes.size():
+		var node := _station_nodes[i]
+		if i >= _stations.size():
+			node.visible = false
+			continue
+		var sz: float = _stations[i].z
+		var ahead := sz - base_z
+		node.visible = ahead < VIEW_AHEAD + GasStation.SIGNS[0] and ahead > -GasStation.MERGE_END - VIEW_BEHIND - 40.0
+		node.position.z = -ahead
+		cuts[i] = Vector2(-(sz - GasStation.EXIT_START - 1.0 - base_z), -(sz + GasStation.MERGE_END + 1.0 - base_z))
+	for m in [M.steel_cut, M.steel_dark_cut, M.wire_cut, M.white_cut, M.amber_cut]:
+		(m as ShaderMaterial).set_shader_parameter("cut_a", cuts[0])
+		(m as ShaderMaterial).set_shader_parameter("cut_b", cuts[1])
+
+
+func _cut_mat(c: Color, rough: float, metal: float, glow := 0.0) -> ShaderMaterial:
+	var m := ShaderMaterial.new()
+	m.shader = load("res://shaders/roadside_cut.gdshader")
+	m.set_shader_parameter("albedo", c)
+	m.set_shader_parameter("roughness", rough)
+	m.set_shader_parameter("metallic", metal)
+	m.set_shader_parameter("glow", glow)
+	return m
+
+
 # ---------------------------------------------------------------- building helpers
 
 ## One MeshInstance from boxes grouped by material: {material: [[center, size, basis?], ...]}.
@@ -123,6 +218,7 @@ func _merged(parts: Dictionary, shadows := true) -> MeshInstance3D:
 		var st := SurfaceTool.new()
 		st.begin(Mesh.PRIMITIVE_TRIANGLES)
 		for b in parts[m]:
+			st.set_uv(Vector2((b[0] as Vector3).z, 0.0))  # the box centre, for the fuel-stop gap
 			if b.size() > 2 and b[2] is Basis:
 				CarModel._box(st, b[0], b[1], b[2])
 			else:
@@ -157,20 +253,29 @@ func _loop_zs(period: float) -> Array:
 
 func _build_loops() -> void:
 	# guardrail posts on all four rails, every 4 m
-	var posts := {M.steel_dark: []}
+	var posts := {M.steel_dark: [], M.steel_dark_cut: []}
 	for z in _loop_zs(4.0):
 		if z < -220.0:
 			break
 		for x in [Data.RAIL + 0.08, -Data.RAIL - 0.08, OPP_X + Data.RAIL + 0.08, OPP_X - Data.RAIL - 0.08]:
-			posts[M.steel_dark].append([Vector3(x, 0.3, z), Vector3(0.12, 0.6, 0.12)])
+			posts[M.steel_dark_cut if x > 0.0 else M.steel_dark].append([Vector3(x, 0.3, z), Vector3(0.12, 0.6, 0.12)])
 	_loop(4.0).add_child(_merged(posts, false))
+	# right-hand guardrail in 4 m pieces, moving with the road (fuel stops open a gap in it)
+	var rail_r := {M.steel_cut: [], M.wire_cut: []}
+	for z in _loop_zs(4.0):
+		var x: float = Data.RAIL - 0.04
+		rail_r[M.steel_cut].append([Vector3(x, 0.71, z - 2.0), Vector3(0.1, 0.13, 4.0)])
+		rail_r[M.steel_cut].append([Vector3(x, 0.55, z - 2.0), Vector3(0.1, 0.13, 4.0)])
+		rail_r[M.wire_cut].append([Vector3(Data.RAIL, 0.63, z - 2.0), Vector3(0.07, 0.05, 4.0)])
+	_loop(4.0).add_child(_merged(rail_r))
 
 	# delineator posts with amber reflectors, every 25 m
-	var delin := {M.white: [], M.amber: []}
+	var delin := {M.white: [], M.amber: [], M.white_cut: [], M.amber_cut: []}
 	for z in _loop_zs(25.0):
 		for x in [Data.RAIL + 0.7, OPP_X - Data.RAIL - 0.7]:
-			delin[M.white].append([Vector3(x, 0.55, z), Vector3(0.1, 1.1, 0.1)])
-			delin[M.amber].append([Vector3(x, 0.95, z + 0.055), Vector3(0.07, 0.14, 0.02)])
+			var right: bool = x > 0.0
+			delin[M.white_cut if right else M.white].append([Vector3(x, 0.55, z), Vector3(0.1, 1.1, 0.1)])
+			delin[M.amber_cut if right else M.amber].append([Vector3(x, 0.95, z + 0.055), Vector3(0.07, 0.14, 0.02)])
 	_loop(25.0).add_child(_merged(delin, false))
 
 	# twin-arm lamps in the median, every 55 m
@@ -211,7 +316,9 @@ func _build_trees() -> void:
 		z += rng.randf_range(3.5, 9.0)
 		var right := rng.randf() < 0.55
 		var x := (Data.RAIL + 6.0 + rng.randf() * 60.0) if right else (OPP_X - Data.RAIL - 6.0 - rng.randf() * 60.0)
-		pattern.append({"z": z, "x": x, "k": rng.randf(), "s": rng.randf_range(0.8, 1.5), "bush": false})
+		var item := {"z": z, "x": x, "k": rng.randf(), "s": rng.randf_range(0.8, 1.5), "bush": false}
+		if not site_clear(z, x):
+			pattern.append(item)
 		if rng.randf() < 0.7:  # bushes close to the road and in the median
 			var bx := Data.RAIL + rng.randf_range(2.0, 9.0)
 			var r2 := rng.randf()
@@ -219,7 +326,9 @@ func _build_trees() -> void:
 				bx = MEDIAN_X + rng.randf_range(-1.2, 1.2)
 			elif r2 < 0.55:
 				bx = OPP_X - Data.RAIL - rng.randf_range(2.0, 9.0)
-			pattern.append({"z": z + rng.randf_range(0, 4), "x": bx, "k": rng.randf(), "s": rng.randf_range(0.5, 1.1), "bush": true})
+			var bush := {"z": z + rng.randf_range(0, 4), "x": bx, "k": rng.randf(), "s": rng.randf_range(0.5, 1.1), "bush": true}
+			if not site_clear(bush.z, bx):
+				pattern.append(bush)
 
 	var items: Array = []
 	for rep in 3:
@@ -304,15 +413,19 @@ func _build_trees() -> void:
 				x2 = OPP_X - Data.RAIL - vr.randf_range(0.8, 11.0)
 			var hgt := vr.randf_range(0.25, 0.7)
 			var col := Color("#4d6a2c").lerp(Color("#9a8f52"), vr.randf() * 0.7)
-			tufts.append([Transform3D(Basis(Vector3.UP, vr.randf() * TAU).scaled(Vector3(vr.randf_range(0.15, 0.35), hgt, vr.randf_range(0.15, 0.35))), Vector3(x2, hgt / 2.0, z2)), col])
+			var tuft_t := Transform3D(Basis(Vector3.UP, vr.randf() * TAU).scaled(Vector3(vr.randf_range(0.15, 0.35), hgt, vr.randf_range(0.15, 0.35))), Vector3(x2, hgt / 2.0, z2))
+			if not site_clear(fposmod(VIEW_BEHIND - z2, TREE_PERIOD), x2):
+				tufts.append([tuft_t, col])
 		for k in 40:
 			var z3 := -vr.randf() * TREE_PERIOD - rep2 * TREE_PERIOD + VIEW_BEHIND
 			var x3 := (Data.RAIL + vr.randf_range(3.0, 20.0)) * (1.0 if vr.randf() < 0.6 else -1.0)
 			if x3 < 0.0:
 				x3 = OPP_X - Data.RAIL - vr.randf_range(3.0, 20.0)
 			var rs := vr.randf_range(0.3, 1.0)
-			rocks.append([Transform3D(Basis(Vector3.UP, vr.randf() * TAU).scaled(Vector3(rs * 1.3, rs * 0.6, rs)), Vector3(x3, rs * 0.2, z3)),
-				Color("#8a8679").lerp(Color("#6b675e"), vr.randf())])
+			var rock: Array = [Transform3D(Basis(Vector3.UP, vr.randf() * TAU).scaled(Vector3(rs * 1.3, rs * 0.6, rs)), Vector3(x3, rs * 0.2, z3)),
+				Color("#8a8679").lerp(Color("#6b675e"), vr.randf())]
+			if not site_clear(fposmod(VIEW_BEHIND - z3, TREE_PERIOD), x3):
+				rocks.append(rock)
 		for k in 420:
 			var z4 := -vr.randf() * TREE_PERIOD - rep2 * TREE_PERIOD + VIEW_BEHIND
 			var x4 := Data.RAIL + vr.randf_range(75.0, 170.0) if vr.randf() < 0.5 else OPP_X - Data.RAIL - vr.randf_range(75.0, 170.0)
@@ -684,7 +797,8 @@ func _update_slots(base_z: float) -> void:
 				(sl.setup as Callable).call(n, k)
 			var zrel := k * period + offset - base_z
 			n.position.z = -zrel
-			n.visible = zrel < VIEW_AHEAD and zrel > -VIEW_BEHIND - 20.0
+			# nothing else stands where a fuel stop is (overpasses, gantries, billboards, farms)
+			n.visible = zrel < VIEW_AHEAD and zrel > -VIEW_BEHIND - 20.0 and not _near_station(k * period + offset)
 
 
 # ---------------------------------------------------------------- oncoming traffic
@@ -774,6 +888,7 @@ func update_view(base_z: float, finish_z: float, dt := 0.016) -> void:
 	for lp in _loops:
 		lp[0].position.z = fmod(base_z, lp[1])
 	_update_slots(base_z)
+	_update_stations(base_z)
 	_update_oncoming(base_z, dt)
 	_clouds.position.x = fmod(_t * 1.5, 200.0) - 100.0
 	var next_km := ceilf((base_z - 20.0) / 1000.0) * 1000.0

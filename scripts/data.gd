@@ -29,35 +29,35 @@ const SHAPES := {
 # style: body kit and details for CarModel (rim design, stripes, scoop, intakes...).
 # accel/brake in m/s^2, grip = lateral accel (m/s^2), lat = max lateral speed (m/s), top in m/s.
 const CARS := [
-	{"id": "kestrel", "style": {"rim": "5spoke", "roofwing": true, "wiper": true, "caliper": "#55595e", "badge": "KESTREL", "plate": "KST 160"},
+	{"id": "kestrel", "fuel": "regular", "tank": 40, "style": {"rim": "5spoke", "roofwing": true, "wiper": true, "caliper": "#55595e", "badge": "KESTREL", "plate": "KST 160"},
 		"engine": {"cyl": 4, "idle": 850, "redline": 6800, "res": 2.3, "decay": 2.4, "var": 0.06, "uneven": 0.03, "rasp": 0.45, "pops": 0.2, "turbo": false},
 		"name": "Kestrel 1.6", "shape": "hatch", "color": "#d5dbe2", "accel": 5.2, "brake": 9.0, "grip": 9.0, "lat": 4.2, "top": 50.0, "price": 0, "boss": -1,
 		"blurb": "Your starter hatch. Light, honest, slow."},
-	{"id": "vanta", "style": {"rim": "multi", "lightbar": true, "splitter": true, "caliper": "#c62828", "badge": "VANTA GT", "plate": "VGT 057"},
+	{"id": "vanta", "fuel": "regular", "tank": 45, "style": {"rim": "multi", "lightbar": true, "splitter": true, "caliper": "#c62828", "badge": "VANTA GT", "plate": "VGT 057"},
 		"engine": {"cyl": 6, "idle": 800, "redline": 7000, "res": 2.0, "decay": 2.6, "var": 0.08, "uneven": 0.04, "rasp": 0.35, "pops": 0.4, "turbo": true},
 		"name": "Vanta GT", "shape": "sedan", "color": "#2f6fd6", "accel": 6.4, "brake": 10.0, "grip": 10.0, "lat": 4.6, "top": 57.0, "price": 2500, "boss": -1,
 		"blurb": "A sport sedan with real brakes."},
-	{"id": "bruiser", "style": {"rim": "turbine", "rim_color": "#3a3d42", "stripes": true, "accent": "#1b1e23", "scoop": true, "caliper": "#c62828", "badge": "BRUISER", "plate": "BRZ 570"},
+	{"id": "bruiser", "fuel": "mid", "tank": 55, "style": {"rim": "turbine", "rim_color": "#3a3d42", "stripes": true, "accent": "#1b1e23", "scoop": true, "caliper": "#c62828", "badge": "BRUISER", "plate": "BRZ 570"},
 		"engine": {"cyl": 8, "idle": 700, "redline": 6300, "res": 1.4, "decay": 3.0, "var": 0.3, "uneven": 0.32, "rasp": 0.5, "pops": 0.9, "turbo": false},
 		"name": "Bruiser 5.7", "shape": "muscle", "color": "#e0a020", "accel": 8.0, "brake": 9.5, "grip": 9.0, "lat": 4.4, "top": 63.0, "price": 6000, "boss": -1,
 		"blurb": "V8 torque, a bit of a handful."},
-	{"id": "halcyon", "style": {"rim": "mesh", "intakes": true, "vents": true, "splitter": true, "lightbar": true, "caliper": "#f5b52e", "badge": "HALCYON R", "plate": "HLC 072"},
+	{"id": "halcyon", "fuel": "premium", "tank": 52, "style": {"rim": "mesh", "intakes": true, "vents": true, "splitter": true, "lightbar": true, "caliper": "#f5b52e", "badge": "HALCYON R", "plate": "HLC 072"},
 		"engine": {"cyl": 10, "idle": 950, "redline": 8700, "res": 2.6, "decay": 2.1, "var": 0.08, "uneven": 0.05, "rasp": 0.3, "pops": 0.6, "turbo": false},
 		"name": "Halcyon R", "shape": "super", "color": "#f1f1ee", "accel": 9.5, "brake": 12.0, "grip": 12.0, "lat": 5.3, "top": 72.0, "price": 15000, "boss": -1,
 		"blurb": "Mid-engine supercar. Everything is sharper."},
-	{"id": "copperhead", "style": {"rim": "5spoke", "rim_color": "#2a2c30", "stripes": true, "accent": "#f3f5ef", "scoop": true, "caliper": "#c62828", "badge": "COPPERHEAD", "plate": "BOSS 01"},
+	{"id": "copperhead", "fuel": "mid", "tank": 50, "style": {"rim": "5spoke", "rim_color": "#2a2c30", "stripes": true, "accent": "#f3f5ef", "scoop": true, "caliper": "#c62828", "badge": "COPPERHEAD", "plate": "BOSS 01"},
 		"engine": {"cyl": 8, "idle": 720, "redline": 6800, "res": 1.5, "decay": 2.8, "var": 0.26, "uneven": 0.28, "rasp": 0.55, "pops": 1.0, "turbo": false},
 		"name": "Copperhead", "shape": "fastback", "color": "#c9652e", "accel": 7.6, "brake": 10.5, "grip": 11.0, "lat": 5.0, "top": 61.0, "price": 4000, "boss": 0,
 		"blurb": "Stage 1 boss car. Grippier than any muscle car should be."},
-	{"id": "marshal", "style": {"rim": "double", "rim_color": "#c3c8ce", "dome": true, "gills": true, "split_grille": true, "ltail": true, "halo": true, "lip": true, "crease": true, "m_bumper": true, "quad_diffuser": true, "caliper": "#1fa3ff", "badge": "MARSHAL", "plate": "BOSS 02"},
+	{"id": "marshal", "fuel": "mid", "tank": 50, "style": {"rim": "double", "rim_color": "#c3c8ce", "dome": true, "gills": true, "split_grille": true, "ltail": true, "halo": true, "lip": true, "crease": true, "m_bumper": true, "quad_diffuser": true, "caliper": "#1fa3ff", "badge": "MARSHAL", "plate": "BOSS 02"},
 		"engine": {"cyl": 8, "idle": 850, "redline": 8400, "res": 2.0, "decay": 2.4, "var": 0.12, "uneven": 0.1, "rasp": 0.42, "pops": 0.8, "turbo": false},
 		"name": "Night Marshal", "shape": "msedan", "color": "#26437c", "accel": 8.6, "brake": 11.5, "grip": 11.5, "lat": 5.2, "top": 66.0, "price": 9000, "boss": 1,
 		"blurb": "Stage 2 boss car. A four-door that hunts supercars: high-revving V8, quad exhausts, power-dome bonnet."},
-	{"id": "static", "style": {"rim": "mesh", "rim_color": "#f3f5ef", "stripes": true, "accent": "#f3f5ef", "intakes": true, "vents": true, "splitter": true, "caliper": "#1fa3ff", "badge": "BLUE STATIC", "plate": "BOSS 03"},
+	{"id": "static", "fuel": "premium", "tank": 48, "style": {"rim": "mesh", "rim_color": "#f3f5ef", "stripes": true, "accent": "#f3f5ef", "intakes": true, "vents": true, "splitter": true, "caliper": "#1fa3ff", "badge": "BLUE STATIC", "plate": "BOSS 03"},
 		"engine": {"cyl": 6, "idle": 900, "redline": 8200, "res": 2.5, "decay": 2.2, "var": 0.05, "uneven": 0.02, "rasp": 0.3, "pops": 0.5, "turbo": true},
 		"name": "Blue Static", "shape": "rcoupe", "color": "#1fa3ff", "accel": 10.2, "brake": 12.0, "grip": 13.0, "lat": 5.6, "top": 75.0, "price": 18000, "boss": 2,
 		"blurb": "Stage 3 boss car. Twitchy and very fast."},
-	{"id": "lastexit", "style": {"rim": "turbine", "rim_color": "#c9a227", "stripes": true, "accent": "#1b1e23", "intakes": true, "vents": true, "splitter": true, "lightbar": true, "caliper": "#c62828", "badge": "LAST EXIT", "plate": "BOSS 04"},
+	{"id": "lastexit", "fuel": "premium", "tank": 58, "style": {"rim": "turbine", "rim_color": "#c9a227", "stripes": true, "accent": "#1b1e23", "intakes": true, "vents": true, "splitter": true, "lightbar": true, "caliper": "#c62828", "badge": "LAST EXIT", "plate": "BOSS 04"},
 		"engine": {"cyl": 12, "idle": 1000, "redline": 9200, "res": 2.8, "decay": 1.9, "var": 0.05, "uneven": 0.02, "rasp": 0.25, "pops": 0.5, "turbo": false},
 		"name": "Last Exit", "shape": "hyper", "color": "#b0122a", "accel": 11.0, "brake": 13.0, "grip": 14.0, "lat": 6.0, "top": 81.0, "price": 30000, "boss": 3,
 		"blurb": "Stage 4 boss car. The fastest thing on the interstate."},
@@ -87,6 +87,7 @@ const BOONS := [
 	{"id": "life", "name": "Spare wheel", "desc": "+1 life (max 6)", "tag": "EXTRA LIFE"},
 	{"id": "score", "name": "Show-off", "desc": "+15% to every point earned", "tag": "SCORE"},
 	{"id": "combo", "name": "Adrenaline", "desc": "Combo timer lasts 1 s longer", "tag": "COMBO"},
+	{"id": "fuel", "name": "Pit crew", "desc": "Fills your tank to the brim, free", "tag": "REFUEL"},
 ]
 
 const TRAFFIC_COLORS := ["#c9ccd1", "#dfe2e4", "#26292f", "#50555d", "#1f3a66", "#9b1c1c",
@@ -95,6 +96,25 @@ const TRUCK_BOX_COLORS := ["#d6d8d3", "#cfc8b8", "#b9c1c7", "#8e3b2f", "#2f4f7a"
 const TRUCK_CAB_COLORS := ["#b5322a", "#1f4e8c", "#2a2d33", "#d9a21b", "#3d6b3a"]
 const ROMAN := ["", "II", "III", "IV", "V", "VI", "VII", "VIII"]
 const MAX_LIVES := 6
+
+# Fuel. The cheaper cars run on regular, the middle ones on mid-grade and the
+# fastest on premium. Every station sets its own prices; on average mid-grade
+# costs $5 a litre more than regular and premium $15 more.
+const FUEL_GRADES := {
+	"regular": {"name": "Regular", "short": "REG", "add": 0.0},
+	"mid": {"name": "Mid-grade", "short": "MID", "add": 5.0},
+	"premium": {"name": "Premium", "short": "PREM", "add": 15.0},
+}
+const FUEL_ORDER := ["regular", "mid", "premium"]
+const FUEL_RANGE_KM := 16.5    # how far a full tank lasts, driven flat out
+const STATION_EVERY_KM := 10.0 # a fuel stop about every 10 km
+const STATION_NAMES := ["Sunset Fuel", "Pump & Go", "Interstate Oil", "Blue Flame Gas", "Crossroads Fuel",
+	"Mesa Petroleum", "Lucky Stop", "Northstar Gas", "Prairie Pumps", "Redline Fuel", "Last Chance Gas", "Eagle Fuel"]
+const STATION_COLORS := ["#c62828", "#1f4e8c", "#2e7d32", "#ef6c00", "#6a1b9a", "#00838f", "#c9a227", "#37474f"]
+
+## Shrinks the distance between fuel stops (and the tank range with it). Only
+## changed by the --stations test flag.
+var station_scale := 1.0
 
 # Camera views. chase: height/dist in metres behind the car. hood and cockpit:
 # height/dist are offsets from the default eye point (dist > 0 moves forward).

@@ -58,6 +58,9 @@ Open **Settings** from the main menu or the pause menu. The game keeps drawing b
   - **Hide UI** (top right) gives a clean view with no controls, name tags or score messages. You can still move the camera; tap the screen or the faint **Show UI** button to bring the controls back.
   - **Free cam:** drag to swing the camera round the car, pinch to move in and out, and drag with two fingers to pan. The camera follows the car.
   - **Keyframes:** set up a view, then press **+ KEY** to keyframe it at the playhead. Move the playhead, set up another view and add another key. The **Keyframes** camera glides smoothly between them, and keys show as diamonds on the timeline. **− KEY** deletes the key under the playhead, **< KEY** / **KEY >** jump between keys, and **Clear** removes them all.
+- **Fuel:** every run starts with a full tank, shown by the gauge under the speedometer (in the cockpit, on the dashboard screen). Driving flat out burns it fastest. Run dry and the car coasts to a stop and the run ends. About every 10 km there's a fuel stop on the right: blue signs 600 m and 300 m before it, and a price pylon, show its prices. Move right into the exit lane and the car pulls in to a pump by itself. **Hold to pump** for as much as you want, or **Fill up**, then **Pay & go**. You pay from this run's earnings first, then your bank.
+  - Each station sets its own prices. The cheaper cars (Kestrel, Vanta) take regular, the middle ones (Copperhead, Bruiser, Night Marshal) mid-grade, and the fastest (Halcyon, Blue Static, Last Exit) premium. Mid-grade averages $5 a litre more than regular, and premium $15 more. The Garage shows each car's fuel and tank size.
+  - Bosses and police pursuits never start near a fuel stop. Beating a boss can offer **Pit crew** (a free full tank) as one of the three upgrades when your tank isn't full.
 - **Between runs:** cash from score, distance and boss prizes buys permanent upgrades and new cars. Progress is saved to `user://save.json`.
 
 ### Build for Android
@@ -104,6 +107,7 @@ godot --headless --path . --export-debug "Android" build/redline-rush.apk
 | `scripts/replay.gd`, `scripts/replay_bar.gd` | 20-second replay recording and the editor's timeline |
 | `scripts/skid_marks.gd` | Tyre marks laid on the road during a crash |
 | `scripts/rear_mirror.gd` | On-screen rear-view mirror |
+| `scripts/gas_station.gd` | Fuel stops: exit lane, forecourt, canopy, pumps, kiosk, price pylon and approach signs |
 | `scripts/data.gd` | Autoload `Data`: cars, bosses, upgrades, targets. Balance lives here |
 | `scripts/save.gd` | Autoload `Save`: persistent progress |
 | `shaders/car_paint.gdshader`, `car_glass.gdshader`, `car_env.gdshaderinc` | Car paint, chrome, trim and glass with sharp reflections of the sky and horizon, clear coat and metallic flake |
@@ -118,6 +122,7 @@ Arguments placed after `--` on the command line:
 - `--cop`: the next encounter is always a police pursuit.
 - `--crash-at=SECONDS`: trigger the last-life crash at that time.
 - `--replay-at=SECONDS[:CAM]`: open the replay editor at that time, optionally with a camera (`chase`, `hood`, `cockpit`, `free`, `keys`, `tv`, `drone`).
+- `--stations=KM` / `--first-station=M` / `--fuel=FRACTION`: a fuel stop every KM km (the tank range shrinks to match), the first stop M metres in, and starting with that fraction of a tank.
 - `--start-stage=N` / `--godmode`: start runs at stage N, and never lose lives (not saved). With `--autotest` this prints each boss race's scores.
 - `--quit-after=SECONDS`: exit after that many seconds.
 - `--open=garage` / `--open=garage:up`: open the Garage on start.

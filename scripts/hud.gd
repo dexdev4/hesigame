@@ -68,6 +68,10 @@ var _drag := {}
 var _over := {}
 var garage_tab := "cars"
 var fps_label: Label
+var _fuel_bar: ProgressBar
+var _fuel_val: Label
+var _fuel_next: Label
+var _rf := {}
 var mirror: RearMirror
 
 
@@ -105,6 +109,7 @@ func _ready() -> void:
 	_build_settings()
 	_build_pedal_editor()
 	_build_replay()
+	_build_refuel()
 	fps_label = _label("", 20, AMBER, mono_font)
 	fps_label.position = Vector2(22, 0)
 	fps_label.anchor_top = 0.15
@@ -468,7 +473,7 @@ func _build_play() -> void:
 	speedo.anchor_bottom = 1.0
 	speedo.offset_left = -140
 	speedo.offset_right = 140
-	speedo.offset_top = -150
+	speedo.offset_top = -196
 	speedo.offset_bottom = -26
 	speedo.alignment = BoxContainer.ALIGNMENT_END
 	speedo.add_theme_constant_override("separation", 0)
@@ -490,6 +495,23 @@ func _build_play() -> void:
 	_rpm.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	speedo.add_child(_rpm)
 	speedo.move_child(_rpm, 1)
+	# fuel gauge, with the distance to the next fuel stop when it matters
+	_fuel_next = _label("", 15, AMBER, mono_font)
+	_fuel_next.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	speedo.add_child(_fuel_next)
+	var frow := _row(6)
+	frow.alignment = BoxContainer.ALIGNMENT_CENTER
+	frow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	speedo.add_child(frow)
+	frow.add_child(_label("FUEL", 14, MUTED, mono_font))
+	_fuel_bar = _bar(_fill_white, 8)
+	_fuel_bar.custom_minimum_size.x = 120
+	_fuel_bar.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	_fuel_bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	frow.add_child(_fuel_bar)
+	_fuel_val = _label("40 L", 14, LINE, mono_font)
+	_fuel_val.custom_minimum_size.x = 44
+	frow.add_child(_fuel_val)
 
 	brake = Pedal.new()
 	brake.kind = "brake"
@@ -588,6 +610,16 @@ func update_play(d: Dictionary) -> void:
 	_rpm.add_theme_stylebox_override("fill", _fill_red if d.rpm > 0.9 else (_fill_amber if d.rpm > 0.75 else _fill_white))
 	_kmh.add_theme_color_override("font_color", AMBER if d.fast else LINE)
 	_sp_tag.text = "HIGH SPEED BONUS" if d.fast else ""
+	if d.has("fuel"):
+		var f: float = d.fuel
+		_fuel_bar.value = clampf(f, 0.0, 1.0)
+		var low := f < 0.25
+		var blink := f < 0.1 and fmod(Time.get_ticks_msec() / 1000.0, 0.8) < 0.4
+		_fuel_bar.add_theme_stylebox_override("fill", _fill_red if low else (_fill_amber if f < 0.4 else _fill_white))
+		_fuel_bar.modulate.a = 0.35 if blink else 1.0
+		_fuel_val.text = d.fuel_l
+		_fuel_val.add_theme_color_override("font_color", TAIL if low else LINE)
+		_fuel_next.text = d.fuel_next
 	(_g["style"] as StyleBoxFlat).bg_color = Color("#173a6e", 0.92) if d.get("cop", false) else (RED_SIGN if d.boss else Color(SIGN, 0.88))
 	_g.title.text = d.title
 	_g.sub.text = d.sub
@@ -840,6 +872,7 @@ func render_garage() -> void:
 			top.add_child(btn)
 			var sub: String = c.blurb if not locked else "Beat %s to put this car up for sale." % Data.BOSSES[c.boss].name
 			card[1].add_child(_wrap(sub, 20, MUTED))
+			card[1].add_child(_label("%s FUEL  ·  %d L TANK" % [String(Data.FUEL_GRADES[c.get("fuel", "regular")].name).to_upper(), int(c.get("tank", 45))], 16, AMBER, mono_font))
 			var grid := GridContainer.new()
 			grid.columns = 4
 			grid.add_theme_constant_override("h_separation", 10)
@@ -1332,6 +1365,93 @@ func end_pedal_edit() -> void:
 	_hint.modulate.a = 0.0
 	layout_pedals()
 	play_layer.visible = _play_on
+
+
+# ---------------------------------------------------------------- fuel stop
+
+func _build_refuel() -> void:
+	var v := _screen("refuel", Color("#123a5c"), 640)
+	_rf["eyebrow"] = _eyebrow("Fuel stop")
+	v.add_child(_rf.eyebrow)
+	_rf["name"] = _label("SUNSET FUEL", 64, LINE, display_font)
+	_rf.name.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	v.add_child(_rf.name)
+	# price board: every grade, with yours picked out
+	var board := VBoxContainer.new()
+	board.add_theme_constant_override("separation", 4)
+	v.add_child(board)
+	for g in Data.FUEL_ORDER:
+		var row := _row(10)
+		board.add_child(row)
+		var nm := _label(String(Data.FUEL_GRADES[g].name).to_upper(), 28, LINE, display_font)
+		nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(nm)
+		var tag := _label("", 16, AMBER, mono_font)
+		tag.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		row.add_child(tag)
+		var pr := _label("$0.00 /L", 30, AMBER, mono_font)
+		row.add_child(pr)
+		_rf["row_" + g] = [row, tag, pr]
+	# the tank, and the pump's running total
+	var tr := _row(10)
+	v.add_child(tr)
+	tr.add_child(_label("TANK", 18, MUTED, mono_font))
+	_rf["tank"] = _bar(_fill_amber, 16)
+	_rf.tank.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	tr.add_child(_rf.tank)
+	_rf["tank_l"] = _label("", 20, LINE, mono_font)
+	_rf.tank_l.custom_minimum_size.x = 120
+	_rf.tank_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	tr.add_child(_rf.tank_l)
+	var readout := PanelContainer.new()
+	var rs := _flat(Color(0, 0, 0, 0.45), 10)
+	rs.set_content_margin_all(12)
+	readout.add_theme_stylebox_override("panel", rs)
+	v.add_child(readout)
+	_rf["pump"] = _label("0.0 L      $0.00", 40, Color("#7dff9a"), mono_font)
+	_rf.pump.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	readout.add_child(_rf.pump)
+	_rf["funds"] = _wrap("", 20, MUTED)
+	v.add_child(_rf.funds)
+	_rf["note"] = _wrap("", 20, AMBER)
+	v.add_child(_rf.note)
+	var r1 := _row(12)
+	v.add_child(r1)
+	var hold := _button("HOLD TO PUMP", "light", "")
+	hold.button_down.connect(func() -> void: act.emit("pump", "on"))
+	hold.button_up.connect(func() -> void: act.emit("pump", "off"))
+	r1.add_child(hold)
+	_rf["fill"] = _button("FILL UP", "amber", "fill")
+	r1.add_child(_rf.fill)
+	_rf["pay"] = _button("PAY & GO", "light", "pay")
+	v.add_child(_rf.pay)
+
+
+func show_refuel(d: Dictionary) -> void:
+	update_refuel(d)
+	show_screen("refuel")
+
+
+func update_refuel(d: Dictionary) -> void:
+	_rf.name.text = String(d.name).to_upper()
+	var p: Dictionary = d.prices
+	for g in Data.FUEL_ORDER:
+		var row: Array = _rf["row_" + g]
+		var mine: bool = g == d.grade
+		(row[0] as Control).modulate = Color(1, 1, 1, 1.0 if mine else 0.4)
+		(row[1] as Label).text = "YOUR CAR" if mine else ""
+		(row[2] as Label).text = "$%.2f /L" % float(p[g])
+	_rf.tank.value = clampf(float(d.fuel) / float(d.tank), 0.0, 1.0)
+	_rf.tank_l.text = "%.1f / %d L" % [d.fuel, int(d.tank)]
+	_rf.pump.text = "%5.1f L      $%s" % [d.litres, "%.2f" % float(d.bill)]
+	_rf.funds.text = "You have $%s: $%s in the bank and $%s earned this run so far. Filling the tank costs about $%s." % [
+		Fmt.num(d.total), Fmt.num(d.bank), Fmt.num(d.run), Fmt.num(ceili(float(d.to_fill)))]
+	var note: String = d.msg
+	if note == "" and float(d.to_fill) > float(d.total) - float(d.bill):
+		note = "Not enough money for a full tank: you can pump $%s more." % Fmt.num(maxi(0, int(float(d.total) - float(d.bill))))
+	_rf.note.text = note
+	_rf.fill.text = "PUMPING..." if d.pumping else "FILL UP"
+	_rf.pay.text = ("PAY $%s & GO" % Fmt.num(ceili(float(d.bill) - 0.0001))) if float(d.bill) > 0.0 else "LEAVE"
 
 
 # ---------------------------------------------------------------- replay editor

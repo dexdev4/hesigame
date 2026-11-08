@@ -1499,47 +1499,65 @@ func build_interior() -> void:
 		_box(S.trim, Vector3(sd * (hr - 0.08), yr - 0.07, ez + 0.05), Vector3(0.04, 0.03, 0.22))                     # grab handle
 
 	# --- dashboard
-	_box(S.dash, Vector3(0, yb - 0.08, dz + 0.3), Vector3(hb * 2.0, 0.26, 0.6))
-	_box(S.pad, Vector3(0, yb + 0.06, dz + 0.27), Vector3(hb * 2.0 - 0.02, 0.03, 0.52))
-	_box(S.stitch, Vector3(0, yb + 0.076, dz + 0.53), Vector3(hb * 2.0 - 0.06, 0.004, 0.006))
-	_box(S.dash, Vector3(0, yb - 0.3, dz + 0.35), Vector3(hb * 2.0, 0.18, 0.4))               # lower dash
-	_box(S.alu, Vector3(0, yb - 0.11, dz + 0.605), Vector3(hb * 2.0 - 0.1, 0.025, 0.012))     # trim strip
-	_box(S.ambient, Vector3(0, yb - 0.126, dz + 0.607), Vector3(hb * 2.0 - 0.12, 0.004, 0.006))  # ambient light line
+	# Fit the dash under the windscreen: a raked screen is low at its base, so
+	# the dash drops a little and, if that is not enough, moves back.
+	var yd := yb
+	var dzd := dz
+	var fitted := false
+	for si in 11:
+		var shift := si * 0.02
+		for di in 13:
+			var y_try := yb - di * 0.01
+			var pad_ok := y_try + 0.09 <= bbi.roof_y(g[1] - 0.06 - shift) - 0.02
+			var hood_ok := y_try + 0.23 <= bbi.roof_y(g[1] - 0.43 - shift) - 0.02
+			if pad_ok and hood_ok:
+				yd = y_try
+				dzd = dz + shift
+				fitted = true
+				break
+		if fitted:
+			break
+	_box(S.dash, Vector3(0, yd - 0.08, dzd + 0.3), Vector3(hb * 2.0, 0.26, 0.6))
+	_box(S.pad, Vector3(0, yd + 0.06, dzd + 0.27), Vector3(hb * 2.0 - 0.02, 0.03, 0.52))
+	_box(S.stitch, Vector3(0, yd + 0.076, dzd + 0.53), Vector3(hb * 2.0 - 0.06, 0.004, 0.006))
+	_box(S.dash, Vector3(0, yd - 0.3, dzd + 0.35), Vector3(hb * 2.0, 0.18, 0.4))               # lower dash
+	_box(S.alu, Vector3(0, yd - 0.11, dzd + 0.605), Vector3(hb * 2.0 - 0.1, 0.025, 0.012))     # trim strip
+	_box(S.ambient, Vector3(0, yd - 0.126, dzd + 0.607), Vector3(hb * 2.0 - 0.12, 0.004, 0.006))  # ambient light line
 	for sd in [-1.0, 1.0]:
-		_box(S.ambient, Vector3(sd * (hb - 0.062), yb - 0.07, (zr + dz) / 2.0), Vector3(0.004, 0.004, absf(dz - zr) * 0.9))
+		_box(S.ambient, Vector3(sd * (hb - 0.062), yd - 0.07, (zr + dz) / 2.0), Vector3(0.004, 0.004, absf(dz - zr) * 0.9))
 	# sat-nav map under the radio text
-	_box(S.map, Vector3(0, yb - 0.172, dz + 0.6265), Vector3(0.23, 0.05, 0.002))
+	_box(S.map, Vector3(0, yd - 0.172, dzd + 0.6265), Vector3(0.23, 0.05, 0.002))
 	for rd in [[-0.06, 0.0, 0.11, 0.005], [0.03, -0.01, 0.005, 0.045], [0.07, 0.008, 0.07, 0.004]]:
-		_box(S.screen, Vector3(rd[0], yb - 0.172 + rd[1], dz + 0.628), Vector3(rd[2], rd[3], 0.002))
-	_box(S.route, Vector3(0.0, yb - 0.172, dz + 0.6285), Vector3(0.004, 0.04, 0.002))
-	_box(S.route, Vector3(-0.03, yb - 0.152, dz + 0.6285), Vector3(0.06, 0.004, 0.002))
-	_box(S.trim, Vector3(-ex, yb - 0.3, dz + 0.56), Vector3(0.46, 0.16, 0.02))               # glovebox lid
-	_box(S.chrome, Vector3(-ex + 0.17, yb - 0.25, dz + 0.575), Vector3(0.06, 0.015, 0.015))  # glovebox latch
+		_box(S.screen, Vector3(rd[0], yd - 0.172 + rd[1], dzd + 0.628), Vector3(rd[2], rd[3], 0.002))
+	_box(S.route, Vector3(0.0, yd - 0.172, dzd + 0.6285), Vector3(0.004, 0.04, 0.002))
+	_box(S.route, Vector3(-0.03, yd - 0.152, dzd + 0.6285), Vector3(0.06, 0.004, 0.002))
+	_box(S.trim, Vector3(-ex, yd - 0.3, dzd + 0.56), Vector3(0.46, 0.16, 0.02))               # glovebox lid
+	_box(S.chrome, Vector3(-ex + 0.17, yd - 0.25, dzd + 0.575), Vector3(0.06, 0.015, 0.015))  # glovebox latch
 	for sd in [-1.0, 1.0]:
-		_box(S.dash, Vector3(sd * 0.36, yb - 0.32, dz + 0.58), Vector3(0.34, 0.14, 0.08))      # knee bolsters
+		_box(S.dash, Vector3(sd * 0.36, yd - 0.32, dzd + 0.58), Vector3(0.34, 0.14, 0.08))      # knee bolsters
 	for vx in [-0.1, 0.1, -(hb - 0.14), hb - 0.14]:
-		var c := Vector3(vx, yb - 0.02, dz + 0.605)
+		var c := Vector3(vx, yd - 0.02, dzd + 0.605)
 		_box(S.chrome, c, Vector3(0.16, 0.075, 0.01))
 		_box(S.vent, c + Vector3(0, 0, 0.004), Vector3(0.145, 0.062, 0.01))
 		for k in 3:
 			_box(S.trim, c + Vector3(0, -0.02 + k * 0.02, 0.008), Vector3(0.14, 0.006, 0.006))
 	# binnacle and instrument cluster backing
-	_box(S.dash, Vector3(ex, yb + 0.19, dz + 0.5), Vector3(0.38, 0.06, 0.24))
-	_box(S.dash, Vector3(ex, yb + 0.07, dz + 0.55), Vector3(0.36, 0.22, 0.1))
+	_box(S.dash, Vector3(ex, yd + 0.19, dzd + 0.5), Vector3(0.38, 0.06, 0.24))
+	_box(S.dash, Vector3(ex, yd + 0.07, dzd + 0.55), Vector3(0.36, 0.22, 0.1))
 	# centre stack with screen, climate knobs and hazard switch
-	_box(S.dash, Vector3(0, yb - 0.27, dz + 0.54), Vector3(0.32, 0.44, 0.16))
-	_box(S.chrome, Vector3(0, yb - 0.13, dz + 0.621), Vector3(0.27, 0.165, 0.004))
-	_box(S.screen, Vector3(0, yb - 0.13, dz + 0.624), Vector3(0.25, 0.145, 0.004))
+	_box(S.dash, Vector3(0, yd - 0.27, dzd + 0.54), Vector3(0.32, 0.44, 0.16))
+	_box(S.chrome, Vector3(0, yd - 0.13, dzd + 0.621), Vector3(0.27, 0.165, 0.004))
+	_box(S.screen, Vector3(0, yd - 0.13, dzd + 0.624), Vector3(0.25, 0.145, 0.004))
 	for k in 3:
-		_cyl(S.chrome, Vector3(-0.08 + k * 0.08, yb - 0.33, dz + 0.625), 0.026, 0.02, Vector3.BACK, 14)
-		_cyl(S.vent, Vector3(-0.08 + k * 0.08, yb - 0.33, dz + 0.636), 0.02, 0.005, Vector3.BACK, 12)
-	_box(S.red, Vector3(0, yb - 0.24, dz + 0.624), Vector3(0.04, 0.025, 0.01))
+		_cyl(S.chrome, Vector3(-0.08 + k * 0.08, yd - 0.33, dzd + 0.625), 0.026, 0.02, Vector3.BACK, 14)
+		_cyl(S.vent, Vector3(-0.08 + k * 0.08, yd - 0.33, dzd + 0.636), 0.02, 0.005, Vector3.BACK, 12)
+	_box(S.red, Vector3(0, yd - 0.24, dzd + 0.624), Vector3(0.04, 0.025, 0.01))
 	# steering column, stalks and pedals
-	_box(S.dash, Vector3(ex, yb - 0.14, dz + 0.69), Vector3(0.12, 0.1, 0.24))
+	_box(S.dash, Vector3(ex, yd - 0.14, dzd + 0.69), Vector3(0.12, 0.1, 0.24))
 	for sd in [-1.0, 1.0]:
-		_strap(S.dash, Vector3(ex + sd * 0.05, yb - 0.12, dz + 0.74), Vector3(ex + sd * 0.17, yb - 0.1, dz + 0.72), 0.018, 0.018)
+		_strap(S.dash, Vector3(ex + sd * 0.05, yd - 0.12, dzd + 0.74), Vector3(ex + sd * 0.17, yd - 0.1, dzd + 0.72), 0.018, 0.018)
 	for k in 3:
-		_box(S.alu, Vector3(ex - 0.12 + k * 0.1, floor_y + 0.12, dz + 0.3), Vector3(0.07, 0.1, 0.02), Basis(Vector3.RIGHT, -0.5))
+		_box(S.alu, Vector3(ex - 0.12 + k * 0.1, floor_y + 0.12, dzd + 0.3), Vector3(0.07, 0.1, 0.02), Basis(Vector3.RIGHT, -0.5))
 
 	# --- centre console
 	var cz0: float = dz + 0.62
@@ -1693,7 +1711,7 @@ func build_interior() -> void:
 	# instrument cluster: speedometer and rev counter with ticks and needles
 	for k in 2:
 		var dial := Node3D.new()
-		dial.position = Vector3(ex + (0.085 if k == 0 else -0.085), yb + 0.09, dz + 0.645)
+		dial.position = Vector3(ex + (0.085 if k == 0 else -0.085), yd + 0.09, dzd + 0.645)
 		dial.rotation.x = -0.35
 		_body.add_child(dial)
 		var face := MeshInstance3D.new()
@@ -1739,7 +1757,7 @@ func build_interior() -> void:
 	_display.pixel_size = 0.00055
 	_display.modulate = Color("#f5b52e")
 	_display.outline_size = 0
-	_display.position = Vector3(ex, yb + 0.09, dz + 0.652)
+	_display.position = Vector3(ex, yd + 0.09, dzd + 0.652)
 	_display.rotation.x = -0.35
 	_body.add_child(_display)
 	_screen = Label3D.new()
@@ -1747,7 +1765,7 @@ func build_interior() -> void:
 	_screen.pixel_size = 0.0008
 	_screen.modulate = Color("#cfe8ff")
 	_screen.outline_size = 0
-	_screen.position = Vector3(0, yb - 0.105, dz + 0.628)
+	_screen.position = Vector3(0, yd - 0.105, dzd + 0.628)
 	_screen.font_size = 26
 	_body.add_child(_screen)
 

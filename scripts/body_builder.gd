@@ -145,6 +145,15 @@ func roof_y(d: float) -> float:
 	return _roof_line(d) + 0.012 * sin(PI * (d - g[2]) / maxf(g[3] - g[2], 0.01))
 
 
+## How far back from the windscreen base the glass reaches height h (the
+## largest d inside the cabin where the windscreen or roof is at least h).
+func glass_d(h: float) -> float:
+	var d: float = g[1]
+	while d > float(g[0]) and roof_y(d) < h:
+		d -= 0.01
+	return d
+
+
 ## The roof falls away towards the back (profile "roof_drop"), peaking over
 ## the front seats, instead of running flat to the rear glass.
 func _roof_line(d: float) -> float:
@@ -848,7 +857,10 @@ func cabin_mesh() -> ArrayMesh:
 	var gw := minf(w / 2.0 * float(g[6]), hw(dm) * 0.915) - 0.06
 	var fl := floor_y + 0.12
 	CarModel._box(st, Vector3(0, (fl + t - 0.02) * 0.5, -dm), Vector3(gw * 2.0, t - 0.02 - fl, g[1] - g[0] - 0.12))
-	CarModel._box(st, Vector3(0, t + 0.06, -(g[1] - 0.32)), Vector3(gw * 2.0, 0.14, 0.4))
+	# dashboard: its front edge stays under the raked windscreen
+	var dash_top := t + 0.13
+	var d_front := minf(float(g[1]) - 0.12, glass_d(dash_top + 0.03))
+	CarModel._box(st, Vector3(0, dash_top - 0.07, -(d_front - 0.2)), Vector3(gw * 2.0, 0.14, 0.4))
 	var eye_d: float = g[1] - 1.45
 	var sx := 0.36 * w / 1.84
 	var seat_top := minf(t + 0.45, roof_y(eye_d - 0.28) - 0.16)

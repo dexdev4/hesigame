@@ -12,6 +12,8 @@ A roguelike traffic-weaving racer built in **Godot 4** (GDScript). You drive an 
 
 There are no asset files to download: the cars, road, trees, UI and sounds are all generated in code.
 
+Every player and boss car has its own body design: a hatchback, a sport sedan, a notchback and a fastback muscle car, a compact performance saloon, a mid-engined supercar, a rear-engined sports coupe and a V12 hypercar. The paint has a clear coat that reflects the sky and horizon, metallic flake that catches the sun up close, and tinted glass that turns into a mirror at shallow angles. Wheels have big alloys with concave spokes, low-profile tyres, brake discs and calipers. Lamps have projector lenses and LED running lights. Cars further than 40 m away switch to a lighter model, so the highway stays smooth on phones.
+
 Each car has its own engine sound, generated live from a small engine model: cylinder count (from the hatch's four to the Last Exit's twelve), RPM through six gears with real shift points, throttle load, pops when you lift off and turbo whine and blow-off on the turbo cars. On and off throttle use different combustion sounds, every firing varies slightly, the exhaust pipe resonates, and you hear crank rumble at low revs, gearbox whine and an ignition-cut bark on upshifts. The HUD shows your gear and an RPM bar under the speedometer.
 
 ### Controls
@@ -94,8 +96,8 @@ godot --headless --path . --export-debug "Android" build/redline-rush.apk
 | `scripts/game.gd` | Driving physics, traffic AI, boss race, scoring, run flow, camera, input |
 | `scripts/hud.gd` | HUD, pedals and every menu screen, built in code |
 | `scripts/scenery.gd` | Endless highway: both carriageways with oncoming traffic, overpasses, exit-sign gantries, billboards, farms, fences, power lines, trees, mountains and clouds |
-| `scripts/car_model.gd` | Car, truck and van models, materials and the player's cockpit interior |
-| `scripts/body_builder.gd` | Smooth one-piece car bodies: swept cross-sections, wheel-arch cut-outs, tinted see-through glass, wrap-round lamps, grille, mirrors, shut lines and baked shading |
+| `scripts/car_model.gd` | Car, truck and van models: body profiles for every car type, wheels and brakes, wings and spoilers, materials, level of detail, and the player's cockpit interior |
+| `scripts/body_builder.gd` | Smooth one-piece car bodies: swept cross-sections with a shoulder crease, flared arches and rounded corners; wrap-round bumpers, lamps with projectors and LED running lights, grilles and intakes, mirrors, shut lines and baked shading |
 | `scripts/car_textures.gd` | Lamp lens and grille textures drawn in code |
 | `scripts/pedal.gd` | Draws the accelerator and brake pedals |
 | `scripts/engine_audio.gd` | Synthesised engine, wind and sound effects |
@@ -104,6 +106,7 @@ godot --headless --path . --export-debug "Android" build/redline-rush.apk
 | `scripts/rear_mirror.gd` | On-screen rear-view mirror |
 | `scripts/data.gd` | Autoload `Data`: cars, bosses, upgrades, targets. Balance lives here |
 | `scripts/save.gd` | Autoload `Save`: persistent progress |
+| `shaders/car_paint.gdshader`, `car_glass.gdshader`, `car_env.gdshaderinc` | Car paint, chrome, trim and glass with sharp reflections of the sky and horizon, clear coat and metallic flake |
 | `shaders/` | Road surface (markings, wear, rumble strips, reflectors, asphalt grain), grass and fields, distant mountains and clouds, and the full-screen finishing pass |
 
 ### Test flags
@@ -127,6 +130,7 @@ Arguments placed after `--` on the command line:
 - `--demo-pops`: show a sample score message every second, to check where messages appear in each camera view.
 - `--burst=SECONDS:COUNT:DIR`: save COUNT consecutive frames from SECONDS onwards (for checking flicker).
 - `--showroom` / `--showroom=front` / `--showroom=close` (or `t_rear` / `t_front` for traffic models): park every player and boss car in a row with the game frozen, to inspect the models.
+- `--inspect=CAR:YAWS:PITCH:DIST[:FOV]`: one car on its own, with the camera orbiting it at the given angles in degrees (several yaws separated by commas step every 3 seconds). Combine with `--win=WxH` (and Godot's `--resolution WxH`) for large screenshots.
 
 ```bash
 godot --headless --path . -- --autotest --fast --quit-after=90

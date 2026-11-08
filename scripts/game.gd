@@ -126,6 +126,8 @@ var ap_brake := false
 var autotest := false
 var auto_quit := 0.0
 var showroom := ""  # --showroom=rear|front: every player car parked in a row, simulation frozen (test view)
+var _inspect: PackedStringArray = []
+var _test_win := Vector2i.ZERO
 var shots: Array = []
 var burst: Array = []  # --burst=START:COUNT:DIR saves COUNT consecutive frames (test aid)
 var _burst_i := 0
@@ -171,6 +173,12 @@ func _ready() -> void:
 			auto_quit = float(a.split("=")[1])
 		if a.begins_with("--showroom"):
 			showroom = a.substr(11) if a.length() > 11 else "rear"
+		if a.begins_with("--inspect="):  # one car, camera orbiting it: ID:YAW:PITCH:DIST[:FOV] (test aid)
+			showroom = "inspect"
+			_inspect = a.substr(10).split(":")
+		if a.begins_with("--win="):  # desktop window size for screenshots, e.g. 1280x720 (test aid)
+			var wh := a.substr(6).split("x")
+			_test_win = Vector2i(int(wh[0]), int(wh[1]))
 		if a.begins_with("--cam="):  # chase, hood or cockpit (not saved)
 			Save.data.cam.mode = a.substr(6)
 		if a.begins_with("--steer="):  # swipe, wheel or buttons (not saved)
@@ -275,6 +283,16 @@ func _build_showroom() -> void:
 	player.model.visible = false
 	hud.show_screen("")
 	var list: Array = Data.CARS
+	if showroom == "inspect":
+		var car := Data.car_by_id(_inspect[0])
+		var m := CarModel.new()
+		m.build(car.shape, Color(car.color), Color("#b5322a"), car.style)
+		add_child(m)
+		m.position = Vector3(0, 0, Data.SHAPES[car.shape].l / 2.0)  # centred on the origin
+		m.build_interior()
+		if _inspect.size() > 5 and _inspect[5] == "brake":
+			m.set_brake(true)
+		return
 	if showroom.begins_with("t_"):  # traffic models instead of the player cars
 		list = []
 		for sh in ["hatch", "sedan", "suv", "van", "truck", "sedan", "hatch", "suv"]:
@@ -540,6 +558,7 @@ func _set_player_car() -> void:
 		player.model.queue_free()
 	player.model = CarModel.new()
 	player.model.build(c.shape, Color(c.color), Color("#b5322a"), c.style)
+	player.model.force_detail()
 	add_child(player.model)
 	player.model.build_interior()
 	if sound:
@@ -1848,6 +1867,17 @@ func _process(delta: float) -> void:
 			"trees": [Vector3(9.0, 2.2, -10.0), Vector3(24.0, 4.0, -50.0)],
 			"t_rear": [Vector3(-9.5, 2.4, 6.0), Vector3(-1.0, 0.6, -6.0)], "t_front": [Vector3(9.0, 2.2, -24.0), Vector3(-1.0, 0.6, -9.0)]}
 		var v: Array = views.get(showroom, views.rear)
+		if showroom == "inspect":
+			# several yaws (comma separated) step every 3 s from 7.5 s, for a set of shots in one run
+			var yaws := (_inspect[1] if _inspect.size() > 1 else "35").split(",")
+			var yi := clampi(int((Time.get_ticks_msec() / 1000.0 - 7.5) / 3.0), 0, yaws.size() - 1)
+			var yaw := deg_to_rad(float(yaws[yi]))
+			var pitch := deg_to_rad(float(_inspect[2]) if _inspect.size() > 2 else 12.0)
+			var dist := float(_inspect[3]) if _inspect.size() > 3 else 7.5
+			cam.fov = float(_inspect[4]) if _inspect.size() > 4 else 40.0
+			var aim := Vector3(0, 0.6, 0)
+			v = [aim + Vector3(sin(yaw) * cos(pitch), sin(pitch), -cos(yaw) * cos(pitch)) * dist, aim]
+			cam.keep_aspect = Camera3D.KEEP_HEIGHT
 		cam.global_transform = Transform3D(Basis(), v[0])
 		cam.look_at(v[1])
 		hud.set_play_visible(false)
@@ -2050,7 +2080,7 @@ func _apply_orientation() -> void:
 	DisplayServer.screen_set_orientation(DisplayServer.SCREEN_LANDSCAPE if land else DisplayServer.SCREEN_PORTRAIT)
 	get_tree().root.content_scale_size = Vector2i(1280, 720) if land else Vector2i(720, 1280)
 	if not OS.has_feature("mobile") and DisplayServer.get_name() != "headless":
-		DisplayServer.window_set_size(Vector2i(768, 432) if land else Vector2i(432, 768))
+		DisplayServer.window_set_size(_test_win if _test_win != Vector2i.ZERO else (Vector2i(768, 432) if land else Vector2i(432, 768)))
 	if hud:
 		hud.layout_pedals()
 

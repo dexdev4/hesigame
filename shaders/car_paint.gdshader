@@ -1,0 +1,69 @@
+shader_type spatial;
+// Car paint, gloss-black trim, chrome and alloy rims in one shader.
+// Built-in lighting does the sun and soft sky light (with a clear coat for a
+// tight highlight); on top, a sharp reflection of the surroundings
+// (car_env.gdshaderinc) is added with Fresnel, so panels show the horizon
+// line, sky and road the way real car paint does. Metallic flake glints in
+// the sun up close. Vertex colour carries the baked ambient occlusion.
+
+#include "res://shaders/car_env.gdshaderinc"
+
+uniform vec4 base_color : source_color = vec4(0.7, 0.1, 0.1, 1.0);
+uniform float metallic : hint_range(0.0, 1.0) = 0.3;
+uniform float roughness : hint_range(0.0, 1.0) = 0.38;
+uniform float coat : hint_range(0.0, 1.0) = 0.6;
+uniform float coat_roughness : hint_range(0.0, 1.0) = 0.05;
+uniform float reflect_amount : hint_range(0.0, 2.0) = 1.0;
+uniform float reflect_f0 : hint_range(0.0, 1.0) = 0.04;  // reflectance head-on: 0.04 clear coat, ~0.9 chrome
+uniform float metal_tint : hint_range(0.0, 1.0) = 0.0;   // reflections take the base colour (chrome, gold rims)
+uniform float flake : hint_range(0.0, 2.0) = 0.0;        // metallic flake glints
+uniform float flake_scale = 190.0;                       // flakes per metre
+
+varying vec3 obj_p;
+
+float hash13(vec3 p) {
+	p = fract(p * 0.1031);
+	p += dot(p, p.zyx + 31.32);
+	return fract((p.x + p.y) * p.z);
+}
+
+void vertex() {
+	obj_p = VERTEX;
+}
+
+void fragment() {
+	vec3 ao = COLOR.rgb;
+	float occ = (ao.r + ao.g + ao.b) / 3.0;
+	ALBEDO = base_color.rgb * ao;
+	METALLIC = metallic;
+	ROUGHNESS = roughness;
+	CLEARCOAT = coat;
+	CLEARCOAT_ROUGHNESS = coat_roughness;
+	SPECULAR = 0.5;
+
+	vec3 n_w = normalize((INV_VIEW_MATRIX * vec4(NORMAL, 0.0)).xyz);
+	vec3 v_w = normalize((INV_VIEW_MATRIX * vec4(VIEW, 0.0)).xyz);
+	vec3 r_w = reflect(-v_w, n_w);
+	float ndv = dot(NORMAL, VIEW);
+	float f = car_fresnel(reflect_f0, ndv);
+	float aa = clamp(fwidth(r_w.y) * 1.2, 0.002, 0.08) + roughness * roughness * 0.25;
+	vec3 env = car_environment(r_w, aa);
+	vec3 tint = mix(vec3(1.0), base_color.rgb, metal_tint);
+	// less of the surroundings reaches surfaces deep in the arches and low down
+	EMISSION = env * tint * f * reflect_amount * mix(1.0, occ, 0.85);
+
+	if (flake > 0.0) {
+		float dist = length(VERTEX);
+		// only up close: further away the flakes are smaller than a pixel and turn to noise
+		float fade = 1.0 - smoothstep(0.8, 3.2, dist);
+		if (fade > 0.0) {
+			vec3 cell = floor(obj_p * flake_scale);
+			vec3 tilt = vec3(hash13(cell), hash13(cell + 19.19), hash13(cell + 47.7)) * 2.0 - 1.0;
+			vec3 nf = normalize(n_w + tilt * 0.45);
+			vec3 rf = reflect(-v_w, nf);
+			float lit = clamp(dot(n_w, env_sun_dir) * 3.0, 0.0, 1.0);
+			float glint = pow(max(dot(rf, env_sun_dir), 0.0), 90.0) * lit;
+			EMISSION += mix(vec3(1.0), base_color.rgb, 0.35) * glint * flake * fade * 1.2 * occ;
+		}
+	}
+}

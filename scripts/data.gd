@@ -132,6 +132,21 @@ func boss_total(stage: int) -> int:
 	return int(roundi(5000.0 * pow(1.55, stage - 1) / 100.0) * 100 * target_scale)
 
 
+## How good a boss is at scoring, 0 (first boss) to about 1 (last boss).
+## Every lap of the four bosses adds more on top.
+func boss_skill(stage: int) -> float:
+	var i := (stage - 1) % BOSSES.size()
+	var tier := (stage - 1) / BOSSES.size()
+	return minf(0.12 + 0.28 * i + 0.25 * tier, 1.6)
+
+
+const SKILL_NAMES := ["ROOKIE", "SKILLED", "EXPERT", "LEGEND", "UNTOUCHABLE"]
+
+
+func boss_skill_name(stage: int) -> String:
+	return SKILL_NAMES[mini(int(boss_skill(stage) / 0.3), SKILL_NAMES.size() - 1)]
+
+
 func boss_info(stage: int) -> Dictionary:
 	var i := (stage - 1) % BOSSES.size()
 	var tier := (stage - 1) / BOSSES.size()

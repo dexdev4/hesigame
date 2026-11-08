@@ -41,7 +41,8 @@ Open **Settings** from the main menu or the pause menu. The game keeps drawing b
 - **Screen:** **Portrait** or **Landscape**. The game locks to the one you choose, so turning the phone never switches it by accident.
 - **Graphics:** **High** (full shadows, anti-aliasing, speed blur at the screen edges and a colour grade), **Medium** or **Low** for older phones. On the first run on a phone the game checks the frame rate and steps down a level if it's struggling.
 - **Developer tools:** **Infinite lives**, an **FPS counter**, **Unlock all cars**, **Max all upgrades**, **+$100,000 cash** and **Reset progress** (tap twice; keeps your settings).
-- **Pedal layout:** **Edit pedal layout** lets you drag the gas, brake and steering wheel or buttons anywhere on screen. **Swap pedals** puts the gas on the left, and **Reset pedals** returns them to the bottom corners.
+- **Rear-view mirror:** on by default, at the top of the screen. Turn it off, or set **Mirror size**, in Settings. Move it in the layout editor.
+- **Pedal layout:** **Edit pedal layout** lets you drag the gas, brake, steering wheel or buttons and the mirror anywhere on screen (**MIRROR −** / **MIRROR +** resize it there). **Swap pedals** puts the gas on the left, and **Reset pedals** returns them to the bottom corners.
 
 ### How a run works
 
@@ -49,9 +50,11 @@ Open **Settings** from the main menu or the pause menu. The game keeps drawing b
 - **Scoring:** a pass is worth more the faster you go. Passing within 1 m is a **near miss** and within 35 cm is a **razor pass**. A lane change right beside a car is a **close cut**. Each of those adds to a combo multiplier (up to x8) that resets after 3.5 s without one. Above 120 km/h you also earn points every second.
 - **Stages:** fill either the stage's distance bar or its points bar to trigger the next encounter.
 - **Police pursuit:** each trigger has a 30% chance to be a police car instead of the boss. It chases you down and tries to ram you: getting hit costs a life, but surviving 40 seconds untouched earns an extra life. Either way, the next trigger in that stage is always the real boss.
-- **Boss race:** you have 2 km to out-score the boss before the finish gantry. Win and you get prize money, choose 1 of 3 upgrades for the rest of the run, and the boss's car goes on sale in the Garage. Lose and it costs a life, followed by a rematch.
+- **Boss race:** you have 2 km to out-score the boss before the finish gantry. Bosses score exactly as you do (near misses, razor passes, close cuts, combos and speed) and drive to get them: they pick lanes with slow cars to skim past and hug the car they're passing. Each boss is better at it than the last: Copperhead is a rookie, Last Exit a legend, and every lap of the four bosses gets harder again. Win and you get prize money, choose 1 of 3 upgrades for the rest of the run, and the boss's car goes on sale in the Garage. Lose and it costs a life, followed by a rematch.
 - **Last-life crash:** losing your final life makes the car lose traction. It spins out in slow motion, leaving tyre marks and smoke, and at speed it can trip over and roll before it comes to rest.
-- **Replay editor:** the last 20 seconds are always recorded. Open it with **Watch replay** after a run or **Replay** in the pause menu. Play, pause, step frame by frame, scrub the timeline, play at 0.25x to 2x, and switch between Chase, Hood, Cockpit, Orbit (drag to turn), Trackside and Drone cameras. **Set in** and **Set out** trim the clip, which then loops; **Hide UI** shows it full screen.
+- **Replay editor:** the last 20 seconds are always recorded. Open it with **Watch replay** after a run or **Replay** in the pause menu. Play, pause, step frame by frame, scrub the timeline, play at 0.25x to 2x, and switch between Chase, Hood, Cockpit, Free cam, Keyframes, Trackside and Drone cameras. **Set in** and **Set out** trim the clip, which then loops; **Hide UI** shows it full screen.
+  - **Free cam:** drag to swing the camera round the car, pinch to move in and out, and drag with two fingers to pan. The camera follows the car.
+  - **Keyframes:** set up a view, then press **+ KEY** to keyframe it at the playhead. Move the playhead, set up another view and add another key. The **Keyframes** camera glides smoothly between them, and keys show as diamonds on the timeline. **− KEY** deletes the key under the playhead, **< KEY** / **KEY >** jump between keys, and **Clear** removes them all.
 - **Between runs:** cash from score, distance and boss prizes buys permanent upgrades and new cars. Progress is saved to `user://save.json`.
 
 ### Build for Android
@@ -97,6 +100,7 @@ godot --headless --path . --export-debug "Android" build/redline-rush.apk
 | `scripts/engine_audio.gd` | Synthesised engine, wind and sound effects |
 | `scripts/replay.gd`, `scripts/replay_bar.gd` | 20-second replay recording and the editor's timeline |
 | `scripts/skid_marks.gd` | Tyre marks laid on the road during a crash |
+| `scripts/rear_mirror.gd` | On-screen rear-view mirror |
 | `scripts/data.gd` | Autoload `Data`: cars, bosses, upgrades, targets. Balance lives here |
 | `scripts/save.gd` | Autoload `Save`: persistent progress |
 | `shaders/` | Road surface (markings, wear, rumble strips, reflectors, asphalt grain), grass and fields, distant mountains and clouds, and the full-screen finishing pass |
@@ -109,7 +113,8 @@ Arguments placed after `--` on the command line:
 - `--fast`: shrinks stage and boss targets so you reach a boss within seconds.
 - `--cop`: the next encounter is always a police pursuit.
 - `--crash-at=SECONDS`: trigger the last-life crash at that time.
-- `--replay-at=SECONDS[:CAM]`: open the replay editor at that time, optionally with a camera (`chase`, `hood`, `cockpit`, `orbit`, `tv`, `drone`).
+- `--replay-at=SECONDS[:CAM]`: open the replay editor at that time, optionally with a camera (`chase`, `hood`, `cockpit`, `free`, `keys`, `tv`, `drone`).
+- `--start-stage=N` / `--godmode`: start runs at stage N, and never lose lives (not saved). With `--autotest` this prints each boss race's scores.
 - `--quit-after=SECONDS`: exit after that many seconds.
 - `--open=garage` / `--open=garage:up`: open the Garage on start.
 - `--shot=SECONDS:PATH`: save a screenshot.

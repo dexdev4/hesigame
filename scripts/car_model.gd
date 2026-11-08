@@ -1055,6 +1055,34 @@ func set_roll(r: float) -> void:
 		_body.rotation.z = r
 
 
+var _tag_pop: Label3D
+var _tag_tween: Tween
+
+
+## A boss's score message, floating above its name tag.
+func show_tag_pop(text: String) -> void:
+	if _tag_pop == null:
+		_tag_pop = Label3D.new()
+		_tag_pop.font_size = 56
+		_tag_pop.pixel_size = 0.011
+		_tag_pop.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		_tag_pop.no_depth_test = true
+		_tag_pop.modulate = Color("#ffb347")
+		_tag_pop.outline_modulate = Color("#3a0d0d")
+		_tag_pop.outline_size = 14
+		add_child(_tag_pop)
+	_tag_pop.text = text
+	_tag_pop.position = Vector3(0, shape.t + 2.3, -shape.l / 2.0)
+	_tag_pop.modulate.a = 1.0
+	_tag_pop.outline_modulate.a = 1.0
+	if _tag_tween:
+		_tag_tween.kill()
+	_tag_tween = create_tween()
+	_tag_tween.tween_interval(0.9)
+	_tag_tween.tween_property(_tag_pop, "modulate:a", 0.0, 0.5)
+	_tag_tween.parallel().tween_property(_tag_pop, "outline_modulate:a", 0.0, 0.5)
+
+
 ## Crash pose: the whole car (body and wheels) turned by `heading` (radians,
 ## + = nose to the right) and rolled by `roll` (radians, + = right side up),
 ## pivoting on its centre so it never sinks into the road. `air` lifts it.

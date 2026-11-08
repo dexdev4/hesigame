@@ -33,6 +33,9 @@ class Vehicle:
 	var title := ""
 	var is_cop := false
 	var id := 0
+	var b_ahead := false   # boss scoring: this car is ahead of the boss
+	var b_min := 99.0      # closest the boss got while passing it
+	var b_cut := false
 	var model: CarModel
 
 
@@ -78,6 +81,10 @@ class Run:
 	var b_total := 0
 	var b_next := 1.0
 	var b_info := {}
+	var b_skill := 0.0
+	var b_combo := 0
+	var b_combo_t := 0.0
+	var b_speed_acc := 0.0
 	# police pursuit
 	var cop_t := 0.0
 	var cop_due := false     # a pursuit happened this stage, so the next trigger is the boss
@@ -147,6 +154,8 @@ var _post_mat: ShaderMaterial
 var _vig_mat: ShaderMaterial
 var _blur := 0.0
 var _test_crash := -1.0
+var _test_stage := 0
+var godmode := false
 var _test_replay := -1.0
 var _test_replay_cam := ""
 var _probe := {}  # first-run frame-rate check that picks the graphics level
@@ -176,6 +185,10 @@ func _ready() -> void:
 			Save.data.selected = a.substr(6)
 		if a == "--cop":  # every boss trigger is a police pursuit (test aid)
 			force_cop = true
+		if a.begins_with("--start-stage="):  # begin runs at this stage (test aid)
+			_test_stage = int(a.substr(14))
+		if a == "--godmode":  # infinite lives without saving it (test aid)
+			godmode = true
 		if a.begins_with("--crash-at="):  # last-life crash at this many seconds (test aid)
 			_test_crash = float(a.substr(11))
 		if a.begins_with("--replay-at="):  # open the replay editor at this many seconds (test aid)
@@ -553,6 +566,7 @@ func _reset_world() -> void:
 	traffic.clear()
 	_free_retired()
 	replay.clear()
+	replay_keys.clear()
 	_remove_boss()
 	finish_z = -1.0
 	player.z = 0.0
@@ -609,6 +623,7 @@ func _try_spawn(z: float, lane_hint := -1, v_override := 0.0) -> bool:
 	c.v = c.cruise
 	c.lc_t = randf_range(2.0, 9.0)
 	c.ahead = z > player.z + player.l
+	c.b_ahead = boss != null and z > boss.z + boss.l
 	c.model = CarModel.new()
 	if c.truck:
 		c.model.build(shape, Color(Data.TRUCK_BOX_COLORS.pick_random()), Color(Data.TRUCK_CAB_COLORS.pick_random()))
@@ -707,7 +722,10 @@ func _update_traffic(dt: float) -> void:
 				c.x += step
 	for i in range(traffic.size() - 1, -1, -1):
 		var c := traffic[i]
-		if c.z < player.z - 90.0 or c.z > player.z + 1100.0:
+		var tail_z := player.z
+		if boss and not boss.is_cop:
+			tail_z = clampf(boss.z, player.z - 160.0, player.z)  # keep the traffic a boss behind you is racing through
+		if c.z < tail_z - 90.0 or c.z > player.z + 1100.0:
 			_retire(c)
 			traffic.remove_at(i)
 	# keep the road populated
@@ -831,11 +849,28 @@ func _start_boss() -> void:
 	run.b_total = Data.boss_total(run.stage)
 	run.b_next = 1.2
 	run.b_info = bi
+	run.b_skill = Data.boss_skill(run.stage)
+	run.b_combo = 0
+	run.b_combo_t = 0.0
+	run.b_speed_acc = 0.0
+	_boss_think_t = 0.0
+	_boss_off = 0.0
 	finish_z = player.z + run.b_len
 	for c in traffic:
 		if absf(c.z - player.z) < 30.0:
 			c.z += 60.0  # breathing room at the start
-	hud.banner("VS " + String(bi.full).to_upper(), "BEAT %s IN %s" % [Fmt.num(run.b_total), Fmt.km(run.b_len)])
+	var everyone: Array[Vehicle] = traffic.duplicate()
+	everyone.append(player)
+	for c in everyone:
+		c.b_ahead = c.z > boss.z + boss.l
+		c.b_min = 99.0
+		c.b_cut = false
+	hud.banner("VS " + String(bi.full).to_upper(), "OUT-SCORE %s IN %s" % [Data.boss_skill_name(run.stage), Fmt.km(run.b_len)])
+
+
+var _bdbg := {}
+var _boss_think_t := 0.0
+var _boss_off := 0.0  # sideways offset inside the lane, to skim the car being passed
 
 
 func _update_boss(dt: float) -> void:
@@ -845,16 +880,29 @@ func _update_boss(dt: float) -> void:
 		_update_cop(dt)
 		return
 	var b := boss
-	# The boss paces the player, but drives like everyone else: it follows the
-	# car ahead and brakes for it, and only changes lane into a clear gap.
-	var tz := player.z + 16.0 + 13.0 * sin(t * 0.33)
-	var want := player.v + clampf((tz - b.z) * 0.6, -10.0, 12.0)
+	var sk: float = run.b_skill if run else 0.3
+	# Bosses race for points: they drive faster than traffic and weave through
+	# it, but stay within sight (a little ahead of you), where the traffic is.
+	var top: float = Data.car_by_id(String(run.b_info.car) if run else "copperhead").top
+	var cruise := minf(top * lerpf(0.82, 0.98, minf(sk, 1.0)), 30.0 + 26.0 * minf(sk + 0.3, 1.2))
+	var rel := b.z - player.z
+	var want := cruise
+	if rel > 140.0:
+		want = minf(want, player.v + (140.0 - rel) * 0.15)  # too far ahead: ease off
+	elif rel < 15.0:
+		# behind you: traffic there has already been cleared, so push to get back ahead
+		want = minf(maxf(want, player.v + clampf((15.0 - rel) * 0.3, 4.0, 18.0)), top * 1.08)
+	if rel < -150.0:
+		_boss_rejoin(b)
+		rel = b.z - player.z
 	var lg := _boss_leader(b)
 	var lead: Vehicle = lg[0]
 	var gap: float = lg[1]
+	# better bosses brake later and closer
+	var follow := lerpf(8.0, 4.5, minf(sk, 1.0))
 	if lead and gap < 45.0:
-		want = minf(want, lead.v + (gap - 7.0) * 0.45)
-	b.v += clampf(want - b.v, -(10.0 if gap < 8.0 else 7.0) * dt, 6.0 * dt)
+		want = minf(want, lead.v + (gap - follow) * 0.5)
+	b.v += clampf(want - b.v, -(11.0 if gap < 8.0 else 8.0) * dt, lerpf(5.0, 8.0, minf(sk, 1.0)) * dt)
 	if lead and gap < 0.8:
 		b.v = minf(b.v, lead.v)
 	b.v = maxf(0.0, b.v)
@@ -862,48 +910,185 @@ func _update_boss(dt: float) -> void:
 	b.z += b.v * dt
 	if lead and b.z + b.l > lead.z - 0.3 and absf(lead.x - b.x) < (lead.w + b.w) / 2.0:
 		b.z = lead.z - b.l - 0.3  # never inside the car ahead
-	b.vx = 0.0
-	if b.tlane == b.lane:
-		b.sig_t = maxf(0.0, b.sig_t - dt)
-		if lead and gap < 30.0 and lead.v < want + 1.0 and b.sig_t <= 0.0:
-			var opts: Array[int] = []
-			for l in [b.lane - 1, b.lane + 1]:
-				if l >= 0 and l < 4 and not _lane_blocked(b, l, 32.0, 8.0):
-					opts.append(l)
-			if not opts.is_empty():
-				b.tlane = opts.pick_random()
-	else:
-		var tx: float = Data.LANES[b.tlane]
-		# abort the move if the target lane fills up alongside
-		if _lane_blocked(b, b.tlane, 4.0, 2.0) and absf(tx - b.x) > 1.2:
-			b.tlane = b.lane
-			b.sig_t = 1.0
-			tx = Data.LANES[b.lane]
-		var d := tx - b.x
-		var step := 4.0 * dt * signf(d)
-		b.vx = 4.0 * signf(d)
-		if absf(d) <= absf(step):
-			b.x = tx
-			b.lane = b.tlane
-			b.sig_t = 0.8  # settle before the next lane change
-		else:
-			b.x += step
+	_boss_steer(b, dt, sk, lead, gap)
 	if run == null or run.phase != "boss":
 		return
-	var target := run.b_total * minf(1.0, run.b_dist / run.b_len)
-	run.b_next -= dt
-	if run.b_next <= 0.0:
-		run.b_next = randf_range(0.55, 1.5)
-		if run.b_rival < target:
-			run.b_rival = mini(run.b_total, roundi(run.b_rival + maxf(25.0, (target - run.b_rival) * randf_range(0.7, 1.25))))
+	_boss_score(b, dt, sk)
+	if autotest:
+		_bdbg["v"] = snappedf(lerpf(float(_bdbg.get("v", b.v)), b.v, 0.002), 0.1)
+		_bdbg["rel"] = snappedf(lerpf(float(_bdbg.get("rel", rel)), rel, 0.002), 0.1)
+
+
+## A boss stuck far behind (out of sight in the haze) rejoins the race just
+## behind you, in a clear lane, the way racing games keep rivals in contention.
+func _boss_rejoin(b: Vehicle) -> void:
+	for l in [0, 1, 2, 3]:
+		var probe := Vehicle.new()
+		probe.z = player.z - 70.0
+		probe.l = b.l
+		if absf(Data.LANES[l] - player.x) > 1.0 and not _lane_blocked(probe, l, 25.0, 15.0):
+			b.lane = l
+			b.tlane = l
+			b.x = Data.LANES[l]
+			b.z = probe.z
+			b.v = player.v + 6.0
+			_boss_off = 0.0
+			for c in traffic:
+				c.b_ahead = c.z > b.z + b.l
+				c.b_min = 99.0
+			player.b_ahead = player.z > b.z + b.l
+			return
+
+
+## Lane choice and position. Skilled bosses pick the lane with the best
+## scoring chances (slow cars to skim past, gaps to thread) and hug the car
+## they are passing; weak ones decide slowly and give cars a wide berth.
+func _boss_steer(b: Vehicle, dt: float, sk: float, lead: Vehicle, gap: float) -> void:
+	_boss_think_t -= dt
+	if b.tlane == b.lane:
+		b.sig_t = maxf(0.0, b.sig_t - dt)
+		var blocked := lead != null and gap < 26.0 and (lead.v < b.v - 1.0 or lead == player)
+		if (_boss_think_t <= 0.0 or blocked) and b.sig_t <= 0.0:
+			_boss_think_t = lerpf(1.6, 0.35, minf(sk, 1.0)) * randf_range(0.8, 1.2)
+			var best := b.lane
+			var best_v := _boss_lane_value(b, b.lane, sk)
+			for l in [b.lane - 1, b.lane + 1]:
+				if l < 0 or l > 3 or _lane_blocked(b, l, lerpf(30.0, 14.0, minf(sk, 1.0)), lerpf(9.0, 5.0, minf(sk, 1.0))):
+					continue
+				var val := _boss_lane_value(b, l, sk) - lerpf(18.0, 4.0, minf(sk, 1.0))  # weak bosses are reluctant to move
+				if val > best_v:
+					best_v = val
+					best = l
+			if best != b.lane:
+				b.tlane = best
+	# where to sit across the lane: skim the slower car alongside or just ahead
+	var want_off := 0.0
+	var skim := lerpf(1.05, 0.28, minf(sk, 1.0))  # target clearance to the car being passed
+	var near_d := 1e9
+	for c in traffic:
+		var dz := c.z - b.z
+		if dz > -c.l - 1.0 and dz < 14.0 and absf(c.x - b.x) < 4.6 and absf(c.x - b.x) > 1.2:
+			if dz < near_d:
+				near_d = dz
+				var s := signf(c.x - b.x)
+				var lane_x: float = Data.LANES[b.tlane]
+				var gap_x := absf(c.x - lane_x) - (c.w + b.w) / 2.0
+				want_off = s * clampf(gap_x - skim, 0.0, 1.1)
+	# never squeeze towards a car on the other side
+	for c in traffic:
+		if c.z < b.z + b.l + 2.0 and c.z + c.l > b.z - 2.0:
+			var lane_x: float = Data.LANES[b.tlane]
+			var room := absf(c.x - (lane_x + want_off)) - (c.w + b.w) / 2.0
+			if room < 0.25 and signf(c.x - lane_x) == signf(want_off):
+				want_off = signf(want_off) * maxf(0.0, absf(want_off) - (0.25 - room))
+	_boss_off = move_toward(_boss_off, want_off, lerpf(0.8, 2.2, minf(sk, 1.0)) * dt)
+	var tx: float = Data.LANES[b.tlane] + _boss_off
+	if b.tlane != b.lane:
+		# abort the move if the target lane fills up alongside
+		if _lane_blocked(b, b.tlane, 4.0, 2.0) and absf(Data.LANES[b.tlane] - b.x) > 1.2:
+			b.tlane = b.lane
+			b.sig_t = 1.0
+			tx = Data.LANES[b.lane] + _boss_off
+	var d := tx - b.x
+	var lat := lerpf(3.6, 5.2, minf(sk, 1.0)) if b.tlane != b.lane else 1.6
+	var step := clampf(d, -lat * dt, lat * dt)
+	b.vx = step / maxf(dt, 0.0001)
+	b.x += step
+	if b.tlane != b.lane and absf(Data.LANES[b.tlane] - b.x) < 0.6:
+		b.lane = b.tlane
+		b.sig_t = lerpf(1.0, 0.25, minf(sk, 1.0))  # settle before the next lane change
+
+
+## How promising a lane is: mostly how much open road it has (so the boss
+## keeps moving), plus scoring chances (slow cars in the next lane to skim).
+func _boss_lane_value(b: Vehicle, lane: int, sk: float) -> float:
+	var lx: float = Data.LANES[lane]
+	var free := 120.0
+	var bonus := 0.0
+	var others: Array[Vehicle] = traffic.duplicate()
+	others.append(player)
+	for c in others:
+		var dz := c.z - (b.z + b.l)
+		if dz < -c.l - 1.0 or dz > 120.0:
+			continue
+		var dx := absf(c.x - lx)
+		if dx < 1.9 or (c.tlane >= 0 and c.tlane == lane and c != player):
+			if c.v < b.v + 2.0:
+				# a car in this lane: open road ends there (sooner if it is much slower)
+				free = minf(free, maxf(dz, -5.0) - clampf((b.v - c.v) * 1.5, 0.0, 30.0))
+		elif dx < 5.4 and c != player and dz > 0.0:
+			# a slower car in the next lane: a near miss waiting to happen
+			bonus += 10.0 * clampf((b.v - c.v) / 8.0, 0.0, 1.5) * (1.0 - dz / 140.0) * (1.5 if c.truck else 1.0)
+		elif dx < 5.4 and c == player and dz > 0.0:
+			bonus += 8.0
+	return free + bonus * lerpf(0.4, 1.6, minf(sk, 1.0)) + randf_range(-10.0, 10.0) * (1.2 - minf(sk, 1.0))
+
+
+## The boss earns points exactly as you do: passes worth more the faster and
+## closer they are, close cuts, a combo multiplier and a high-speed bonus.
+func _boss_score(b: Vehicle, dt: float, sk: float) -> void:
+	if run.b_combo_t > 0.0:
+		run.b_combo_t -= dt
+		if run.b_combo_t <= 0.0:
+			run.b_combo = 0
+	var mult := _boss_mult(sk)
+	var flair := lerpf(0.85, 1.25, minf(sk, 1.0)) + maxf(0.0, sk - 1.0) * 0.4  # style points
+	if b.v > 33.0:
+		run.b_speed_acc += (b.v - 33.0) * 1.3 * dt * mult * flair
+		if run.b_speed_acc >= 1.0:
+			var n := int(run.b_speed_acc)
+			run.b_speed_acc -= n
+			run.b_rival += n
+	var sf := pow(maxf(b.v, 12.0) / 25.0, 1.5)
+	var others: Array[Vehicle] = traffic.duplicate()
+	others.append(player)
+	for c in others:
+		if c.z < b.z + b.l + 1.5 and c.z + c.l > b.z - 1.5:
+			var clr := absf(b.x - c.x) - (b.w + c.w) / 2.0
+			c.b_min = minf(c.b_min, clr)
+			if not c.b_cut and absf(b.vx) > 1.7 and clr < 1.1 and clr > -0.05 and b.v > 18.0:
+				c.b_cut = true
+				_boss_award(75.0 * sf, 1, "CLOSE CUT", flair)
+		if c.b_ahead and b.z > c.z + c.l:
+			c.b_ahead = false
+			var m := c.b_min
+			if m < 0.35:
+				_boss_award(245.0 * sf, 2, "RAZOR PASS", flair)
+			elif m < 1.0:
+				_boss_award(25.0 * sf + 95.0 * sf * (2.0 - m), 1, "NEAR MISS", flair)
+			else:
+				_boss_award(25.0 * sf, 0, "", flair)
+		elif not c.b_ahead and c.z > b.z + b.l:
+			c.b_ahead = true
+			c.b_min = 99.0
+			c.b_cut = false
+
+
+## A boss's combo multiplier. Better bosses keep longer combos going.
+func _boss_mult(sk: float) -> float:
+	return minf(lerpf(2.2, 5.0, minf(sk, 1.0)) + maxf(0.0, sk - 1.0) * 3.0, 1.0 + run.b_combo * 0.3)
+
+
+func _boss_award(base: float, combo: int, label: String, flair: float) -> void:
+	if combo > 0:
+		run.b_combo += combo
+		run.b_combo_t = 3.5
+	var pts := roundi(base * _boss_mult(run.b_skill) * flair)
+	if autotest:
+		_bdbg[label] = int(_bdbg.get(label, 0)) + 1
+	run.b_rival += pts
+	if label != "" and boss and boss.model:
+		boss.model.show_tag_pop("%s +%s" % [label, Fmt.num(pts)])
 
 
 func _end_battle() -> void:
 	var bi := run.b_info
-	run.b_rival = run.b_total
 	_remove_boss()
 	finish_z = -1.0
-	if run.b_score > run.b_total:
+	if autotest:
+		print("[autotest] boss race stage %d skill %.2f: you %d, %s %d %s" % [run.stage, run.b_skill, run.b_score, bi.full, run.b_rival, _bdbg])
+		_bdbg = {}
+	if run.b_score > run.b_rival:
 		run.bosses += 1
 		run.cash_bonus += 200 * run.stage
 		var unlocked_new := false
@@ -1014,7 +1199,7 @@ func _autopilot(dt: float) -> void:
 func _hit(reason: String, other: Vehicle = null) -> void:
 	if not _live() or run.invuln > 0.0:
 		return
-	if not Save.setting("dev_lives"):
+	if not (Save.setting("dev_lives") or godmode):
 		run.lives -= 1
 	var v0 := player.v
 	var side := 0.0  # which side the hit came from (+ = right)
@@ -1264,6 +1449,8 @@ func _start_run() -> void:
 	_set_player_car()
 	run = Run.new()
 	run.lives = 3 + Save.perm_level("lives")
+	if _test_stage > 1:
+		run.stage = _test_stage
 	_compute_stats()
 	_reset_world()
 	touches.clear()
@@ -1476,7 +1663,7 @@ func _update_cop(dt: float) -> void:
 func _show_boss_intro() -> void:
 	state = S.BOSS_INTRO
 	var bi := Data.boss_info(run.stage)
-	hud.show_boss_intro("Stage %d boss" % run.stage, bi.full, bi.line, Fmt.num(Data.boss_total(run.stage)), Data.car_by_id(bi.car).name)
+	hud.show_boss_intro("Stage %d boss" % run.stage, bi.full, bi.line, Data.boss_skill_name(run.stage), Data.car_by_id(bi.car).name)
 	if autotest:
 		print("[autotest] boss intro stage %d: %s" % [run.stage, bi.full])
 		_on_act("race", "")
@@ -1512,7 +1699,7 @@ func _update_run(dt: float) -> void:
 			run.rematch_t -= dt
 			if run.rematch_t <= 0.0:
 				_start_boss()
-				hud.banner("REMATCH", "BEAT %s IN %s" % [Fmt.num(run.b_total), Fmt.km(run.b_len)])
+				hud.banner("REMATCH", "OUT-SCORE HIM IN %s" % Fmt.km(run.b_len))
 			return
 		var r := Data.stage_req(run.stage)
 		if run.stage_dist >= r.d or run.stage_score >= r.p:
@@ -1691,6 +1878,11 @@ func _sync_visuals(delta: float) -> void:
 	player.model.set_gear(sound.gear, delta)
 	var sp := _speed_text()
 	player.model.set_display(sound.gear, sp[0], sp[1], "%.1f km" % ((run.dist if run else player.z) / 1000.0))
+	# rear-view mirror camera: above the tail of the car, looking back
+	var sh: Dictionary = player.model.shape
+	var eye := Transform3D(Basis.looking_at(Vector3(0.0, -0.045, 1.0)), Vector3(0.0, float(sh.t) * 0.92, 0.45))
+	hud.mirror.half_rate = Save.setting("gfx") != "high"
+	hud.mirror.update_view(player.model.global_transform * eye)
 	dust.position = Vector3(player.x, 0.2, 0.0)
 	dust.emitting = on_shoulder and player.v > 8.0
 	_update_camera(delta, cam_mode)
@@ -1823,7 +2015,7 @@ func _update_hud() -> void:
 		"fast": player.v > 33.0,
 		"boss": run.phase == "boss",
 		"cop": run.phase == "cop",
-		"inf": Save.setting("dev_lives"),
+		"inf": Save.setting("dev_lives") or godmode,
 	}
 	if run.phase == "cop":
 		var gp: float = maxf(0.0, player.z - (boss.z + boss.l)) if boss else 99.0
@@ -1831,7 +2023,7 @@ func _update_hud() -> void:
 			"l1": "ESCAPE", "l2": "GAP", "f1": run.cop_t / COP_TIME, "f2": clampf(gp / 60.0, 0.0, 1.0),
 			"v1": "%d/%d s" % [int(run.cop_t), int(COP_TIME)], "v2": "%d m" % int(gp), "done1": false, "done2": gp > 30.0})
 	elif run.phase == "boss":
-		var mx := maxf(float(maxi(run.b_total, maxi(run.b_score, run.b_rival))) * 1.05, 1.0)
+		var mx := maxf(float(maxi(run.b_score, run.b_rival)) * 1.15, 1000.0)
 		d.merge({"title": "VS " + String(run.b_info.full).to_upper(), "sub": "FINISH " + Fmt.km(maxf(0.0, run.b_len - run.b_dist), 2),
 			"l1": "YOU", "l2": "RIVAL", "f1": run.b_score / mx, "f2": run.b_rival / mx,
 			"v1": Fmt.num(run.b_score), "v2": Fmt.num(run.b_rival), "done1": run.b_score > run.b_rival, "done2": false})
@@ -2155,7 +2347,7 @@ func _on_act(action: String, arg: String) -> void:
 		"set":
 			var kv := arg.split("=")
 			Save.data.settings[kv[0]] = float(kv[1])
-			if kv[0] == "pedal_scale":
+			if kv[0] == "pedal_scale" or kv[0] == "mirror_scale":
 				hud.layout_pedals()
 			hud.render_settings()
 		"save":
@@ -2176,6 +2368,9 @@ func _on_act(action: String, arg: String) -> void:
 					_apply_orientation()
 				"units":
 					Save.data.settings.units = "kmh" if Save.setting("units") == "mph" else "mph"
+				"mirror":
+					Save.data.settings.mirror = not Save.setting("mirror")
+					hud.layout_pedals()
 				"gfx":
 					var levels := ["high", "medium", "low"]
 					Save.data.settings.gfx = levels[(levels.find(Save.setting("gfx")) + 1) % levels.size()]
@@ -2207,9 +2402,15 @@ func _on_act(action: String, arg: String) -> void:
 		"pedal_swap":
 			hud.swap_pedals()
 			Save.persist()
+		"mirror_size":
+			var ms := float(Save.setting("mirror_scale")) + (0.1 if arg == "+" else -0.1)
+			Save.data.settings.mirror_scale = clampf(ms, 0.6, 1.8)
+			hud.layout_pedals()
+			Save.persist()
 		"pedal_reset":
 			Save.data.settings.gas_pos = []
 			Save.data.settings.brake_pos = []
+			Save.data.settings.mirror_pos = []
 			hud.layout_pedals()
 			Save.persist()
 		"sound":
@@ -2262,8 +2463,13 @@ func _on_act(action: String, arg: String) -> void:
 
 # ---------------------------------------------------------------- replay
 
-const REPLAY_CAMS := ["chase", "hood", "cockpit", "orbit", "tv", "drone"]
-const REPLAY_CAM_NAMES := {"chase": "CHASE", "hood": "HOOD", "cockpit": "COCKPIT", "orbit": "ORBIT", "tv": "TRACKSIDE", "drone": "DRONE"}
+const REPLAY_CAMS := ["chase", "hood", "cockpit", "free", "keys", "tv", "drone"]
+const REPLAY_CAM_NAMES := {"chase": "CHASE", "hood": "HOOD", "cockpit": "COCKPIT", "free": "FREE CAM", "keys": "KEYFRAMES", "tv": "TRACKSIDE", "drone": "DRONE"}
+const FREE_CAM := {"yaw": 0.7, "pitch": 0.28, "dist": 9.0, "px": 0.0, "py": 0.0, "pz": 0.0, "fov": 55.0}
+
+## Camera keyframes for the replay, by recording time. Kept while the run's
+## recording lasts, so closing and reopening the editor keeps your shot.
+var replay_keys: Array[Dictionary] = []
 const REPLAY_SPEEDS := [1.0, 0.5, 0.25, 2.0]
 
 var rp := {}  # replay editor state while state == S.REPLAY
@@ -2321,8 +2527,8 @@ func _open_replay() -> void:
 		hud.pop("NOTHING RECORDED YET", "small")
 		return
 	rp = {"from": state, "t": replay.start_t(), "play": true, "speed": 1.0, "cam": "chase",
-		"a": replay.start_t(), "b": replay.end_t(), "orbit": 0.0, "tv_z": -1.0, "tv_x": 0.0, "hide": false,
-		"live": [player.x, player.z, player.v, player.vx], "drag": -1}
+		"a": replay.start_t(), "b": replay.end_t(), "tv_z": -1.0, "tv_x": 0.0, "hide": false,
+		"live": [player.x, player.z, player.v, player.vx], "touch": {}, "fc": FREE_CAM.duplicate()}
 	if Save.data.cam.mode in REPLAY_CAMS:
 		rp.cam = Save.data.cam.mode
 	state = S.REPLAY
@@ -2374,8 +2580,6 @@ func _replay_frame(delta: float) -> void:
 		if rp.t >= rp.b:
 			rp.t = rp.a  # loop the clip
 			prev = rp.t
-	if rp.cam == "orbit" and rp.drag < 0:
-		rp.orbit += delta * 0.25
 	_replay_show(rp.t, rp.t - prev)
 	_replay_cam(delta)
 	var s := replay.start_t()
@@ -2383,7 +2587,8 @@ func _replay_frame(delta: float) -> void:
 	var span := maxf(e - s, 0.001)
 	hud.update_replay({"pos": (rp.t - s) / span, "a": (rp.a - s) / span, "b": (rp.b - s) / span,
 		"time": "%.1f s" % (rp.t - rp.a), "clip": "%.1f s" % (rp.b - rp.a), "play": rp.play,
-		"speed": {1.0: "1x", 0.5: "0.5x", 0.25: "0.25x", 2.0: "2x"}.get(rp.speed, "1x"), "cam": REPLAY_CAM_NAMES[rp.cam], "len": span})
+		"speed": {1.0: "1x", 0.5: "0.5x", 0.25: "0.25x", 2.0: "2x"}.get(rp.speed, "1x"),
+		"keys": replay_keys.map(func(k: Dictionary) -> float: return (float(k.t) - s) / span), "nkeys": replay_keys.size(), "cam": REPLAY_CAM_NAMES[rp.cam], "len": span})
 
 
 ## Put the world, every car and the player where they were at time t.
@@ -2441,8 +2646,13 @@ func _replay_show(t: float, dt: float) -> void:
 
 func _replay_cam(delta: float) -> void:
 	match rp.cam:
-		"orbit":
-			_orbit_cam(rp.orbit, 8.0, 2.4)
+		"free":
+			_free_cam(rp.fc)
+		"keys":
+			if replay_keys.is_empty():
+				_free_cam(rp.fc)
+			else:
+				_free_cam(_keyed_cam(rp.t))
 		"tv":
 			# a camera operator at the roadside who pans and zooms as the car goes by
 			var pz := player.z
@@ -2478,8 +2688,49 @@ func _replay_act(arg: String) -> void:
 		"speed":
 			rp.speed = REPLAY_SPEEDS[(REPLAY_SPEEDS.find(rp.speed) + 1) % REPLAY_SPEEDS.size()]
 		"cam":
+			var was: String = rp.cam
 			rp.cam = REPLAY_CAMS[(REPLAY_CAMS.find(rp.cam) + 1) % REPLAY_CAMS.size()]
 			rp.tv_z = -1.0
+			if rp.cam == "free":
+				_grab_free_cam(was)
+		"key_add":
+			if rp.cam != "free" and rp.cam != "keys":
+				_grab_free_cam(rp.cam)
+			var cur: Dictionary = rp.fc if rp.cam != "keys" or replay_keys.is_empty() else _keyed_cam(rp.t)
+			var key := cur.duplicate()
+			key["t"] = rp.t
+			for i in range(replay_keys.size() - 1, -1, -1):
+				if absf(float(replay_keys[i].t) - rp.t) < 0.1:
+					replay_keys.remove_at(i)  # replace a key at the same moment
+			replay_keys.append(key)
+			replay_keys.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a.t < b.t)
+			rp.cam = "keys"
+			hud.pop("KEYFRAME %d SET" % replay_keys.size(), "small")
+		"key_del":
+			var best := -1
+			for i in replay_keys.size():
+				if absf(float(replay_keys[i].t) - rp.t) < 0.4 and (best < 0 or absf(float(replay_keys[i].t) - rp.t) < absf(float(replay_keys[best].t) - rp.t)):
+					best = i
+			if best >= 0:
+				replay_keys.remove_at(best)
+				hud.pop("KEYFRAME DELETED", "small")
+			else:
+				hud.pop("MOVE THE PLAYHEAD ONTO A KEYFRAME", "small")
+		"key_prev", "key_next":
+			rp.play = false
+			var nxt := arg == "key_next"
+			var pick := -1.0
+			for k in replay_keys:
+				var kt: float = k.t
+				if (nxt and kt > rp.t + 0.02 and (pick < 0.0 or kt < pick)) or (not nxt and kt < rp.t - 0.02 and (pick < 0.0 or kt > pick)):
+					pick = kt
+			if pick >= 0.0:
+				rp.t = pick
+		"key_clear":
+			replay_keys.clear()
+			if rp.cam == "keys":
+				rp.cam = "free"
+			hud.pop("KEYFRAMES CLEARED", "small")
 		"in":
 			rp.a = minf(rp.t, rp.b - 0.5)
 		"out":
@@ -2503,19 +2754,42 @@ func _replay_input(event: InputEvent) -> void:
 			hud.replay_ui_visible(true)
 			get_viewport().set_input_as_handled()
 		return
+	var touch: Dictionary = rp.touch
 	if event is InputEventScreenTouch:
 		var e := event as InputEventScreenTouch
 		if e.pressed and not hud.replay_ui_at(e.position):
-			rp.drag = e.index
-		elif not e.pressed and e.index == rp.drag:
-			rp.drag = -1
+			touch[e.index] = e.position
+		elif not e.pressed:
+			touch.erase(e.index)
 	elif event is InputEventScreenDrag:
 		var e := event as InputEventScreenDrag
-		if e.index == rp.drag:
-			if rp.cam != "orbit":
-				rp.cam = "orbit"
-				rp.orbit = 0.0
-			rp.orbit -= e.relative.x * 0.01
+		if not touch.has(e.index):
+			return
+		_take_free_cam()
+		var fc: Dictionary = rp.fc
+		if touch.size() == 1:
+			# one finger: swing round the car
+			fc.yaw = float(fc.yaw) - e.relative.x * 0.008
+			fc.pitch = clampf(float(fc.pitch) + e.relative.y * 0.006, -0.08, 1.5)
+		else:
+			# two fingers: pinch to move in and out, drag together to pan
+			var ids := touch.keys()
+			var other: Vector2 = touch[ids[0] if ids[0] != e.index else ids[1]]
+			var before: float = (touch[e.index] as Vector2).distance_to(other)
+			var after := e.position.distance_to(other)
+			if before > 10.0 and after > 10.0:
+				fc.dist = clampf(float(fc.dist) * before / after, 2.5, 60.0)
+			var yaw: float = fc.yaw
+			var k: float = float(fc.dist) * 0.0006
+			fc.px = float(fc.px) - cos(yaw) * e.relative.x * k
+			fc.pz = float(fc.pz) + sin(yaw) * e.relative.x * k
+			fc.py = clampf(float(fc.py) + e.relative.y * k, -0.6, 6.0)
+		touch[e.index] = e.position
+	elif event is InputEventMouseButton and (event as InputEventMouseButton).pressed:
+		var mb := event as InputEventMouseButton
+		if mb.button_index == MOUSE_BUTTON_WHEEL_UP or mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			_take_free_cam()
+			rp.fc.dist = clampf(float(rp.fc.dist) * (0.9 if mb.button_index == MOUSE_BUTTON_WHEEL_UP else 1.1), 2.5, 60.0)
 	elif event is InputEventKey and (event as InputEventKey).pressed:
 		match (event as InputEventKey).keycode:
 			KEY_SPACE:
@@ -2524,5 +2798,75 @@ func _replay_input(event: InputEvent) -> void:
 				_replay_act("back")
 			KEY_RIGHT:
 				_replay_act("fwd")
+			KEY_K:
+				_replay_act("key_add")
 			KEY_ESCAPE:
 				_close_replay()
+
+
+## Moving the view by hand: switch to the free camera, starting from
+## wherever the camera is now so nothing jumps.
+func _take_free_cam() -> void:
+	if rp.cam == "free":
+		return
+	if rp.cam == "keys" and not replay_keys.is_empty():
+		rp.fc = _keyed_cam(rp.t).duplicate()
+	else:
+		_grab_free_cam(rp.cam)
+	rp.cam = "free"
+
+
+## Free-camera settings that reproduce the current view of the car.
+func _grab_free_cam(_from_mode: String) -> void:
+	var centre := Vector3(player.x, 0.8, -player.l * 0.5)
+	var d := cam.global_position - centre
+	var dist := clampf(d.length(), 2.5, 60.0)
+	rp.fc = {"yaw": atan2(d.x, d.z), "pitch": clampf(asin(clampf(d.y / maxf(d.length(), 0.01), -1.0, 1.0)), -0.08, 1.5),
+		"dist": dist, "px": 0.0, "py": 0.0, "pz": 0.0, "fov": clampf(cam.fov, 20.0, 90.0)}
+
+
+## A camera on a sphere round the car (plus a pan offset), so a shot keeps
+## following the car however far it travels.
+func _free_cam(fc: Dictionary) -> void:
+	var centre := Vector3(player.x + float(fc.px), 0.8 + float(fc.py), -player.l * 0.5 + float(fc.pz))
+	var yaw: float = fc.yaw
+	var pitch: float = fc.pitch
+	var dist: float = fc.dist
+	var from := centre + Vector3(sin(yaw) * cos(pitch), sin(pitch), cos(yaw) * cos(pitch)) * dist
+	from.y = maxf(from.y, 0.25)
+	cam.near = 0.1
+	cam.fov = fc.fov
+	var land := get_viewport().get_visible_rect().size.x > get_viewport().get_visible_rect().size.y
+	cam.keep_aspect = Camera3D.KEEP_HEIGHT if land else Camera3D.KEEP_WIDTH
+	cam.global_transform = Transform3D(Basis.looking_at(centre - from), from)
+
+
+## The camera between keyframes: a smooth Catmull-Rom curve through them.
+func _keyed_cam(t: float) -> Dictionary:
+	var n := replay_keys.size()
+	if n == 1 or t <= float(replay_keys[0].t):
+		return replay_keys[0]
+	if t >= float(replay_keys[n - 1].t):
+		return replay_keys[n - 1]
+	var i := 0
+	while i < n - 2 and float(replay_keys[i + 1].t) <= t:
+		i += 1
+	var k1: Dictionary = replay_keys[i]
+	var k2: Dictionary = replay_keys[i + 1]
+	var k0: Dictionary = replay_keys[maxi(i - 1, 0)]
+	var k3: Dictionary = replay_keys[mini(i + 2, n - 1)]
+	var u := (t - float(k1.t)) / maxf(float(k2.t) - float(k1.t), 0.001)
+	var out := {}
+	for key in ["yaw", "pitch", "dist", "px", "py", "pz", "fov"]:
+		var p1: float = k1[key]
+		var p0: float = k0[key]
+		var p2: float = k2[key]
+		var p3: float = k3[key]
+		if key == "yaw":  # turn the short way round
+			p0 = p1 + wrapf(p0 - p1, -PI, PI)
+			p2 = p1 + wrapf(p2 - p1, -PI, PI)
+			p3 = p2 + wrapf(p3 - p2, -PI, PI)
+		out[key] = 0.5 * ((2.0 * p1) + (-p0 + p2) * u + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * u * u + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * u * u * u)
+	out.pitch = clampf(out.pitch, -0.08, 1.5)
+	out.dist = clampf(out.dist, 2.5, 60.0)
+	return out

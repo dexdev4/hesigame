@@ -30,6 +30,9 @@ const SETTING_DEFAULTS := {
 	"steer_mode": "swipe",        # swipe, wheel, buttons or tilt
 	"tilt_invert": false,
 	"orientation": "portrait",    # portrait or landscape; fixed, never follows the phone's sensor
+	"mirror": true,               # on-screen rear-view mirror
+	"mirror_scale": 1.0,
+	"mirror_pos": [],
 	"gfx": "",                    # high, medium or low; empty until the first launch picks one
 	# developer tools
 	"dev_lives": false,           # infinite lives

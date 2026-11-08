@@ -68,6 +68,7 @@ var _drag := {}
 var _over := {}
 var garage_tab := "cars"
 var fps_label: Label
+var mirror: RearMirror
 
 
 func _ready() -> void:
@@ -500,6 +501,9 @@ func _build_play() -> void:
 	play_layer.add_child(wheel)
 	arrows = ArrowPad.new()
 	play_layer.add_child(arrows)
+	mirror = RearMirror.new()
+	play_layer.add_child(mirror)
+	play_layer.move_child(mirror, 0)  # under the HUD band and pops
 	play_layer.visible = false
 
 
@@ -522,7 +526,7 @@ func _draw_lives() -> void:
 			c.draw_polyline(body, col, 2.0)
 		c.draw_circle(Vector2(x + 9, y + 21), 4.5, col if on else Color(LINE, 0.25))
 		c.draw_circle(Vector2(x + 31, y + 21), 4.5, col if on else Color(LINE, 0.25))
-	if Save.setting("dev_lives"):  # developer tools: infinite lives
+	if c.has_meta("inf"):  # developer tools: infinite lives
 		c.draw_string(display_font, Vector2(8.0 + _max_lives * 46.0, 34), "INF", HORIZONTAL_ALIGNMENT_LEFT, -1, 30, AMBER)
 
 
@@ -896,14 +900,14 @@ func _build_boss() -> void:
 	v.add_child(_boss.line)
 	var stats := _row(12)
 	v.add_child(stats)
-	var a := _stat("0", "Points to beat", AMBER)
+	var a := _stat("—", "Rival skill", AMBER)
 	var b := _stat("2.0 km", "Race length")
 	var c := _stat("—", "Rival car")
 	for s in [a, b, c]:
 		stats.add_child(s[0])
 	_boss["target"] = a[1]
 	_boss["car"] = c[1]
-	v.add_child(_wrap("Score more than the rival before the finish gantry. Lose and it costs a life, then you get a rematch.", 21, MUTED))
+	v.add_child(_wrap("The rival scores the same way you do: near misses, razor passes, close cuts and combos. Out-score them before the finish gantry. Lose and it costs a life, then you get a rematch.", 21, MUTED))
 	v.add_child(_button("RACE  →", "amber", "race"))
 
 
@@ -1129,7 +1133,8 @@ func _build_settings() -> void:
 	v.add_child(_eyebrow("Gameplay"))
 	_slider_row(v, "steer_sens", "set", "save")
 	_slider_row(v, "pedal_scale", "set", "save")
-	var toggles := [["steer_mode", "Steering"], ["tilt_invert", "Tilt direction"], ["orientation", "Screen"], ["assist", "Lane assist"], ["haptics", "Vibration"],
+	_slider_row(v, "mirror_scale", "set", "save")
+	var toggles := [["mirror", "Rear-view mirror"], ["steer_mode", "Steering"], ["tilt_invert", "Tilt direction"], ["orientation", "Screen"], ["assist", "Lane assist"], ["haptics", "Vibration"],
 		["shake", "Camera shake"], ["sound", "Engine sound"], ["units", "Speed units"], ["gfx", "Graphics"]]
 	var grid := GridContainer.new()
 	grid.columns = 2
@@ -1186,7 +1191,7 @@ func dev_note(text: String) -> void:
 func render_settings() -> void:
 	render_cam()
 	_cam_lock = true
-	var sliders := {"steer_sens": ["Steering sensitivity", 0.4, 2.0], "pedal_scale": ["Pedal size", 0.7, 1.4]}
+	var sliders := {"steer_sens": ["Steering sensitivity", 0.4, 2.0], "pedal_scale": ["Pedal size", 0.7, 1.4], "mirror_scale": ["Mirror size", 0.6, 1.8]}
 	for key in sliders:
 		var sl: HSlider = _set["s_" + key]
 		sl.min_value = sliders[key][1]
@@ -1205,6 +1210,7 @@ func render_settings() -> void:
 		"tilt_invert": "REVERSED" if Save.setting("tilt_invert") else "NORMAL",
 		"orientation": "LANDSCAPE" if Save.setting("orientation") == "landscape" else "PORTRAIT",
 		"gfx": String(Save.setting("gfx")).to_upper(),
+		"mirror": "ON" if Save.setting("mirror") else "OFF",
 		"dev_lives": "ON" if Save.setting("dev_lives") else "OFF", "dev_fps": "ON" if Save.setting("dev_fps") else "OFF",
 	}
 	for key in states:
@@ -1236,6 +1242,11 @@ func layout_pedals() -> void:
 	_place_pedal(wheel, Vector2(wd, wd), Save.setting("wheel_pos"), Vector2(26 + wd / 2.0, base_y - wd / 2.0), vp)
 	var asz := Vector2(280, 130) * k
 	_place_pedal(arrows, asz, Save.setting("arrows_pos"), Vector2(26 + asz.x / 2.0, base_y - asz.y / 2.0), vp)
+	# rear-view mirror: top centre, just under the HUD band
+	var msz := RearMirror.BASE * float(Save.setting("mirror_scale"))
+	var band := float(_top_margin.get_theme_constant("margin_top")) + (78.0 if vp.x > vp.y else 104.0)
+	_place_pedal(mirror, msz, Save.setting("mirror_pos"), Vector2(vp.x / 2.0, band + msz.y / 2.0), vp)
+	mirror.visible = Save.setting("mirror")
 	# keep the speedometer in the gap between the steering control and the pedals
 	var spd: Control = _kmh.get_parent()
 	var lft := 0.0
@@ -1267,7 +1278,7 @@ func _place_pedal(p: Control, sz: Vector2, pos: Variant, fallback: Vector2, vp: 
 func _store_pedal(p: Control) -> void:
 	var vp := get_viewport().get_visible_rect().size
 	var c := p.position + p.size / 2.0
-	var key: String = {gas: "gas_pos", brake: "brake_pos", wheel: "wheel_pos", arrows: "arrows_pos"}[p]
+	var key: String = {gas: "gas_pos", brake: "brake_pos", wheel: "wheel_pos", arrows: "arrows_pos", mirror: "mirror_pos"}[p]
 	Save.data.settings[key] = [c.x / vp.x, c.y / vp.y]
 
 
@@ -1283,12 +1294,18 @@ func swap_pedals() -> void:
 func _build_pedal_editor() -> void:
 	var v := _screen("pedals", SIGN, 620)
 	v.add_child(_eyebrow("Pedal layout"))
-	v.add_child(_wrap("Drag the pedals and the steering control to where your thumbs rest. Change their size with Pedal size in Settings.", 22))
+	v.add_child(_wrap("Drag the pedals, the steering control and the mirror where you want them. Change pedal size in Settings.", 22))
 	var r := _row(12)
 	v.add_child(r)
 	r.add_child(_button("DONE", "amber", "pedal_done"))
 	r.add_child(_button("SWAP", "ghost", "pedal_swap"))
 	r.add_child(_button("RESET", "ghost", "pedal_reset"))
+	var r2 := _row(12)
+	v.add_child(r2)
+	for m in [["MIRROR −", "-"], ["MIRROR +", "+"]]:
+		var b := _button(m[0], "ghost", "mirror_size", m[1])
+		b.add_theme_font_size_override("font_size", 26)
+		r2.add_child(b)
 	var scr: Control = screens.pedals
 	(scr.get_child(0) as ColorRect).color = Color(0, 0, 0, 0.15)
 	var column := v.get_parent().get_parent() as VBoxContainer
@@ -1302,7 +1319,7 @@ func begin_pedal_edit() -> void:
 	play_layer.visible = true
 	for c in play_layer.get_children():
 		c.visible = c == gas or c == brake
-	layout_pedals()  # shows the steering control for the current mode
+	layout_pedals()  # shows the steering control and mirror as set
 	set_pedals(false, false)
 	show_screen("pedals")
 
@@ -1406,6 +1423,15 @@ func _build_replay() -> void:
 	r2.add_child(_rp_button("SET OUT", "out"))
 	r2.add_child(_rp_button("RESET CLIP", "clear"))
 	r2.add_child(_rp_button("HIDE UI", "hide"))
+	var r3 := _row(8)
+	pv.add_child(r3)
+	var kadd := _rp_button("+ KEY", "key_add", "amber")
+	kadd.size_flags_stretch_ratio = 1.3
+	r3.add_child(kadd)
+	r3.add_child(_rp_button("− KEY", "key_del"))
+	r3.add_child(_rp_button("< KEY", "key_prev"))
+	r3.add_child(_rp_button("KEY >", "key_next"))
+	r3.add_child(_rp_button("CLEAR", "key_clear"))
 	_rp["help"] = _label("Drag the view to orbit the car  ·  clip %s", 18, MUTED, mono_font)
 	_rp.help.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_rp.help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -1433,11 +1459,15 @@ func replay_ui_at(pos: Vector2) -> bool:
 
 func update_replay(d: Dictionary) -> void:
 	(_rp.bar as ReplayBar).set_state(d.pos, d.a, d.b, d.len)
+	(_rp.bar as ReplayBar).set_keys(d.keys)
 	_rp.time.text = "%s  /  %s" % [d.time, d.clip]
 	_rp.play.text = "PAUSE" if d.play else "PLAY"
 	_rp.speed.text = d.speed
 	_rp.cam.text = d.cam
-	_rp.help.text = "Drag the view to orbit the car  ·  SET IN / SET OUT trim the clip (up to 20 s)"
+	if d.nkeys == 0:
+		_rp.help.text = "Drag to swing the camera, pinch to zoom, two fingers to pan. Then + KEY to keyframe the shot."
+	else:
+		_rp.help.text = "%d keyframe%s · move the playhead, set up the view and + KEY again · KEYFRAMES camera plays them" % [d.nkeys, "" if d.nkeys == 1 else "s"]
 
 
 # ---------------------------------------------------------------- menu scrolling
@@ -1503,7 +1533,7 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventScreenTouch:
 		var e := event as InputEventScreenTouch
 		if e.pressed:
-			for p in [gas, brake, wheel, arrows]:
+			for p in [gas, brake, wheel, arrows, mirror]:
 				if (p as Control).visible and (p as Control).get_global_rect().has_point(e.position):
 					_drag = {"p": p, "off": p.position - e.position, "i": e.index}
 					if p is Pedal:

@@ -9,12 +9,13 @@ var pos := 0.0     # playhead, 0..1 of the recording
 var a := 0.0       # clip start
 var b := 1.0       # clip end
 var length := 20.0 # seconds in the recording (for the tick marks)
+var keys: Array = []  # camera keyframes, 0..1 of the recording
 
 const PAD := 16.0
 
 
 func _init() -> void:
-	custom_minimum_size = Vector2(0, 70)
+	custom_minimum_size = Vector2(0, 84)
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
@@ -28,12 +29,18 @@ func set_state(p: float, ca: float, cb: float, len_s: float) -> void:
 		queue_redraw()
 
 
+func set_keys(k: Array) -> void:
+	if k != keys:
+		keys = k
+		queue_redraw()
+
+
 func _x(f: float) -> float:
 	return PAD + clampf(f, 0.0, 1.0) * (size.x - PAD * 2.0)
 
 
 func _draw() -> void:
-	var y := size.y * 0.42
+	var y := size.y * 0.55
 	var w := size.x - PAD * 2.0
 	draw_rect(Rect2(PAD, y - 6, w, 12), Color(1, 1, 1, 0.2))
 	draw_rect(Rect2(_x(a), y - 6, _x(b) - _x(a), 12), Hud.AMBER)
@@ -47,6 +54,12 @@ func _draw() -> void:
 	for f in [a, b]:
 		var x := _x(f)
 		draw_rect(Rect2(x - 2, y - 20, 4, 40), Hud.LINE)
+	# camera keyframes: diamonds above the track
+	for f in keys:
+		var x := _x(float(f))
+		var c := Vector2(x, y - 22)
+		draw_colored_polygon(PackedVector2Array([c + Vector2(0, -8), c + Vector2(7, 0), c + Vector2(0, 8), c + Vector2(-7, 0)]), Hud.AMBER)
+		draw_polyline(PackedVector2Array([c + Vector2(0, -8), c + Vector2(7, 0), c + Vector2(0, 8), c + Vector2(-7, 0), c + Vector2(0, -8)]), Color(0, 0, 0, 0.6), 1.5)
 	# playhead
 	var px := _x(pos)
 	draw_circle(Vector2(px, y), 15.0, Color(0, 0, 0, 0.45))

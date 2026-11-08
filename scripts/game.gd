@@ -305,11 +305,15 @@ func _build_showroom() -> void:
 	hud.show_screen("")
 	var list: Array = Data.CARS
 	if showroom == "inspect":
-		var car := Data.car_by_id(_inspect[0])
+		var car: Dictionary
+		if _inspect[0].begins_with("t_"):  # a traffic model: t_SHAPE
+			car = {"shape": _inspect[0].substr(2), "color": "#2f5d8c", "style": CarModel.traffic_style(_inspect[0].substr(2))}
+		else:
+			car = Data.car_by_id(_inspect[0])
 		var m := CarModel.new()
 		m.build(car.shape, Color(car.color), Color("#b5322a"), car.style)
 		add_child(m)
-		m.position = Vector3(0, 0, Data.SHAPES[car.shape].l / 2.0)  # centred on the origin
+		m.position = Vector3(0, 0, float(Data.SHAPES[car.shape].l) / 2.0)  # centred on the origin
 		m.build_interior()
 		if _inspect.size() > 5 and _inspect[5] == "brake":
 			m.set_brake(true)
@@ -668,9 +672,9 @@ func _try_spawn(z: float, lane_hint := -1, v_override := 0.0) -> bool:
 	c.b_ahead = boss != null and z > boss.z + boss.l
 	c.model = CarModel.new()
 	if c.truck:
-		c.model.build(shape, Color(Data.TRUCK_BOX_COLORS.pick_random()), Color(Data.TRUCK_CAB_COLORS.pick_random()))
+		c.model.build(shape, Color(Data.TRUCK_BOX_COLORS.pick_random()), Color(Data.TRUCK_CAB_COLORS.pick_random()), CarModel.traffic_style(shape))
 	else:
-		c.model.build(shape, Color(Data.TRAFFIC_COLORS.pick_random()), Color("#b5322a"), {"rim": ["steel", "5spoke", "5spoke", "multi"].pick_random()})
+		c.model.build(shape, Color(Data.TRAFFIC_COLORS.pick_random()), Color("#b5322a"), CarModel.traffic_style(shape))
 	c.model.position = Vector3(c.x, 0.0, -(c.z - player.z))  # place before it is first drawn
 	add_child(c.model)
 	_register(c)
@@ -3339,11 +3343,18 @@ func _pit_ready() -> bool:
 func _start_pit() -> void:
 	var zs: float = station.z
 	var need := player.v * player.v / (2.0 * 13.0)  # the hardest the car will brake
-	if player.z + need > zs + GasStation.FORE - 6.0:
+	# park with the car's middle level with a pump: the nearer pump if the car
+	# can stop for it, otherwise the one further on
+	var stop := -1.0
+	for pump_rel in GasStation.PUMPS:
+		var rear: float = zs + float(pump_rel) - player.l * 0.5
+		if rear - player.z >= need:
+			stop = rear
+			break
+	if stop < 0.0:
 		run.pit_skip = zs
 		_notify("TOO FAST TO PULL IN", "bad")
 		return
-	var stop := clampf(player.z + player.v * player.v / (2.0 * 7.5), zs - 6.0, zs + GasStation.FORE - 6.0)
 	run.pit = {"step": "in", "z0": player.z, "x0": player.x, "v0": maxf(player.v, 3.0), "stop": stop}
 	run.combo = 0
 	touches.clear()
@@ -3401,7 +3412,8 @@ func _open_refuel() -> void:
 	hud.show_refuel(_refuel_view())
 	sound.play("ding", 0.8, -6.0)
 	if autotest:
-		print("[autotest] fuel stop %s: %.1f of %.0f L, %s $%.2f/L, funds $%d" % [station.name, run.fuel, st.tank, st.grade, station.prices[st.grade], _funds().total])
+		print("[autotest] fuel stop %s: %.1f of %.0f L, %s $%.2f/L, funds $%d, car centre %.2f m from a pump, x %.1f" % [station.name, run.fuel, st.tank, st.grade, station.prices[st.grade], _funds().total,
+			minf(absf(player.z + player.l * 0.5 - float(station.z) - GasStation.PUMPS[0]), absf(player.z + player.l * 0.5 - float(station.z) - GasStation.PUMPS[1])), player.x])
 
 
 func _pump_frame(dt: float) -> void:

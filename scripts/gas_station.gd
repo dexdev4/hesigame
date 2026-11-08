@@ -15,6 +15,7 @@ const MERGE_END := 130.0    # the slip road has merged back in by here
 const LANE_X := 9.2         # centre of the exit lane
 const OUTER_X := 11.6       # its outer edge, lined by a guardrail
 const PUMP_X := 17.0        # where a car stops, between the two pump islands
+const PUMPS := [-3.6, 3.6]  # the pumps along each island (rel), nearer one first
 const SIGNS := [600.0, 300.0]  # approach signs, metres before the pumps
 
 
@@ -103,7 +104,7 @@ func _init() -> void:
 
 	# --- pumps: two to an island, with a lit screen and a nozzle each side
 	for x in [14.6, 19.4]:
-		for z in [-3.6, 3.6]:
+		for z in PUMPS:
 			_box_solid(white, Vector3(x, 1.06, z), Vector3(0.62, 1.76, 0.95))
 			_box_solid(_brand, Vector3(x, 1.86, z), Vector3(0.64, 0.24, 0.97))
 			for side in [-1.0, 1.0]:

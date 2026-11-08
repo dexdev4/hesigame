@@ -863,9 +863,9 @@ func _update_oncoming(base_z: float, dt: float) -> void:
 			shape = "hatch"
 		var m := CarModel.new()
 		if shape == "truck":
-			m.build(shape, Color(Data.TRUCK_BOX_COLORS.pick_random()), Color(Data.TRUCK_CAB_COLORS.pick_random()))
+			m.build(shape, Color(Data.TRUCK_BOX_COLORS.pick_random()), Color(Data.TRUCK_CAB_COLORS.pick_random()), CarModel.traffic_style(shape))
 		else:
-			m.build(shape, Color(Data.TRAFFIC_COLORS.pick_random()), Color("#b5322a"), {"rim": ["steel", "5spoke", "multi"].pick_random()})
+			m.build(shape, Color(Data.TRAFFIC_COLORS.pick_random()), Color("#b5322a"), CarModel.traffic_style(shape))
 		m.rotation.y = PI  # heading towards us
 		# Place it before it is ever drawn. A new node sits at the origin (the
 		# player's position) until moved, so adding it unplaced showed the car

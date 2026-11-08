@@ -72,9 +72,13 @@ const PROFILES := {
 		"gh": [1.65, 3.72, 2.3, 3.1, 0.78, 1.13, 0.84, 0.62], "pillars": [[0.0, 0.3], [0.9, 1.0]],
 		"roof_drop": 0.05, "rim_frac": 0.73, "tyre": [0.335, 0.275], "head": [-0.085, -0.03, 0.42], "projectors": 0, "tail": [-0.1, -0.045, 0.52], "wheel": [0.36, 0.95, 3.72], "exhaust": 4, "spoiler": "wing", "diffuser": true, "grille": "none",
 		"corner": [0.3, 0.46], "flare": [0.07, 0.06], "fender": [0.06, 0.085], "crease_h": 0.55, "tumble": 0.11},
+	# panel van: short sloping bonnet, steep windscreen, tall slab-sided cargo
+	# box with solid panels behind the cab, twin rear doors, tall tail lamps
 	"van": {
-		"body": [[0.0, 2.15, 0.97], [0.08, 2.22, 0.99], [4.05, 2.25, 1.0], [4.3, 2.16, 1.0], [4.62, 1.38, 1.0], [5.05, 1.08, 0.97], [5.2, 0.72, 0.92]],
-		"wheel": [0.36, 0.95, 4.35], "exhaust": 1, "van": true},
+		"body": [[0.0, 1.2, 0.96], [0.08, 1.24, 0.99], [3.55, 1.25, 1.0], [4.2, 1.16, 1.0], [4.7, 1.05, 0.98], [5.1, 0.92, 0.94], [5.2, 0.82, 0.9]],
+		"gh": [0.05, 4.16, 0.07, 3.68, 1.24, 2.2, 0.97, 0.92], "pillars": [[0.0, 0.79], [0.79, 0.83], [0.95, 1.0]],
+		"rim_frac": 0.6, "tyre": [0.235, 0.235], "head": [-0.2, -0.05, 0.4], "tail": [-0.55, -0.12, 0.8], "drl": "none",
+		"wheel": [0.36, 0.98, 4.38], "exhaust": 1, "corner": [0.1, 0.3], "flare": [0.015, 0.015], "crease_h": 0.62, "tumble": 0.03},
 }
 
 
@@ -970,66 +974,159 @@ static func _style_extras(id: String, style: Dictionary, pr: Dictionary, station
 
 
 static func _truck_kit() -> Dictionary:
+	# Articulated lorry: a cab-over tractor with a sleeper and roof fairing,
+	# pulling a box trailer. Surfaces, in commit order: trailer (box colour),
+	# cab (cab colour), glass, dark trim, chrome, plate/reflectors, head lamps,
+	# livery stripe (accent), amber marker lamps.
 	var sh: Dictionary = Data.SHAPES.truck
 	var w: float = sh.w
 	var l: float = sh.l
-	var box := _new_st()   # surface 0: trailer (box colour)
-	var cab := _new_st()   # surface 1: cab (cab colour)
+	var hw := w / 2.0
+	var box := _new_st()
+	var cab := _new_st()
 	var glass := _new_st()
 	var dark := _new_st()
 	var chrome := _new_st()
 	var plate := _new_st()
 	var head := _new_st()
+	var accent := _new_st()
+	var amber := _new_st()
 	var tails := _new_st()
 	tails.set_uv(BodyBuilder.LED_UV)
 	var sig_l := _new_st()
 	var sig_r := _new_st()
-	var tl := l - 2.7
-	_box(box, Vector3(0, 2.45, -tl / 2.0), Vector3(w, 2.9, tl))
-	for k in int(tl / 0.6):  # side ribs
+
+	# --- trailer: a box on a chassis, from the rear bumper to just behind the cab
+	var tf := -(l - 3.05)  # trailer front
+	var tl := -tf
+	var floor := 1.22
+	var top: float = sh.t
+	_box(box, Vector3(0, (floor + top) / 2.0, tf / 2.0), Vector3(w, top - floor, tl))
+	for k in int(tl / 0.55):  # corrugated side posts
 		for s in [-1.0, 1.0]:
-			_box(box, Vector3(s * (w / 2.0 + 0.01), 2.45, -0.3 - k * 0.6), Vector3(0.03, 2.8, 0.06))
-	_box(dark, Vector3(0, 0.98, -tl / 2.0), Vector3(w - 0.1, 0.12, tl))  # chassis rail
+			_box(box, Vector3(s * (hw + 0.012), (floor + top) / 2.0, -0.3 - k * 0.55), Vector3(0.025, top - floor - 0.12, 0.07))
 	for s in [-1.0, 1.0]:
-		_box(dark, Vector3(s * (w / 2.0 - 0.02), 1.05, -tl * 0.55), Vector3(0.04, 0.45, tl * 0.42))  # side skirt
-		_box(dark, Vector3(s * (w / 2.0 - 0.3), 0.55, -0.15), Vector3(0.5, 0.55, 0.02))  # mud flap
-	# rear doors: hinges, lock bars, reflective tape, underride guard
-	_box(dark, Vector3(0, 2.45, 0.01), Vector3(0.03, 2.8, 0.02))
-	for x in [-0.6, -0.4, 0.4, 0.6]:
-		_box(chrome, Vector3(x, 2.4, 0.03), Vector3(0.035, 2.6, 0.035))
-	for k in 8:
-		var x := -w / 2.0 + 0.16 + k * (w - 0.32) / 7.0
-		_box(tails if k % 2 == 0 else plate, Vector3(x, 1.08, 0.022), Vector3(0.2, 0.05, 0.01))
-	_box(dark, Vector3(0, 0.58, 0.04), Vector3(w - 0.3, 0.14, 0.1))
-	_box(plate, Vector3(0, 0.82, 0.03), Vector3(0.5, 0.12, 0.02))
+		_box(chrome, Vector3(s * (hw + 0.02), top - 0.04, tf / 2.0), Vector3(0.05, 0.08, tl))     # top rail
+		_box(dark, Vector3(s * (hw + 0.02), floor + 0.04, tf / 2.0), Vector3(0.06, 0.1, tl))      # bottom rail
+		_box(accent, Vector3(s * (hw + 0.03), floor + 0.75, tf / 2.0 - 0.3), Vector3(0.012, 0.42, tl - 0.8))  # livery band
+		# side guard between the landing legs and the rear wheels
+		_box(dark, Vector3(s * (hw - 0.06), floor - 0.35, -4.6), Vector3(0.04, 0.42, 3.6))
+		for k in 4:
+			_box(dark, Vector3(s * (hw - 0.25), floor - 0.35, -3.0 - k * 1.1), Vector3(0.36, 0.05, 0.05))
+		# landing legs and their feet
+		_box(dark, Vector3(s * 0.85, 0.75, tf + 1.0), Vector3(0.12, 0.95, 0.12))
+		_box(dark, Vector3(s * 0.85, 0.27, tf + 1.0), Vector3(0.3, 0.06, 0.3))
+		# mud flaps behind the trailer wheels
+		_box(dark, Vector3(s * (hw - 0.3), 0.55, -0.55), Vector3(0.55, 0.6, 0.02))
+		# reflective tape along the sides, red and white
+		for k in int(tl / 1.2):
+			_box(tails if k % 2 == 0 else plate, Vector3(s * (hw + 0.034), floor + 0.22, -0.5 - k * 1.2), Vector3(0.01, 0.06, 0.55))
+	_box(dark, Vector3(0, floor - 0.12, tf / 2.0), Vector3(w - 0.3, 0.22, tl))  # chassis under the box
+	# rear: split doors, hinges, lock bars, lamps, reflectors and the underride bar
+	_box(dark, Vector3(0, (floor + top) / 2.0, 0.012), Vector3(0.035, top - floor - 0.1, 0.02))
+	for x in [-0.95, -0.55, 0.55, 0.95]:
+		_box(chrome, Vector3(x, (floor + top) / 2.0, 0.035), Vector3(0.035, top - floor - 0.3, 0.035))
+		for y in [floor + 0.45, top - 0.45]:
+			_box(chrome, Vector3(x, y, 0.045), Vector3(0.09, 0.07, 0.03))
 	for s in [-1.0, 1.0]:
-		_box(tails, Vector3(s * (w / 2.0 - 0.28), 1.22, 0.025), Vector3(0.32, 0.18, 0.03))
-		_box(sig_l if s < 0 else sig_r, Vector3(s * (w / 2.0 - 0.12), 1.22, 0.026), Vector3(0.12, 0.18, 0.03))
-	# cab
-	var cz := -(l - 1.25)
-	_box(cab, Vector3(0, 1.85, cz), Vector3(w - 0.08, 2.7, 2.5))
-	_box(cab, Vector3(0, 3.3, cz + 0.3), Vector3(w - 0.2, 0.5, 1.6))  # roof fairing
-	_quad(glass, Vector3(-(w / 2.0 - 0.2), 2.2, -l - 0.006), Vector3(w / 2.0 - 0.2, 2.2, -l - 0.006),
-		Vector3(w / 2.0 - 0.2, 3.0, -l - 0.006), Vector3(-(w / 2.0 - 0.2), 3.0, -l - 0.006), Vector3.FORWARD)
+		for y in [floor + 0.3, (floor + top) / 2.0, top - 0.3]:
+			_box(dark, Vector3(s * (hw - 0.04), y, 0.03), Vector3(0.08, 0.16, 0.04))   # hinges
+	for k in 10:
+		var x := -hw + 0.12 + k * (w - 0.24) / 9.0
+		_box(tails if k % 2 == 0 else plate, Vector3(x, floor + 0.05, 0.026), Vector3(0.2, 0.05, 0.01))
+	_box(dark, Vector3(0, 0.58, 0.05), Vector3(w - 0.3, 0.12, 0.12))
 	for s in [-1.0, 1.0]:
-		var x: float = s * (w / 2.0 - 0.03)
-		_quad(glass, Vector3(x, 2.2, -l + 0.2), Vector3(x, 2.2, -l + 1.2), Vector3(x, 3.0, -l + 1.2), Vector3(x, 3.0, -l + 0.2), Vector3(s, 0, 0))
-		_cyl(chrome, Vector3(s * (w / 2.0 - 0.25), 0.85, cz + 0.4), 0.28, 1.0, Vector3.BACK, 12)  # fuel tank
-		_cyl(chrome, Vector3(s * (w / 2.0 - 0.15), 3.3, cz + 1.15), 0.07, 1.6, Vector3.UP, 8)   # exhaust stack
-		_box(dark, Vector3(s * (w / 2.0 + 0.18), 2.6, -l + 0.4), Vector3(0.05, 0.5, 0.25))      # mirror
-		_box(head, Vector3(s * (w / 2.0 - 0.35), 0.95, -l - 0.02), Vector3(0.4, 0.18, 0.04))
-	_box(chrome, Vector3(0, 1.45, -l - 0.02), Vector3(w * 0.6, 0.9, 0.04))  # grille
-	_box(chrome, Vector3(0, 0.6, -l - 0.06), Vector3(w, 0.3, 0.12))         # bumper
+		_box(dark, Vector3(s * 0.8, 0.85, 0.02), Vector3(0.08, 0.45, 0.08))
+		_box(dark, Vector3(s * (hw - 0.32), 0.98, 0.03), Vector3(0.46, 0.24, 0.04))
+		_box(tails, Vector3(s * (hw - 0.36), 0.98, 0.05), Vector3(0.24, 0.16, 0.02))
+		_box(sig_l if s < 0 else sig_r, Vector3(s * (hw - 0.17), 0.98, 0.05), Vector3(0.1, 0.16, 0.02))
+	_box(plate, Vector3(0, 0.82, 0.04), Vector3(0.5, 0.12, 0.02))
+
+	# --- tractor chassis, wheels' mudguards, fuel tanks and the fifth wheel
+	var cf := -l          # cab front
+	var cb := -l + 2.25   # cab back
+	_box(dark, Vector3(0, 0.95, (cb + tf) / 2.0 - 0.5), Vector3(0.95, 0.25, absf(tf - cb) + 3.0))
+	_box(dark, Vector3(0, 1.12, tf + 1.8), Vector3(1.2, 0.08, 1.2))
+	for s in [-1.0, 1.0]:
+		_cyl(chrome, Vector3(s * (hw - 0.38), 0.72, cb + 0.85), 0.3, 1.2, Vector3.BACK, 16)      # fuel tank
+		for dz in [-0.4, 0.4]:
+			_box(dark, Vector3(s * (hw - 0.38), 0.72, cb + 0.85 + dz), Vector3(0.64, 0.64, 0.05))
+		_box(dark, Vector3(s * (hw - 0.3), 1.1, -6.0), Vector3(0.62, 0.05, 2.0))                # mudguard over the drive axles
+		_box(dark, Vector3(s * (hw - 0.3), 0.95, -7.05), Vector3(0.62, 0.35, 0.05))
+
+	# --- cab: raked windscreen, sleeper and a roof fairing up to the trailer
+	var cab_top := 3.15
+	var y0 := 0.95
+	var rake := 0.3  # the windscreen leans back this far
+	var p := [Vector3(-hw + 0.06, y0, cf), Vector3(hw - 0.06, y0, cf), Vector3(hw - 0.06, 2.0, cf), Vector3(-hw + 0.06, 2.0, cf)]
+	_quad(cab, p[0], p[1], p[2], p[3], Vector3.FORWARD)                                       # lower front
+	var wn := Vector3(0, rake, -(cab_top - 2.0)).normalized()
+	var wtl := Vector3(-hw + 0.06, cab_top, cf + rake)
+	var wtr := Vector3(hw - 0.06, cab_top, cf + rake)
+	_quad(cab, p[3], p[2], wtr, wtl, wn)                                                      # windscreen frame
+	for s in [-1.0, 1.0]:  # two panes either side of a slim pillar
+		var x0: float = s * 0.04
+		var x1: float = s * (hw - 0.16)
+		_quad(glass, Vector3(x0, 2.1, cf - 0.006 + rake * 0.09), Vector3(x1, 2.1, cf - 0.006 + rake * 0.09),
+			Vector3(x1, cab_top - 0.12, cf - 0.006 + rake * 0.9), Vector3(x0, cab_top - 0.12, cf - 0.006 + rake * 0.9), wn)
+	_box(cab, Vector3(0, (y0 + cab_top) / 2.0, (cf + rake + cb) / 2.0), Vector3(w - 0.12, cab_top - y0, cb - cf - rake))  # cab sides and back
+	for s in [-1.0, 1.0]:  # the lower front corners carry round onto the sides
+		var sx: float = s * (hw - 0.06)
+		_box(cab, Vector3(sx, (y0 + 2.0) / 2.0, cf + rake / 2.0), Vector3(0.02, 2.0 - y0, rake))
+		_tri(cab, Vector3(sx, 2.0, cf), Vector3(sx, cab_top, cf + rake), Vector3(sx, 2.0, cf + rake), Vector3(s, 0, 0), Vector3(s, 0, 0), Vector3(s, 0, 0))
+	_box(cab, Vector3(0, cab_top + 0.04, (cf + rake + cb) / 2.0), Vector3(w - 0.2, 0.08, cb - cf - rake - 0.1))
+	# fairing: a wedge from the cab roof to the trailer's top edge
+	var fz0: float = cf + rake + 0.5
+	var fz1: float = tf - 0.3
+	var fl := [Vector3(-hw + 0.12, cab_top, fz0), Vector3(hw - 0.12, cab_top, fz0), Vector3(hw - 0.08, top - 0.05, fz1), Vector3(-hw + 0.08, top - 0.05, fz1)]
+	_quad(cab, fl[0], fl[1], fl[2], fl[3], Vector3(0, 0.9, -0.4).normalized())
+	for s in [-1.0, 1.0]:
+		var x: float = s * (hw - 0.1)
+		_tri(cab, Vector3(x, cab_top, fz0), Vector3(x, top - 0.05, fz1), Vector3(x, cab_top, fz1), Vector3(s, 0, 0), Vector3(s, 0, 0), Vector3(s, 0, 0))
+		# side fairing on the sleeper, closing the gap to the trailer
+		_box(cab, Vector3(s * (hw - 0.04), 2.1, (cb + tf) / 2.0), Vector3(0.04, 2.0, absf(tf - cb) - 0.05))
+	_box(cab, Vector3(0, (cab_top + top) / 2.0 - 0.1, fz1 + 0.02), Vector3(w - 0.2, top - cab_top - 0.1, 0.04))
+	# grille, lamps, bumper, steps
+	_box(chrome, Vector3(0, 1.45, cf - 0.02), Vector3(1.5, 0.95, 0.04))
+	_box(dark, Vector3(0, 1.45, cf - 0.035), Vector3(1.38, 0.83, 0.03))
+	for k in 6:
+		_box(chrome, Vector3(0, 1.1 + k * 0.14, cf - 0.05), Vector3(1.36, 0.035, 0.03))
+	for s in [-1.0, 1.0]:
+		_box(dark, Vector3(s * (hw - 0.32), 1.12, cf - 0.025), Vector3(0.48, 0.3, 0.05))
+		_box(head, Vector3(s * (hw - 0.36), 1.12, cf - 0.05), Vector3(0.36, 0.2, 0.02))
+		_box(sig_l if s < 0 else sig_r, Vector3(s * (hw - 0.1), 1.12, cf - 0.05), Vector3(0.1, 0.2, 0.03))
+		_box(dark, Vector3(s * (hw - 0.02), 0.55, cf + 0.75), Vector3(0.12, 0.05, 0.42))   # steps
+		_box(dark, Vector3(s * (hw - 0.02), 0.85, cf + 0.75), Vector3(0.12, 0.05, 0.42))
+		# door: window, outline and handle
+		var dx: float = s * (hw - 0.055)
+		_quad(glass, Vector3(dx + s * 0.003, 2.05, cf + 0.45), Vector3(dx + s * 0.003, 2.05, cf + 1.45),
+			Vector3(dx + s * 0.003, 2.9, cf + 1.4), Vector3(dx + s * 0.003, 2.9, cf + 0.65), Vector3(s, 0, 0))
+		_box(dark, Vector3(dx, 1.5, cf + 1.5), Vector3(0.015, 1.45, 0.02))
+		_box(chrome, Vector3(dx + s * 0.01, 1.85, cf + 1.35), Vector3(0.02, 0.04, 0.18))
+		# big mirrors on arms
+		_strap(dark, Vector3(dx, 2.6, cf + 0.35), Vector3(s * (hw + 0.32), 2.75, cf + 0.25), 0.04, 0.04)
+		_box(dark, Vector3(s * (hw + 0.36), 2.55, cf + 0.25), Vector3(0.1, 0.55, 0.26))
+		_box(chrome, Vector3(s * (hw + 0.36), 2.55, cf + 0.385), Vector3(0.08, 0.5, 0.01))
+		# exhaust stack behind the cab
+		_cyl(chrome, Vector3(s * (hw - 0.22), 2.6, cb + 0.15), 0.08, 2.6, Vector3.UP, 12)
+	_box(dark, Vector3(0, 0.72, cf + 0.05), Vector3(w + 0.04, 0.42, 0.22))        # bumper
+	for s in [-1.0, 1.0]:
+		_box(head, Vector3(s * 0.85, 0.72, cf - 0.065), Vector3(0.2, 0.08, 0.02))  # fog lamps
+	_box(plate, Vector3(0, 0.72, cf - 0.065), Vector3(0.5, 0.12, 0.02))
+	_box(dark, Vector3(0, cab_top - 0.04, cf + rake - 0.08), Vector3(w - 0.1, 0.06, 0.22))  # sun visor
+	for k in 5:  # amber marker lamps along the roof
+		_box(amber, Vector3(-0.6 + k * 0.3, cab_top + 0.1, cf + rake + 0.05), Vector3(0.12, 0.06, 0.06))
 
 	var body := ArrayMesh.new()
-	for st in [box, cab, glass, dark, chrome, plate, head]:
+	for st in [box, cab, glass, dark, chrome, plate, head, accent, amber]:
 		st.commit(body)
+	# wheels: steer axle, twin drive axles, twin trailer axles (x, z, tyre width)
 	var wheels := []
-	for s in [-1.0, 1.0]:
-		for z in [-0.95, -2.15, -(l - 0.95)]:
-			wheels.append([s * (w / 2.0 - 0.3), z])
+	for z in [-(l - 0.95), -6.55, -5.45, -2.55, -1.35]:
+		for s in [-1.0, 1.0]:
+			wheels.append([s * (hw - 0.3), z, 0.5])
 	return {"body": body, "tails": tails.commit(), "sig_l": sig_l.commit(), "sig_r": sig_r.commit(),
-		"wheels": wheels, "r": 0.5, "ww": 0.5, "truck": true}
+		"wheels": wheels, "r": 0.5, "ww": 0.5, "truck": true, "rim_frac": 0.62}
 
 
 # ---------------------------------------------------------------- instance
@@ -1106,7 +1203,8 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a"), style 
 		_body.add_child(far)
 	else:
 		var mats: Array[Material] = [mat(color, 0.0, 0.55, 0.1), paint(cab_color), _glass_solid(), mat(Color("#18191b"), 0.0, 0.7),
-			_chrome(), mat(Color("#e8e6dc"), 0.0, 0.6), lamp(Color("#fff6d8"), 2.0)]
+			_chrome(), mat(Color("#e8e6dc"), 0.0, 0.6), lamp(Color("#fff6d8"), 2.0), paint(Color(style.get("accent", "#f3f5ef"))),
+			lamp(Color("#ffaa18"), 3.0)]
 		for i in mats.size():
 			body.set_surface_override_material(i, mats[i])
 	_body.add_child(body)
@@ -1135,7 +1233,7 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a"), style 
 		var mi := MeshInstance3D.new()
 		mi.mesh = _wheel_mesh(kit.r, ww, rim_style, rim_col, rim_frac)
 		wn.add_child(mi)
-		if kit.has("surfaces"):
+		if true:
 			var mf := MeshInstance3D.new()
 			mf.mesh = _wheel_mesh(kit.r, ww, rim_style, rim_col, rim_frac, true)
 			wn.add_child(mf)
@@ -1165,7 +1263,10 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a"), style 
 			pl.modulate = Color("#1b2a4a")
 			pl.outline_size = 0
 			pl.position = Vector3(0, py, kit.get("plate_z", 0.024))
+			if kit.get("truck", false):
+				pl.position = Vector3(0, 0.82, 0.055)
 			_body.add_child(pl)
+			_lod(pl, 0.0, 45.0)
 		if style.has("badge"):
 			var bd := Label3D.new()
 			bd.text = style.badge
@@ -1175,6 +1276,20 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a"), style 
 			bd.outline_size = 0
 			bd.position = Vector3(0.0, (PROFILES.get(shape_id, {}).get("body", [[0, 0.8]])[0][1]) - 0.34, 0.02)
 			_body.add_child(bd)
+			_lod(bd, 0.0, 45.0)
+	if style.has("fleet") and kit.get("truck", false):
+		for s in [-1.0, 1.0]:  # the haulier's name along both sides of the trailer
+			var fl := Label3D.new()
+			fl.text = style.fleet
+			fl.font_size = 96
+			fl.pixel_size = 0.0058
+			fl.double_sided = false  # only readable from its own side
+			fl.modulate = Color(style.get("accent", "#f3f5ef")).lightened(0.2) if Color(style.get("accent", "#f3f5ef")).get_luminance() < 0.5 else Color("#1b1e23")
+			fl.outline_size = 0
+			fl.position = Vector3(s * (shape.w / 2.0 + 0.04), 2.95, -3.9)
+			fl.rotation.y = s * PI / 2.0
+			_body.add_child(fl)
+			_lod(fl, 0.0, 140.0)
 
 	# soft contact shadow so cars sit on the road even beyond the shadow distance
 	var sh := MeshInstance3D.new()
@@ -1202,6 +1317,35 @@ func force_detail() -> void:
 				gi.visibility_range_end = DRAW_DISTANCE
 		for c in n.get_children():
 			stack.append(c)
+
+
+const FLEETS := ["NORTHLINE FREIGHT", "PRAIRIE HAULAGE", "BLUE RIDGE LOGISTICS", "IRONWAY CARGO", "COASTAL MOVERS", "SUMMIT EXPRESS", "REDROCK TRANSPORT"]
+const MAKES := ["ARCO", "NOVA", "CIVITA", "LUMEN", "VEGA", "ORIX", "TERRA", "KITE", "MERIT", "AXON"]
+
+
+## The look of one traffic vehicle: its wheels, number plate and badge (and
+## a haulier's livery on lorries), so no two cars on the road are identical.
+static func traffic_style(shape: String) -> Dictionary:
+	var letters := "ABCDEFGHJKLMNPRSTUVWXYZ"
+	var plate_text := ""
+	for k in 3:
+		plate_text += letters[randi() % letters.length()]
+	plate_text += " %03d" % (randi() % 1000)
+	var st := {"plate": plate_text}
+	match shape:
+		"truck":
+			st.rim = "steel"
+			st.accent = ["#f3f5ef", "#d9a21b", "#b5322a", "#1f4e8c", "#2e7d32", "#1b1e23"].pick_random()
+			st.fleet = FLEETS.pick_random()
+		"van":
+			st.rim = ["steel", "5spoke"].pick_random()
+			st.badge = MAKES.pick_random()
+		_:
+			st.rim = ["steel", "5spoke", "5spoke", "multi", "multi", "double", "mesh"].pick_random()
+			st.rim_color = ["#c3c8ce", "#c3c8ce", "#9aa0a6", "#2a2c30", "#d6d9dc", "#5b5f64"].pick_random()
+			st.caliper = ["#55595e", "#55595e", "#2a2c30", "#9b1c1c"].pick_random()
+			st.badge = MAKES.pick_random()
+	return st
 
 
 ## Draw gi only between `begin` and `end` metres from the camera.

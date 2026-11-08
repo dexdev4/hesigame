@@ -108,6 +108,7 @@ func _ready() -> void:
 	_sfx["crash"] = _make_crash()
 	_sfx["ding"] = _make_ding()
 	_sfx["blowoff"] = _make_blowoff()
+	_sfx["siren"] = _make_siren()
 	if _eng.is_empty():
 		set_car(Data.CARS[0])
 
@@ -363,6 +364,21 @@ func _make_ding() -> AudioStreamWAV:
 	for i in n:
 		var t := float(i) / RATE
 		out[i] = (sin(TAU * 660.0 * t) * 0.6 + sin(TAU * 1320.0 * t) * 0.2) * exp(-t * 16.0) * 0.4
+	return _wav(out)
+
+
+## One rise-and-fall of a police wail (played on repeat during a pursuit).
+func _make_siren() -> AudioStreamWAV:
+	var n := int(RATE * 1.1)
+	var out := PackedFloat32Array()
+	out.resize(n)
+	var ph := 0.0
+	for i in n:
+		var t := float(i) / n
+		var f := 640.0 + 520.0 * sin(PI * t)
+		ph += f / RATE
+		var env := minf(1.0, t * 20.0) * minf(1.0, (1.0 - t) * 20.0)
+		out[i] = (sin(TAU * ph) * 0.7 + sin(TAU * ph * 2.0) * 0.15) * env * 0.35
 	return _wav(out)
 
 

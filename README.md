@@ -45,7 +45,8 @@ Open **Settings** from the main menu or the pause menu. The game keeps drawing b
 
 - **Lives:** 3. Touching a car, the rival or the guardrail costs one. The Spare chassis upgrade adds more.
 - **Scoring:** a pass is worth more the faster you go. Passing within 1 m is a **near miss** and within 35 cm is a **razor pass**. A lane change right beside a car is a **close cut**. Each of those adds to a combo multiplier (up to x8) that resets after 3.5 s without one. Above 120 km/h you also earn points every second.
-- **Stages:** reach the stage's distance and points target to meet the boss.
+- **Stages:** fill either the stage's distance bar or its points bar to trigger the next encounter.
+- **Police pursuit:** each trigger has a 30% chance to be a police car instead of the boss. It chases you down and tries to ram you: getting hit costs a life, but surviving 40 seconds untouched earns an extra life. Either way, the next trigger in that stage is always the real boss.
 - **Boss race:** you have 2 km to out-score the boss before the finish gantry. Win and you get prize money, choose 1 of 3 upgrades for the rest of the run, and the boss's car goes on sale in the Garage. Lose and it costs a life, followed by a rematch.
 - **Between runs:** cash from score, distance and boss prizes buys permanent upgrades and new cars. Progress is saved to `user://save.json`.
 
@@ -100,6 +101,7 @@ Arguments placed after `--` on the command line:
 
 - `--autotest`: the car drives itself and the run loops, with status printed to the console. Combine it with `--headless` to run without a window.
 - `--fast`: shrinks stage and boss targets so you reach a boss within seconds.
+- `--cop`: the next encounter is always a police pursuit.
 - `--quit-after=SECONDS`: exit after that many seconds.
 - `--open=garage` / `--open=garage:up`: open the Garage on start.
 - `--shot=SECONDS:PATH`: save a screenshot.

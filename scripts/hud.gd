@@ -569,7 +569,7 @@ func update_play(d: Dictionary) -> void:
 	_rpm.add_theme_stylebox_override("fill", _fill_red if d.rpm > 0.9 else (_fill_amber if d.rpm > 0.75 else _fill_white))
 	_kmh.add_theme_color_override("font_color", AMBER if d.fast else LINE)
 	_sp_tag.text = "HIGH SPEED BONUS" if d.fast else ""
-	(_g["style"] as StyleBoxFlat).bg_color = RED_SIGN if d.boss else SIGN
+	(_g["style"] as StyleBoxFlat).bg_color = Color("#173a6e", 0.92) if d.get("cop", false) else (RED_SIGN if d.boss else Color(SIGN, 0.88))
 	_g.title.text = d.title
 	_g.sub.text = d.sub
 	_g.l1.text = d.l1

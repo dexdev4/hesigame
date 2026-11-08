@@ -1536,6 +1536,38 @@ func _segment(mi: MeshInstance3D, a: Vector3, b: Vector3) -> void:
 	mi.transform = Transform3D(Basis(x, y * d.length(), z), (a + b) / 2.0)
 
 
+var _bar_l: MeshInstance3D
+var _bar_r: MeshInstance3D
+
+
+## Police light bar on the roof (roof_y: roof height).
+func add_lightbar(roof_y: float) -> void:
+	var base := MeshInstance3D.new()
+	base.mesh = box_mesh(Vector3(1.1, 0.08, 0.26))
+	base.material_override = mat(Color("#1b1d21"), 0.0, 0.5)
+	var z: float = -shape.l * 0.5 + 0.15
+	base.position = Vector3(0, roof_y + 0.08, z)
+	_body.add_child(base)
+	_bar_l = MeshInstance3D.new()
+	_bar_l.mesh = box_mesh(Vector3(0.5, 0.09, 0.22))
+	_bar_l.position = Vector3(-0.28, roof_y + 0.16, z)
+	_body.add_child(_bar_l)
+	_bar_r = MeshInstance3D.new()
+	_bar_r.mesh = box_mesh(Vector3(0.5, 0.09, 0.22))
+	_bar_r.position = Vector3(0.28, roof_y + 0.16, z)
+	_body.add_child(_bar_r)
+	flash_lightbar(0.0)
+
+
+## Alternating red and blue flashes.
+func flash_lightbar(t: float) -> void:
+	if _bar_l == null:
+		return
+	var phase := int(t * 6.0) % 2 == 0
+	_bar_l.material_override = mat(Color("#ff2a2a"), 6.0 if phase else 0.4)
+	_bar_r.material_override = mat(Color("#2a6bff"), 0.4 if phase else 6.0)
+
+
 ## Invulnerability glow: a soft amber halo pulsing on the road under the car.
 func set_ghost(on: bool, t: float) -> void:
 	if not on:

@@ -31,6 +31,7 @@ class Vehicle:
 	var truck := false
 	var is_boss := false
 	var title := ""
+	var is_cop := false
 	var model: CarModel
 
 
@@ -60,6 +61,10 @@ class Run:
 	var b_total := 0
 	var b_next := 1.0
 	var b_info := {}
+	# police pursuit
+	var cop_t := 0.0
+	var cop_due := false     # a pursuit happened this stage, so the next trigger is the boss
+	var siren_t := 0.0
 
 
 var state := S.MENU
@@ -100,6 +105,7 @@ var showroom := ""  # --showroom=rear|front: every player car parked in a row, s
 var shots: Array = []
 var burst: Array = []  # --burst=START:COUNT:DIR saves COUNT consecutive frames (test aid)
 var _burst_i := 0
+var force_cop := false
 var auto_speed := 46.0  # --autospeed=M/S: how fast the test driver goes
 var idcolor := false   # --idcolor: flat unique colour per traffic car, no fog or scenery (flicker test)
 var _id_next := 1
@@ -131,6 +137,8 @@ func _ready() -> void:
 			auto_speed = float(a.substr(12))
 		if a.begins_with("--car="):  # test drive another car (not saved)
 			Save.data.selected = a.substr(6)
+		if a == "--cop":  # every boss trigger is a police pursuit (test aid)
+			force_cop = true
 		if a == "--idcolor":
 			idcolor = true
 		if a == "--demo-pops":
@@ -636,6 +644,9 @@ func _start_boss() -> void:
 func _update_boss(dt: float) -> void:
 	if boss == null:
 		return
+	if boss.is_cop:
+		_update_cop(dt)
+		return
 	var b := boss
 	# The boss paces the player, but drives like everyone else: it follows the
 	# car ahead and brakes for it, and only changes lane into a clear gap.
@@ -901,8 +912,16 @@ func _collisions() -> void:
 			c.min_clear = 99.0
 		if run.invuln <= 0.0 and _overlap(p, c):
 			_hit("CONTACT", c)
-	if boss and run.invuln <= 0.0 and _overlap(p, boss):
-		_hit("RIVAL CONTACT", boss)
+	var rammed: bool = boss != null and boss.is_cop and absf(p.x - boss.x) < (p.w + boss.w) / 2.0 - 0.15 \
+		and p.z - (boss.z + boss.l) < 0.15 and boss.z < p.z + p.l
+	if boss and run.invuln <= 0.0 and (rammed or _overlap(p, boss)):
+		if boss.is_cop:
+			_hit("BUSTED", boss)
+			if run.phase == "cop":
+				hud.banner("BUSTED", "-1 LIFE")
+				_end_cop()
+		else:
+			_hit("RIVAL CONTACT", boss)
 
 
 # ---------------------------------------------------------------- run flow
@@ -994,6 +1013,7 @@ func _apply_boon(id: String) -> void:
 		"combo": run.combo_time += 1.0
 	_compute_stats()
 	run.stage += 1
+	run.cop_due = false
 	run.phase = "cruise"
 	run.stage_dist = 0.0
 	run.stage_score = 0
@@ -1004,6 +1024,118 @@ func _apply_boon(id: String) -> void:
 	state = S.PLAY
 	hud.show_screen("")
 	hud.banner("STAGE %d" % run.stage, String(Data.boss_info(run.stage).full).to_upper() + " WAITS AHEAD")
+
+
+var _cop_aim := 0.0
+const COP_CHANCE := 0.3   # chance that a boss trigger is a police pursuit instead
+const COP_TIME := 40.0    # seconds to survive to escape
+
+
+## Police pursuit: a cop car comes up from behind and tries to ram you.
+## Survive COP_TIME seconds for an extra life; get rammed and you lose one.
+func _start_cop() -> void:
+	_remove_boss()
+	var sh: Dictionary = Data.SHAPES.sedan
+	boss = Vehicle.new()
+	boss.is_cop = true
+	boss.lane = Data.nearest_lane(player.x)
+	boss.tlane = boss.lane
+	boss.x = Data.LANES[boss.lane]
+	boss.z = player.z - 70.0
+	boss.v = player.v + 6.0
+	boss.w = sh.w
+	boss.l = sh.l
+	boss.title = "POLICE"
+	_cop_aim = boss.x
+	boss.model = CarModel.new()
+	boss.model.build("sedan", Color("#f2f3f5"), Color("#b5322a"), {"rim": "steel", "badge": "POLICE", "plate": "PD 911"})
+	boss.model.add_lightbar(sh.t)
+	var tag := Label3D.new()
+	tag.text = "POLICE"
+	tag.font_size = 72
+	tag.pixel_size = 0.012
+	tag.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	tag.no_depth_test = true
+	tag.modulate = Color("#f3f5ef")
+	tag.outline_modulate = Color("#173a6e")
+	tag.outline_size = 18
+	tag.position = Vector3(0, sh.t + 1.4, -sh.l / 2.0)
+	tag.name = "CopTag"
+	boss.model.add_child(tag)
+	boss.model.position = Vector3(boss.x, 0.0, -(boss.z - player.z))
+	add_child(boss.model)
+	run.phase = "cop"
+	run.cop_t = 0.0
+	run.siren_t = 0.0
+	run.cop_due = true
+	hud.banner("POLICE PURSUIT", "DON'T GET RAMMED FOR %d S · ESCAPE FOR +1 LIFE" % int(COP_TIME))
+	if autotest:
+		print("[autotest] police pursuit stage %d" % run.stage)
+
+
+## Pursuit over (escaped or rammed): back to cruising, stage progress resets
+## and the next trigger is the real boss.
+func _end_cop() -> void:
+	_remove_boss()
+	run.phase = "cruise"
+	run.stage_dist = 0.0
+	run.stage_score = 0
+
+
+func _update_cop(dt: float) -> void:
+	var b := boss
+	var gap_to_player := player.z - (b.z + b.l)
+	var tag := b.model.get_node_or_null("CopTag") as Label3D
+	if tag:  # fade the tag out when it would sit on top of the player's car
+		tag.modulate.a = clampf((gap_to_player - 8.0) / 10.0, 0.0, 1.0)
+		tag.outline_modulate.a = tag.modulate.a
+	# close in fast, then match speed and push for contact
+	var want := player.v + clampf(gap_to_player * 0.45 + 2.5, -8.0, 16.0)  # keeps pushing at contact
+	var lg := _boss_leader(b)
+	var lead: Vehicle = lg[0]
+	var gap: float = lg[1]
+	if lead and lead != player and gap < 35.0:
+		want = minf(want, lead.v + (gap - 5.0) * 0.5)  # traffic in the way: brake behind it
+	b.v += clampf(want - b.v, -10.0 * dt, 8.0 * dt)
+	b.v = clampf(b.v, 0.0, 90.0)
+	b.z += b.v * dt
+	if lead and lead != player and b.z + b.l > lead.z - 0.3 and absf(lead.x - b.x) < (lead.w + b.w) / 2.0:
+		b.z = lead.z - b.l - 0.3
+	# the player is solid: the cop pushes in for contact but never drives through
+	# (and keeps a little back while the player is invulnerable)
+	if absf(player.x - b.x) < (player.w + b.w) / 2.0 and b.z < player.z + 2.0:
+		var limit := player.z + (0.3 if run.invuln <= 0.0 else -1.5) - b.l
+		if b.z > limit:
+			b.z = limit
+			b.v = minf(b.v, player.v)
+	# steer: at where it thinks the player is (it reacts with a delay, so a late
+	# lane change can shake it off), otherwise lane by lane through gaps
+	_cop_aim = lerpf(_cop_aim, player.x, minf(1.0, dt * 1.6))
+	b.vx = 0.0
+	var tx: float
+	if absf(gap_to_player) < 20.0:
+		tx = _cop_aim
+	else:
+		if b.tlane == b.lane and (lead and lead != player and gap < 30.0 or b.lane != Data.nearest_lane(player.x)):
+			var best := b.lane
+			for l in [Data.nearest_lane(player.x), b.lane - 1, b.lane + 1]:
+				if l >= 0 and l < 4 and l != b.lane and not _lane_blocked(b, l, 25.0, 6.0) and absf(l - Data.nearest_lane(player.x)) <= absf(best - Data.nearest_lane(player.x)):
+					best = l
+			b.tlane = best
+		tx = Data.LANES[b.tlane]
+	var step := clampf(tx - b.x, -3.6 * dt, 3.6 * dt)
+	var nx := b.x + step
+	var clear := true
+	for c in traffic:  # never slide sideways into a car
+		if absf(c.x - nx) < (c.w + b.w) / 2.0 and c.z < b.z + b.l and c.z + c.l > b.z:
+			clear = false
+			break
+	if clear:
+		b.x = nx
+		b.vx = step / maxf(dt, 0.0001)
+	if absf(b.x - Data.LANES[b.tlane]) < 0.05:
+		b.lane = b.tlane
+	b.model.flash_lightbar(t)
 
 
 func _show_boss_intro() -> void:
@@ -1048,8 +1180,23 @@ func _update_run(dt: float) -> void:
 				hud.banner("REMATCH", "BEAT %s IN %s" % [Fmt.num(run.b_total), Fmt.km(run.b_len)])
 			return
 		var r := Data.stage_req(run.stage)
-		if run.stage_dist >= r.d and run.stage_score >= r.p:
-			_show_boss_intro()
+		if run.stage_dist >= r.d or run.stage_score >= r.p:
+			if not run.cop_due and (force_cop or randf() < COP_CHANCE):
+				_start_cop()
+			else:
+				_show_boss_intro()
+	elif run.phase == "cop":
+		run.cop_t += dt
+		run.siren_t -= dt
+		if run.siren_t <= 0.0:
+			run.siren_t = 1.1
+			sound.play("siren", 1.0, -4.0)
+		if run.cop_t >= COP_TIME:
+			run.lives = mini(Data.MAX_LIVES, run.lives + 1)
+			_notify("ESCAPED · +1 LIFE", "hot")
+			hud.banner("ESCAPED", "+1 LIFE")
+			sound.play("ding", 1.5, 3.0)
+			_end_cop()
 	elif run.phase == "boss":
 		run.b_dist += d
 		if run.b_dist >= run.b_len:
@@ -1257,8 +1404,14 @@ func _update_hud() -> void:
 		"rpm": sound.rpm / sound.redline,
 		"fast": player.v > 33.0,
 		"boss": run.phase == "boss",
+		"cop": run.phase == "cop",
 	}
-	if run.phase == "boss":
+	if run.phase == "cop":
+		var gp: float = maxf(0.0, player.z - (boss.z + boss.l)) if boss else 99.0
+		d.merge({"title": "POLICE PURSUIT", "sub": "ESCAPE IN %d S" % ceili(maxf(0.0, COP_TIME - run.cop_t)),
+			"l1": "ESCAPE", "l2": "GAP", "f1": run.cop_t / COP_TIME, "f2": clampf(gp / 60.0, 0.0, 1.0),
+			"v1": "%d/%d s" % [int(run.cop_t), int(COP_TIME)], "v2": "%d m" % int(gp), "done1": false, "done2": gp > 30.0})
+	elif run.phase == "boss":
 		var mx := maxf(float(maxi(run.b_total, maxi(run.b_score, run.b_rival))) * 1.05, 1.0)
 		d.merge({"title": "VS " + String(run.b_info.full).to_upper(), "sub": "FINISH " + Fmt.km(maxf(0.0, run.b_len - run.b_dist), 2),
 			"l1": "YOU", "l2": "RIVAL", "f1": run.b_score / mx, "f2": run.b_rival / mx,
@@ -1270,8 +1423,8 @@ func _update_hud() -> void:
 		var sub := "BOSS · " + String(Data.boss_info(run.stage).full).to_upper()
 		if run.rematch_t > 0.0:
 			sub = "REMATCH INCOMING"
-		elif d_ok and not p_ok:
-			sub = "NEED MORE POINTS"
+		elif not run.cop_due:
+			sub = "BOSS OR POLICE?"
 		d.merge({"title": "STAGE %d" % run.stage, "sub": sub, "l1": "DIST", "l2": "PTS",
 			"f1": run.stage_dist / r.d, "f2": run.stage_score / r.p,
 			"v1": "%.1f/%.1f km" % [minf(run.stage_dist, r.d) / 1000.0, r.d / 1000.0],

@@ -1336,8 +1336,8 @@ func layout_pedals() -> void:
 		if c.position.y + c.size.y > vp.y - 220.0 and c.position.x > vp.x / 2.0:
 			rgt = minf(rgt, c.position.x - 8.0)
 	var mid := (lft + rgt) / 2.0 if lft > 0.0 else vp.x / 2.0
-	if vp.x > vp.y:  # landscape: beside the gas pedal, clear of the car in the middle
-		mid = gas.position.x - 150.0
+	if vp.x > vp.y:  # landscape: bottom middle, between the steering control and the pedals
+		mid = vp.x / 2.0
 	spd.anchor_left = 0.0
 	spd.anchor_right = 0.0
 	spd.offset_left = mid - 130.0

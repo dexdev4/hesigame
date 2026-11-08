@@ -33,6 +33,7 @@ class Vehicle:
 	var title := ""
 	var is_cop := false
 	var id := 0
+	var yielding := false  # pulling over for the police
 	var b_ahead := false   # boss scoring: this car is ahead of the boss
 	var b_min := 99.0      # closest the boss got while passing it
 	var b_cut := false
@@ -751,6 +752,20 @@ func _update_traffic(dt: float) -> void:
 		c.braking = dv < -0.6
 		c.z += c.v * dt
 		c.vx = 0.0
+		if c.tlane == c.lane and _cop_behind(c):
+			# siren behind: get out of the way, to the right if there is room, else the left
+			var dirs := [1, -1] if c.lane < 3 else [-1, 1]
+			for dl in dirs:
+				var nl: int = c.lane + dl
+				if nl >= 0 and nl < 4 and not (c.truck and nl < 2) and _lane_open_for(c, nl):
+					c.tlane = nl
+					c.sig_t = 0.2
+					c.yielding = true
+					if autotest:
+						_yields += 1
+					break
+			if c.tlane == c.lane:
+				c.v = maxf(c.v - 2.0 * dt, c.cruise * 0.8)  # boxed in: ease off and let it squeeze by
 		if c.tlane == c.lane:
 			var stuck := lead != null and gap < 30.0 and lead.v < c.cruise - 2.0
 			c.lc_t -= dt * (1.0 + stage * 0.12) * (3.0 if stuck else 1.0)
@@ -765,11 +780,13 @@ func _update_traffic(dt: float) -> void:
 		else:
 			var tx: float = Data.LANES[c.tlane]
 			var d := tx - c.x
-			var step := 1.9 * dt * signf(d)
-			c.vx = 1.9 * signf(d)
+			var lat := 3.2 if c.yielding else 1.9  # quicker when moving over for the police
+			var step := lat * dt * signf(d)
+			c.vx = lat * signf(d)
 			if absf(d) <= absf(step):
 				c.x = tx
 				c.lane = c.tlane
+				c.yielding = false
 			else:
 				c.x += step
 	for i in range(traffic.size() - 1, -1, -1):
@@ -937,7 +954,7 @@ func _update_boss(dt: float) -> void:
 	# Bosses race for points: they drive faster than traffic and weave through
 	# it, but stay within sight (a little ahead of you), where the traffic is.
 	var top: float = Data.car_by_id(String(run.b_info.car) if run else "copperhead").top
-	var cruise := minf(top * lerpf(0.82, 0.98, minf(sk, 1.0)), 30.0 + 26.0 * minf(sk + 0.3, 1.2))
+	var cruise := minf(top * lerpf(0.88, 1.0, minf(sk, 1.0)), 33.0 + 26.0 * minf(sk + 0.3, 1.2))
 	var rel := b.z - player.z
 	var want := cruise
 	if rel > 140.0:
@@ -952,10 +969,10 @@ func _update_boss(dt: float) -> void:
 	var lead: Vehicle = lg[0]
 	var gap: float = lg[1]
 	# better bosses brake later and closer
-	var follow := lerpf(8.0, 4.5, minf(sk, 1.0))
+	var follow := lerpf(6.0, 3.2, minf(sk, 1.0))
 	if lead and gap < 45.0:
 		want = minf(want, lead.v + (gap - follow) * 0.5)
-	b.v += clampf(want - b.v, -(11.0 if gap < 8.0 else 8.0) * dt, lerpf(5.0, 8.0, minf(sk, 1.0)) * dt)
+	b.v += clampf(want - b.v, -(12.0 if gap < 8.0 else 9.0) * dt, lerpf(6.5, 9.5, minf(sk, 1.0)) * dt)
 	if lead and gap < 0.8:
 		b.v = minf(b.v, lead.v)
 	b.v = maxf(0.0, b.v)
@@ -1000,15 +1017,15 @@ func _boss_steer(b: Vehicle, dt: float, sk: float, lead: Vehicle, gap: float) ->
 	_boss_think_t -= dt
 	if b.tlane == b.lane:
 		b.sig_t = maxf(0.0, b.sig_t - dt)
-		var blocked := lead != null and gap < 26.0 and (lead.v < b.v - 1.0 or lead == player)
+		var blocked := lead != null and gap < 40.0 and (lead.v < b.v - 1.0 or lead == player)
 		if (_boss_think_t <= 0.0 or blocked) and b.sig_t <= 0.0:
-			_boss_think_t = lerpf(1.6, 0.35, minf(sk, 1.0)) * randf_range(0.8, 1.2)
+			_boss_think_t = lerpf(0.9, 0.22, minf(sk, 1.0)) * randf_range(0.8, 1.2)
 			var best := b.lane
 			var best_v := _boss_lane_value(b, b.lane, sk)
 			for l in [b.lane - 1, b.lane + 1]:
-				if l < 0 or l > 3 or _lane_blocked(b, l, lerpf(30.0, 14.0, minf(sk, 1.0)), lerpf(9.0, 5.0, minf(sk, 1.0))):
+				if l < 0 or l > 3 or _lane_blocked(b, l, lerpf(18.0, 10.0, minf(sk, 1.0)), lerpf(6.0, 3.5, minf(sk, 1.0))):
 					continue
-				var val := _boss_lane_value(b, l, sk) - lerpf(18.0, 4.0, minf(sk, 1.0))  # weak bosses are reluctant to move
+				var val := _boss_lane_value(b, l, sk) - lerpf(8.0, 2.0, minf(sk, 1.0))  # weak bosses are a little reluctant to move
 				if val > best_v:
 					best_v = val
 					best = l
@@ -1043,7 +1060,7 @@ func _boss_steer(b: Vehicle, dt: float, sk: float, lead: Vehicle, gap: float) ->
 			b.sig_t = 1.0
 			tx = Data.LANES[b.lane] + _boss_off
 	var d := tx - b.x
-	var lat := lerpf(3.6, 5.2, minf(sk, 1.0)) if b.tlane != b.lane else 1.6
+	var lat := lerpf(4.6, 6.2, minf(sk, 1.0)) if b.tlane != b.lane else 1.8
 	var step := clampf(d, -lat * dt, lat * dt)
 	b.vx = step / maxf(dt, 0.0001)
 	b.x += step
@@ -1085,7 +1102,9 @@ func _boss_score(b: Vehicle, dt: float, sk: float) -> void:
 		if run.b_combo_t <= 0.0:
 			run.b_combo = 0
 	var mult := _boss_mult(sk)
-	var flair := lerpf(0.85, 1.25, minf(sk, 1.0)) + maxf(0.0, sk - 1.0) * 0.4  # style points
+	# style points; scaled so the harder-driving bosses keep the same targets
+	# (about 6k for the first boss up to about 20k for the last over 2 km)
+	var flair := (lerpf(0.85, 1.25, minf(sk, 1.0)) + maxf(0.0, sk - 1.0) * 0.4) * lerpf(0.8, 0.55, minf(sk, 1.0))
 	if b.v > 33.0:
 		run.b_speed_acc += (b.v - 33.0) * 1.3 * dt * mult * flair
 		if run.b_speed_acc >= 1.0:
@@ -1603,6 +1622,8 @@ func _collisions() -> void:
 		and p.z - (boss.z + boss.l) < 0.15 and boss.z < p.z + p.l
 	if boss and run.invuln <= 0.0 and (rammed or _overlap(p, boss)):
 		if boss.is_cop:
+			if autotest:
+				print("[autotest] cop BUSTED after %.1f s, traffic pulled over %d times" % [run.cop_t, _yields])
 			_hit("BUSTED", boss)
 			if run.phase == "cop":
 				hud.banner("BUSTED", "-1 LIFE")
@@ -1728,6 +1749,8 @@ func _apply_boon(id: String) -> void:
 
 
 var _cop_aim := 0.0
+var _cop_think := 0.0
+var _yields := 0
 const COP_CHANCE := 0.3   # chance that a boss trigger is a police pursuit instead
 const COP_TIME := 40.0    # seconds to survive to escape
 
@@ -1797,9 +1820,9 @@ func _update_cop(dt: float) -> void:
 	var lg := _boss_leader(b)
 	var lead: Vehicle = lg[0]
 	var gap: float = lg[1]
-	if lead and lead != player and gap < 35.0:
-		want = minf(want, lead.v + (gap - 5.0) * 0.5)  # traffic in the way: brake behind it
-	b.v += clampf(want - b.v, -10.0 * dt, 8.0 * dt)
+	if lead and lead != player and gap < 30.0:
+		want = minf(want, lead.v + (gap - 3.0) * 0.6)  # traffic in the way: brakes late behind it
+	b.v += clampf(want - b.v, -12.0 * dt, 10.5 * dt)
 	b.v = clampf(b.v, 0.0, 90.0)
 	b.z += b.v * dt
 	if lead and lead != player and b.z + b.l > lead.z - 0.3 and absf(lead.x - b.x) < (lead.w + b.w) / 2.0:
@@ -1819,14 +1842,24 @@ func _update_cop(dt: float) -> void:
 	if absf(gap_to_player) < 20.0:
 		tx = _cop_aim
 	else:
-		if b.tlane == b.lane and (lead and lead != player and gap < 30.0 or b.lane != Data.nearest_lane(player.x)):
+		_cop_think -= dt
+		if b.tlane == b.lane and _cop_think <= 0.0:
+			# hunt for the gap: the lane with the most open road, leaning towards the player
+			_cop_think = 0.25
+			var pl := Data.nearest_lane(player.x)
 			var best := b.lane
-			for l in [Data.nearest_lane(player.x), b.lane - 1, b.lane + 1]:
-				if l >= 0 and l < 4 and l != b.lane and not _lane_blocked(b, l, 25.0, 6.0) and absf(l - Data.nearest_lane(player.x)) <= absf(best - Data.nearest_lane(player.x)):
+			var best_v := _free_ahead(b, b.lane) - absf(b.lane - pl) * 12.0
+			for l in [b.lane - 1, b.lane + 1]:
+				if l < 0 or l > 3 or _lane_blocked(b, l, 12.0, 3.5):
+					continue
+				var val := _free_ahead(b, l) - absf(l - pl) * 12.0 - 6.0
+				if val > best_v:
+					best_v = val
 					best = l
 			b.tlane = best
 		tx = Data.LANES[b.tlane]
-	var step := clampf(tx - b.x, -3.6 * dt, 3.6 * dt)
+	var lat := 5.2 if absf(gap_to_player) >= 20.0 else 3.6  # darts into gaps; near you it reacts with a lag
+	var step := clampf(tx - b.x, -lat * dt, lat * dt)
 	var nx := b.x + step
 	var clear := true
 	for c in traffic:  # never slide sideways into a car
@@ -1903,6 +1936,8 @@ func _update_run(dt: float) -> void:
 		if run.cop_t >= COP_TIME:
 			run.lives = mini(Data.MAX_LIVES, run.lives + 1)
 			_notify("ESCAPED · +1 LIFE", "hot")
+			if autotest:
+				print("[autotest] cop ESCAPED, traffic pulled over %d times" % _yields)
 			hud.banner("ESCAPED", "+1 LIFE")
 			sound.play("ding", 1.5, 3.0)
 			_end_cop()
@@ -3423,3 +3458,22 @@ func _pay_and_go() -> void:
 	hud.set_play_visible(true)
 	run.pit.step = "out"
 	run.dry_t = 0.0
+
+
+## The police are coming up behind this car in its lane, lights flashing.
+func _cop_behind(c: Vehicle) -> bool:
+	if boss == null or not boss.is_cop or run == null or run.phase != "cop":
+		return false
+	var dz := c.z - (boss.z + boss.l)
+	return dz > -1.0 and dz < 75.0 and absf(c.x - boss.x) < 2.4
+
+
+## Open road ahead of b in a lane: distance to the first car there that is
+## not pulling away (150 m if clear).
+func _free_ahead(b: Vehicle, lane: int) -> float:
+	var lx: float = Data.LANES[lane]
+	var free := 150.0
+	for c in traffic:
+		if (absf(c.x - lx) < 1.9 or c.tlane == lane) and c.z + c.l > b.z and c.v < b.v + 1.0:
+			free = minf(free, c.z - (b.z + b.l))
+	return free

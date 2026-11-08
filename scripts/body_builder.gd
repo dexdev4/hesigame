@@ -220,7 +220,8 @@ func section(d: float) -> PackedVector2Array:
 		return p
 	var full := maxf(float(g[5]) - t, 0.05)
 	var hk := clampf(gh_h / full, 0.0, 1.0)
-	var gw_base := minf(w / 2.0 * float(g[6]), hwd * 0.915)
+	# vans: the cargo box carries the side straight up to the roof, no step at the belt
+	var gw_base := minf(w / 2.0 * float(g[6]), hwd * (0.99 - tumble if pr.get("slab", false) else 0.915))
 	var gw_roof := w / 2.0 * float(g[7])
 	var xs_top := lerpf(gw_base, minf(gw_roof * 1.03, gw_base), hk)
 	var drop := clampf(gh_h * 0.22, 0.0, 0.055)
@@ -316,7 +317,10 @@ func _kind(seg: int, d: float) -> String:
 		if seg >= 12 and d > g[1] and d < g[1] + 0.09:
 			return "dark"  # cowl panel at the foot of the windshield
 		return "paint"
+	var slab: bool = pr.get("slab", false)
 	if seg == 10:
+		if slab and d < pillars[1][0]:
+			return "paint"  # cargo box: no windows, so no seal
 		return "gloss"  # window seal along the belt line
 	if seg <= 13:
 		var row := seg - 11
@@ -331,9 +335,13 @@ func _kind(seg: int, d: float) -> String:
 	var ws: bool = d > g[3]
 	var rs: bool = d < g[2]
 	if seg == 14:
+		if slab:
+			return "paint"
 		return "paint" if (ws or rs) else "gloss"  # A/C pillar edge, or the trim above the side windows
 	if seg == 15:
 		return "paint"
+	if rs and slab:
+		return "paint"  # rear doors are panels (their windows are added as details)
 	return "glass" if (ws or rs) else "paint"
 
 
@@ -458,8 +466,8 @@ func details(S: Dictionary, tails: SurfaceTool, sig_l: SurfaceTool, sig_r: Surfa
 	# wing mirrors on the black sail at the front of the side glass
 	var dmr := lerpf(g[0], g[1], 0.962)
 	var tm := top(dmr)
-	var gwb := minf(w / 2.0 * float(g[6]), hw(dmr) * 0.915)
-	for s in [-1.0, 1.0]:
+	var gwb := minf(w / 2.0 * float(g[6]), hw(dmr) * (0.99 - tumble if pr.get("slab", false) else 0.915))
+	for s in ([] if pr.get("slab", false) else [-1.0, 1.0]):
 		# rounded housing on a short arm, mirror glass facing back, indicator
 		# strip along its leading edge
 		var hc := Vector3(s * (gwb + 0.17), tm + 0.115, -dmr + 0.02)
@@ -488,6 +496,9 @@ func details(S: Dictionary, tails: SurfaceTool, sig_l: SurfaceTool, sig_r: Surfa
 	CarModel._box(tails, Vector3(0, roof_y(d3) + 0.04, -d3), Vector3(0.34, 0.025, 0.05))
 	var da2: float = g[2] + 0.2
 	CarModel._box(S.gloss, Vector3(0, roof_y(da2) + 0.055, -da2), Vector3(0.07, 0.06, 0.18))
+	if pr.get("slab", false):
+		_van_details(S)
+		return
 	# door shut lines, the door bottoms and handles
 	var four_door: bool = g[1] - g[0] > 2.4 and not ["muscle", "fastback", "super", "rcoupe", "hyper"].has(id)
 	var lines: Array = [axles[1] - R - 0.05, lerpf(axles[0], axles[1], 0.52)]
@@ -536,6 +547,97 @@ func details(S: Dictionary, tails: SurfaceTool, sig_l: SurfaceTool, sig_r: Surfa
 			for sx in [-1.0, 1.0]:
 				CarModel._quad(S.accent, Vector3(sx * 0.07, roof_y(a2) + 0.03, -a2), Vector3(sx * 0.27, roof_y(a2) + 0.03, -a2),
 					Vector3(sx * 0.27, roof_y(b2) + 0.03, -b2), Vector3(sx * 0.07, roof_y(b2) + 0.03, -b2), Vector3.UP)
+
+
+## Panel van: cab doors, a sliding side door on the kerb side, a rubbing strip
+## along the flanks, and twin rear doors with windows, handle and hinges.
+func _van_details(S: Dictionary) -> void:
+	var y_lo := floor_y + 0.07
+	var d_b: float = pillars[1][0] + 0.02        # cab door rear edge, at the B-pillar
+	var d_a: float = axles[1] + R + 0.04          # cab door front edge, behind the front wheel
+	var slide1 := d_b - 0.03                      # sliding door, front edge
+	var slide0 := slide1 - 1.25                   # and rear edge
+	var y_top := roof_y(2.0) - 0.12
+	for s in [-1.0, 1.0]:
+		var verts: Array = [d_b, d_a]
+		if s > 0.0:
+			verts.append_array([slide1, slide0])
+		for dz in verts:
+			# cab door edges stop under the glass; the sliding door runs almost to the roof
+			var top_y: float = y_top if dz < d_b - 0.01 else top(dz) - 0.025
+			for k in 9:
+				_line(S.dark, wall_pn(dz, lerpf(y_lo, top_y, k / 9.0)), wall_pn(dz, lerpf(y_lo, top_y, (k + 1) / 9.0)), Vector3(0, 0, 0.0035), s)
+		var runs: Array = [[d_b, d_a, y_lo]]
+		if s > 0.0:
+			runs.append([slide0, slide1, y_lo])
+			runs.append([slide0, slide1, y_top])
+			runs.append([slide0 - 0.25, slide0 + 0.05, lerpf(y_lo, y_top, 0.62)])  # the slide rail
+		for rr in runs:
+			for k in 8:
+				_line(S.dark, wall_pn(lerpf(rr[0], rr[1], k / 8.0), rr[2]), wall_pn(lerpf(rr[0], rr[1], (k + 1) / 8.0), rr[2]), Vector3(0, 0.0035, 0), s)
+		# black rubbing strip along the lower flank, broken by the wheel arches
+		var ys := floor_y + 0.36
+		for span in [[0.12, axles[0] - R - 0.03], [axles[0] + R + 0.03, axles[1] - R - 0.03]]:
+			var n := 12
+			for k in n:
+				var pa: Array = wall_pn(lerpf(span[0], span[1], float(k) / n), ys)
+				var pb: Array = wall_pn(lerpf(span[0], span[1], float(k + 1) / n), ys)
+				var a: Vector3 = pa[0] + pa[1] * 0.012
+				var b: Vector3 = pb[0] + pb[1] * 0.012
+				a.x *= s
+				b.x *= s
+				CarModel._box(S.dark, (a + b) * 0.5, Vector3(0.024, 0.075, absf(b.z - a.z) + 0.002))
+		# door handles
+		var hp: Array = wall_pn(d_b + 0.18, top(d_b) - 0.12)
+		var hpos: Vector3 = hp[0] + hp[1] * 0.012
+		CarModel._box(S.dark, Vector3(hpos.x * s, hpos.y, hpos.z), Vector3(0.025, 0.035, 0.18))
+		if s > 0.0:
+			var sp: Array = wall_pn(slide1 - 0.18, top(slide1) - 0.12)
+			var spos: Vector3 = sp[0] + sp[1] * 0.012
+			CarModel._box(S.dark, spos, Vector3(0.025, 0.035, 0.18))
+	# tall commercial mirrors on the doors, ahead of the car mirrors' place
+	var dm: float = lerpf(g[0], g[1], 0.955)
+	var ym := top(dm) + 0.22
+	var xm := hw(dm) + 0.2
+	for s in [-1.0, 1.0]:
+		CarModel._strap(S.gloss, Vector3(s * (hw(dm) - 0.02), top(dm) + 0.05, -dm), Vector3(s * (xm - 0.04), ym - 0.12, -dm + 0.03), 0.03, 0.03)
+		CarModel._box(S.gloss, Vector3(s * xm, ym, -dm + 0.04), Vector3(0.1, 0.36, 0.08))
+		CarModel._box(S.chrome, Vector3(s * xm, ym, -dm + 0.081), Vector3(0.085, 0.33, 0.004))
+	# rear doors: centre seam, a window in each, handle, hinges and a step bumper
+	var hr := hw(0.03)
+	var zb := -0.004
+	var r_top := float(g[5]) - 0.1
+	CarModel._box(S.dark, Vector3(0, (floor_y + r_top) * 0.5 + 0.05, zb), Vector3(0.012, r_top - floor_y - 0.1, 0.012))
+	for sx in [-1.0, 1.0]:
+		var x0: float = sx * 0.07
+		var x1: float = sx * (hr - 0.16)
+		var c := Vector3((x0 + x1) * 0.5, 1.68, zb - 0.002)
+		var sz := Vector3(absf(x1 - x0), 0.5, 0.012)
+		CarModel._box(S.gloss, c, sz + Vector3(0.05, 0.05, 0.0))
+		CarModel._box(S.glass_solid, c + Vector3(0, 0, 0.003), sz)
+		for hy in [0.9, 1.9]:
+			CarModel._box(S.dark, Vector3(sx * (hr - 0.04), hy, zb - 0.01), Vector3(0.07, 0.09, 0.03))
+	CarModel._box(S.dark, Vector3(0.12, 1.2, zb - 0.012), Vector3(0.05, 0.16, 0.03))
+	CarModel._box(S.dark, Vector3(0, floor_y + 0.355, 0.045), Vector3(0.9, 0.025, 0.1))  # step plate on the bumper
+
+
+## Point and outward normal on the right side wall at height y, including the
+## flat-sided cargo box above the shoulder (vans).
+func wall_pn(d: float, y: float) -> Array:
+	var p := section(d)
+	var top_k := 14
+	for k in range(4, top_k):
+		if y <= p[k + 1].y or k == top_k - 1:
+			var a: Vector2 = p[k]
+			var b: Vector2 = p[k + 1]
+			var f := clampf((y - a.y) / maxf(b.y - a.y, 0.0001), 0.0, 1.0)
+			var q := a.lerp(b, f)
+			var dir := (b - a).normalized()
+			var n := Vector3(dir.y, -dir.x, 0.0)
+			if n.x < 0.2:
+				n = Vector3(1, 0, 0)
+			return [Vector3(q.x, q.y, -d), n.normalized()]
+	return side_pn(d, y)
 
 
 ## A thin dark strip between two side points, mirrored to side s.
@@ -816,6 +918,17 @@ func lights(S: Dictionary, tails: SurfaceTool, sig_l: SurfaceTool, sig_r: Surfac
 		var gx := hw(l) * 0.3
 		_panel(S.grille, Vector3(-gx, gy0, gz), Vector3(gx, gy1, gz), n, Vector2(0, 0), Vector2(1, 1))
 		_frame(S.chrome, Vector3(-gx, gy0, gz - 0.002), Vector3(gx, gy1, gz - 0.002))
+	elif kind == "van":  # a tall grille filling the gap between the lamps, with chrome slats
+		var vx := hw(l) * 0.39
+		var vy0 := tf - 0.3
+		var vy1 := tf - 0.03
+		_panel(S.grille, Vector3(-vx, vy0, gz), Vector3(vx, vy1, gz), n, Vector2(0, 0), Vector2(1.6, 0.9))
+		_frame(S.gloss, Vector3(-vx, vy0, gz - 0.002), Vector3(vx, vy1, gz - 0.002))
+		for k in 3:
+			var sy := lerpf(vy0, vy1, (k + 1) / 4.0)
+			CarModel._box(S.chrome, Vector3(0, sy, gz - 0.01), Vector3(vx * 2.0 - 0.04, 0.022, 0.012))
+		# unpainted black lower bumper wrapping the nose
+		CarModel._box(S.dark, Vector3(0, floor_y + 0.17, -l + 0.03), Vector3(hw(l) * 2.0 - 0.06, 0.2, 0.09))
 	elif kind == "bar":  # a slim slot between the lamps
 		var bx := hw(l) * 0.26
 		_panel(S.grille, Vector3(-bx, tf - 0.15, gz), Vector3(bx, tf - 0.1, gz), n, Vector2(0, 0), Vector2(1.2, 0.3))

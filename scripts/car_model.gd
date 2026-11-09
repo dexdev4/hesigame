@@ -1137,6 +1137,7 @@ var _sig_l: MeshInstance3D
 var _sig_r: MeshInstance3D
 var _body: Node3D
 var _wheels: Array[Node3D] = []
+var _wheel_steer := 0.0  # road-wheel angle of the front wheels, radians (+ = right)
 var _wheel_r := 0.32
 var _spin := 0.0
 var _road := 0.0
@@ -1553,8 +1554,17 @@ func spin(v: float, dt: float) -> void:
 		_road += v * dt
 		var k := minf(v / 30.0, 1.0)
 		_body.position.y = (0.005 * sin(_road * 1.3 + _phase) + 0.0025 * sin(_road * 4.1 + _phase * 2.0)) * k
+	var front_z := 0.0
+	for wn in _wheels:
+		front_z = minf(front_z, wn.position.z)
 	for wn in _wheels:
 		wn.rotation.x = _spin
+		wn.rotation.y = -_wheel_steer if wn.position.z < front_z + 0.6 else 0.0
+
+
+## Turn the front wheels to a road-wheel angle (radians, + = right).
+func set_wheel_steer(a: float) -> void:
+	_wheel_steer = a
 
 
 # ---------------------------------------------------------------- first-person

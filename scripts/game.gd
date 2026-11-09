@@ -34,6 +34,9 @@ class Vehicle:
 	var is_cop := false
 	var id := 0
 	var yielding := false  # pulling over for the police
+	var yaw := 0.0         # heading (radians, + = nose right): the player's comes from its steering
+	var yaw_rate := 0.0
+	var steer := 0.0       # front road-wheel angle (radians)
 	var b_ahead := false   # boss scoring: this car is ahead of the boss
 	var b_min := 99.0      # closest the boss got while passing it
 	var b_cut := false
@@ -620,6 +623,8 @@ func _reset_world() -> void:
 	target_x = player.x
 	player.v = 24.0
 	player.vx = 0.0
+	player.yaw = 0.0
+	player.steer = 0.0
 	var z := 45.0
 	while z < 400.0:
 		_try_spawn(z)
@@ -785,6 +790,7 @@ func _update_traffic(dt: float) -> void:
 			var tx: float = Data.LANES[c.tlane]
 			var d := tx - c.x
 			var lat := 3.2 if c.yielding else 1.9  # quicker when moving over for the police
+			lat = minf(lat, c.v * 0.14)  # it can only drift over as fast as it rolls forward
 			var step := lat * dt * signf(d)
 			c.vx = lat * signf(d)
 			if absf(d) <= absf(step):
@@ -1065,6 +1071,7 @@ func _boss_steer(b: Vehicle, dt: float, sk: float, lead: Vehicle, gap: float) ->
 			tx = Data.LANES[b.lane] + _boss_off
 	var d := tx - b.x
 	var lat := lerpf(4.6, 6.2, minf(sk, 1.0)) if b.tlane != b.lane else 1.8
+	lat = minf(lat, b.v * 0.2)  # real steering: no sideways motion without forward speed
 	var step := clampf(d, -lat * dt, lat * dt)
 	b.vx = step / maxf(dt, 0.0001)
 	b.x += step
@@ -1297,7 +1304,7 @@ func _hit(reason: String, other: Vehicle = null) -> void:
 		var s := signf(other.x - player.x)
 		if s == 0.0:
 			s = 1.0
-		player.vx = -s * 3.2
+		_set_player_vx(-s * 3.2)
 		target_x = Data.LANES[Data.nearest_lane(player.x - s * 1.5)]
 	sparks.position = Vector3(player.x, 0.6, -player.l * 0.5)
 	sparks.restart()
@@ -1317,7 +1324,7 @@ func _start_crash(v0: float, side: float, other: Vehicle) -> void:
 	crash = Crash.new()
 	_crash_cam_t = 0.0
 	var k := clampf(v0 / 30.0, 0.5, 1.6)
-	crash.yaw = atan2(player.vx, maxf(v0, 4.0)) * 0.9
+	crash.yaw = player.yaw
 	# knocked away from whatever it hit, nose swung towards it
 	crash.vel = Vector2(player.vx * 0.4 - side * randf_range(2.5, 4.5) * k, v0 * 0.86)
 	crash.yaw_rate = side * randf_range(1.7, 2.8) * k
@@ -1420,6 +1427,8 @@ func _update_crash(dt: float) -> void:
 		_crash_collide(o)
 	player.v = maxf(c.vel.y, 0.0)
 	player.vx = c.vel.x
+	player.yaw = 0.0
+	player.steer = 0.0
 	if scraping and fmod(c.t, 0.12) < dt:
 		_spark_at(Vector3(player.x, 0.3, -player.l * 0.5))
 	if not c.settled and grounded and c.air <= 0.0 and c.vel.length() < 0.4 and absf(c.roll_rate) < 0.3:
@@ -1566,35 +1575,72 @@ func _update_player(dt: float) -> void:
 			_start_pit()
 			return
 	player_accel = lerpf(player_accel, (player.v - v_before) / maxf(dt, 0.0001), minf(1.0, dt * 6.0))
-	# steering: chase the swipe target with limited lateral speed and grip
-	var speed_k := clampf(player.v / 12.0, 0.25, 1.0)
-	var lat_max: float = st.lat * speed_k
 	if live and not autotest:
 		_analog_steer(dt)
-	var desired := clampf((target_x - player.x) * 3.2, -lat_max, lat_max)
-	var grip: float = st.grip * (1.0 - 0.22 * clampf(vr, 0.0, 1.2)) * (0.6 if on_shoulder else 1.0)
-	player.vx += clampf(desired - player.vx, -grip * dt, grip * dt)
-	player.x += player.vx * dt
-	player.z += player.v * dt
+	_drive_steer(dt, brk, vr)
 	on_shoulder = absf(player.x) + player.w / 2.0 > Data.ROAD_HALF + 0.25 and not (player.x > 0.0 and _in_station_zone())
 	var side := signf(player.x)
 	var lim := (_right_limit() if side > 0.0 else Data.RAIL) - player.w / 2.0
 	if absf(player.x) > lim and side > 0.0 and _in_station_zone():
 		# the fuel stop's tapers and rails: a scrape along them, not a crash
 		player.x = lim
-		player.vx = minf(player.vx, 0.0) - 0.4
+		_set_player_vx(minf(player.vx, 0.0) - 0.4)
 		player.v = maxf(0.0, player.v - 3.0 * dt)
 		target_x = minf(target_x, lim - 0.2)
 	elif absf(player.x) > lim:
 		var s := signf(player.x)
 		player.x = s * lim
-		player.vx = -s * 2.6
+		_set_player_vx(-s * 2.6)
 		target_x = Data.LANES[3 if s > 0.0 else 0]
 		sparks.position = Vector3(s * Data.RAIL, 0.6, -2.0)
 		sparks.restart()
 		sparks.emitting = true
 		if live:
 			_hit("GUARDRAIL")
+
+
+## Real steering (a bicycle model): the car can only change direction by
+## rolling forward on turned front wheels. Turn rate = speed x tan(wheel
+## angle) / wheelbase, so a stopped car cannot turn at all and a slow one
+## needs lots of lock. The front wheels turn at a limited rate, the lock
+## available shrinks with speed, and the tyres only grip up to a sideways
+## acceleration: ask for more and the car runs wide. Braking hard uses up
+## some of that grip. The car's sideways speed is just where its nose points.
+func _drive_steer(dt: float, brk: bool, vr: float) -> void:
+	var v := player.v
+	var wb := player.l * 0.6
+	# where the input wants the car: a sideways speed towards the target
+	var want_vx := clampf((target_x - player.x) * 3.2, -st.lat, st.lat)
+	# the heading that gives it (a car moves sideways only by pointing that way)
+	var max_head := 0.45
+	var head_des := player.yaw
+	if v > 0.2:
+		head_des = asin(clampf(want_vx / v, -sin(max_head), sin(max_head)))
+	var r_des := (head_des - player.yaw) * 6.0
+	# the front-wheel angle the driver dials in for that turn rate
+	var lock := lerpf(0.6, 0.06, clampf(v / 45.0, 0.0, 1.0))
+	var steer_des := clampf(atan(r_des * wb / maxf(v, 0.5)), -lock, lock)
+	if v < 0.2:
+		steer_des = player.steer  # parked: the wheels stay where they were left
+	player.steer = move_toward(player.steer, steer_des, 1.8 * dt)
+	var r := v * tan(player.steer) / wb
+	# grip limit (friction circle): less sideways grip while braking, on the
+	# shoulder, and as the tyres load up near top speed
+	var grip: float = st.grip * (1.0 - 0.18 * clampf(vr, 0.0, 1.2)) * (0.6 if on_shoulder else 1.0) * (0.75 if brk and v > 3.0 else 1.0)
+	if absf(r) * v > grip:
+		r = signf(r) * grip / maxf(v, 0.1)  # past the limit: understeer, the car runs wide
+	player.yaw_rate = r
+	player.yaw = clampf(player.yaw + r * dt, -0.6, 0.6)
+	player.vx = v * sin(player.yaw)
+	player.x += player.vx * dt
+	player.z += v * cos(player.yaw) * dt
+
+
+## Point the player's car so its sideways speed is vx (after a knock or a
+## bounce off the rail). At a crawl it can only point so far.
+func _set_player_vx(vx: float) -> void:
+	player.yaw = asin(clampf(vx / maxf(player.v, 1.0), -0.5, 0.5))
+	player.vx = player.v * sin(player.yaw)
 
 
 func _overlap(a: Vehicle, b: Vehicle) -> bool:
@@ -1863,6 +1909,7 @@ func _update_cop(dt: float) -> void:
 			b.tlane = best
 		tx = Data.LANES[b.tlane]
 	var lat := 5.2 if absf(gap_to_player) >= 20.0 else 3.6  # darts into gaps; near you it reacts with a lag
+	lat = minf(lat, b.v * 0.2)
 	var step := clampf(tx - b.x, -lat * dt, lat * dt)
 	var nx := b.x + step
 	var clear := true
@@ -2104,7 +2151,9 @@ func _check_shots() -> void:
 func _place(c: Vehicle, delta: float) -> void:
 	c.model.spin(c.v, delta)
 	c.model.position = Vector3(c.x, 0.0, -(c.z - player.z))
-	c.model.rotation.y = -atan2(c.vx, maxf(c.v, 4.0)) * 0.9
+	# a car points where it is going (none of them can move sideways while stopped)
+	c.model.rotation.y = -(c.yaw if c == player else atan2(c.vx, maxf(c.v, 1.0)))
+	c.model.set_wheel_steer(c.steer if c == player else clampf(atan2(c.vx, maxf(c.v, 1.0)) * 2.5, -0.5, 0.5))
 	c.model.set_brake(c.braking)
 	var dir := 0
 	if c.tlane >= 0 and c.tlane != c.lane:
@@ -2123,7 +2172,7 @@ func _sync_visuals(delta: float) -> void:
 		player.model.set_crash_pose(player.x, crash.yaw, crash.roll, crash.air)
 		_crash_marks()
 	else:
-		player.model.set_roll(clampf(-player.vx * 0.025, -0.06, 0.06))
+		player.model.set_roll(clampf(-player.v * player.yaw_rate * 0.006, -0.06, 0.06))  # leans out of the turn
 		player.model.set_pitch(clampf(-player_accel * 0.0028, -0.022, 0.03))
 		smoke.emitting = false
 	skids.update_view(player.z)
@@ -2135,7 +2184,7 @@ func _sync_visuals(delta: float) -> void:
 	player.model.visible = not idcolor
 	player.model.set_ghost(run != null and run.invuln > 0.0 and run.dying <= 0.0, t)
 	player.model.set_gauges(player.v * 3.6 / 300.0, sound.rpm / (sound.redline * 1.1))
-	player.model.set_steer(clampf(player.vx * 0.3, -1.4, 1.4) if crash == null else 0.0)
+	player.model.set_steer(clampf(player.steer * 7.0, -2.6, 2.6) if crash == null else 0.0)  # steering ratio
 	player.model.set_gear(sound.gear, delta)
 	var sp := _speed_text()
 	player.model.set_display(sound.gear, sp[0], sp[1], ("Fuel %d L" % ceili(run.fuel)) if run else ("%.1f km" % (player.z / 1000.0)))
@@ -2789,13 +2838,13 @@ func _record(dt: float) -> void:
 		pv[Replay.P_AIR] = crash.air
 		pv[Replay.P_CRASH] = 1.0
 	else:
-		pv[Replay.P_YAW] = atan2(player.vx, maxf(player.v, 4.0)) * 0.9
-		pv[Replay.P_ROLL] = clampf(-player.vx * 0.025, -0.06, 0.06)
+		pv[Replay.P_YAW] = player.yaw
+		pv[Replay.P_ROLL] = clampf(-player.v * player.yaw_rate * 0.006, -0.06, 0.06)
 		pv[Replay.P_PITCH] = clampf(-player_accel * 0.0028, -0.022, 0.03)
 	var live := _live()
 	pv[Replay.P_GAS] = 1.0 if (in_gas if live and not autotest else ap_gas) else 0.0
 	pv[Replay.P_BRAKE] = 1.0 if player.braking else 0.0
-	pv[Replay.P_STEER] = clampf(player.vx * 0.3, -1.4, 1.4) if crash == null else 0.0
+	pv[Replay.P_STEER] = clampf(player.steer * 7.0, -2.6, 2.6) if crash == null else 0.0
 	pv[Replay.P_GHOST] = 1.0 if run.invuln > 0.0 and run.dying <= 0.0 else 0.0
 	var cars := {}
 	var all: Array[Vehicle] = traffic.duplicate()
@@ -2854,6 +2903,7 @@ func _close_replay() -> void:
 	player.z = lv[1]
 	player.v = lv[2]
 	player.vx = lv[3]
+	player.yaw = asin(clampf(player.vx / maxf(player.v, 1.0), -0.5, 0.5))
 	for id in _models:
 		(_models[id] as CarModel).visible = not _retired.has(id)
 	if crash == null:
@@ -2914,7 +2964,7 @@ func _replay_show(t: float, dt: float) -> void:
 		var v: PackedFloat32Array = cars[id]
 		m.visible = true
 		m.position = Vector3(v[Replay.C_X], 0.0, -(v[Replay.C_Z] - pz))
-		m.rotation.y = -atan2(v[Replay.C_VX], maxf(v[Replay.C_V], 4.0)) * 0.9
+		m.rotation.y = -atan2(v[Replay.C_VX], maxf(v[Replay.C_V], 1.0))
 		m.spin(v[Replay.C_V], absf(dt))
 		m.set_brake(v[Replay.C_BRAKE] > 0.5)
 		m.set_signal(roundi(v[Replay.C_SIG]), fmod(t * 2.6, 1.0) < 0.55)
@@ -2937,6 +2987,7 @@ func _replay_show(t: float, dt: float) -> void:
 	pm.set_brake(p[Replay.P_BRAKE] > 0.5)
 	pm.set_ghost(p[Replay.P_GHOST] > 0.5, t)
 	pm.set_steer(p[Replay.P_STEER])
+	pm.set_wheel_steer(p[Replay.P_STEER] / 7.0)
 	pm.set_gear(int(f.gear), absf(dt))
 	pm.set_gauges(p[Replay.P_V] * 3.6 / 300.0, float(f.rpm) / (sound.redline * 1.1))
 	sound.quiet = not rp.play
@@ -3398,6 +3449,13 @@ func _update_pit(dt: float) -> void:
 				run.invuln = maxf(run.invuln, 1.6)
 	player.vx = (nx - player.x) / maxf(dt, 0.0001)
 	player.x = nx
+	if player.v > 0.05:
+		# point along the path it is driving; the wheels turn for its curve
+		var ny := clampf(atan2(player.vx, maxf(player.v, 0.5)), -0.5, 0.5)
+		var r := (ny - player.yaw) / maxf(dt, 0.0001)
+		player.yaw = ny
+		player.yaw_rate = r
+		player.steer = move_toward(player.steer, clampf(atan(r * player.l * 0.6 / maxf(player.v, 0.5)), -0.6, 0.6), 1.8 * dt)
 	player_accel = 0.0
 
 

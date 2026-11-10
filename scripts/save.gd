@@ -14,7 +14,7 @@ func _ready() -> void:
 func defaults() -> Dictionary:
 	return {
 		"cash": 0, "best": 0, "runs": 0,
-		"owned": ["kestrel"], "selected": "kestrel", "unlocked": [],
+		"owned": ["comet"], "selected": "comet", "unlocked": [],
 		"perm": {"accel": 0, "brake": 0, "handling": 0, "top": 0, "lives": 0},
 		"sound": true, "assist": true,
 		"cam": _cam_defaults(),
@@ -90,6 +90,9 @@ func load_data() -> void:
 	if parsed.has("perm") and parsed.perm is Dictionary:
 		for k in parsed.perm:
 			data.perm[k] = int(parsed.perm[k])
+	# the starter car is always in the garage (older saves started with the Kestrel)
+	if data.owned is Array and not data.owned.has("comet"):
+		data.owned.insert(0, "comet")
 	# JSON numbers load as floats; keep counters as ints.
 	for k in ["cash", "best", "runs"]:
 		data[k] = int(data[k])

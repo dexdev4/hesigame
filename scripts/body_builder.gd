@@ -974,7 +974,7 @@ func cabin_mesh() -> ArrayMesh:
 	var dash_top := t + 0.13
 	var d_front := minf(float(g[1]) - 0.12, glass_d(dash_top + 0.03))
 	CarModel._box(st, Vector3(0, dash_top - 0.07, -(d_front - 0.2)), Vector3(gw * 2.0, 0.14, 0.4))
-	var eye_d: float = g[1] - 1.45
+	var eye_d: float = g[1] - float(pr.get("eye_back", 1.45))
 	var sx := 0.36 * w / 1.84
 	var seat_top := minf(t + 0.45, roof_y(eye_d - 0.28) - 0.16)
 	for x in [-sx, sx]:

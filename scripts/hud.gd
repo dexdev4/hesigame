@@ -779,7 +779,7 @@ func _build_menu() -> void:
 	v.add_child(stats)
 	var a := _stat("$0", "Cash", AMBER)
 	var b := _stat("0", "Best run")
-	var c := _stat("Kestrel", "Your car")
+	var c := _stat("Comet", "Your car")
 	for s in [a, b, c]:
 		stats.add_child(s[0])
 	_menu["cash"] = a[1]

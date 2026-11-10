@@ -72,6 +72,13 @@ const PROFILES := {
 		"gh": [1.65, 3.72, 2.3, 3.1, 0.78, 1.13, 0.84, 0.62], "pillars": [[0.0, 0.3], [0.9, 1.0]],
 		"roof_drop": 0.05, "rim_frac": 0.73, "tyre": [0.335, 0.275], "head": [-0.085, -0.03, 0.42], "projectors": 0, "tail": [-0.1, -0.045, 0.52], "wheel": [0.36, 0.95, 3.72], "exhaust": 4, "spoiler": "wing", "diffuser": true, "grille": "none",
 		"corner": [0.3, 0.46], "flare": [0.07, 0.06], "fender": [0.06, 0.085], "crease_h": 0.55, "tumble": 0.11},
+	# starter coupe: body from an imported model (assets/models/starter_coupe.mesh,
+	# split into paint, glass and lamps); this profile only shapes its cabin
+	"coupe": {
+		"mesh": "res://assets/models/starter_coupe.mesh",
+		"body": [[0.0, 0.88, 0.84], [0.25, 0.93, 0.95], [0.6, 0.97, 1.0], [2.6, 0.94, 1.0], [3.0, 0.86, 0.98], [3.5, 0.8, 0.95], [4.0, 0.7, 0.9], [4.3, 0.6, 0.8]],
+		"gh": [0.62, 2.83, 1.2, 2.4, 0.93, 1.25, 0.8, 0.64], "pillars": [[0.0, 0.3], [0.9, 1.0]],
+		"rim_frac": 0.68, "tyre": [0.245, 0.245], "wheel": [0.345, 0.82, 3.44], "wheel_x": [0.778, 0.752], "badge_y": 0.7, "eye_back": 1.3, "dash_drop": 0.17},
 	# panel van: short sloping bonnet, steep windscreen, tall slab-sided cargo
 	# box with solid panels behind the cab, twin rear doors, tall tail lamps
 	"van": {
@@ -588,6 +595,8 @@ const SURFACES := ["paint", "glass", "glass_solid", "dark", "gloss", "under", "c
 static func _car_kit(id: String, style := {}, lq := false) -> Dictionary:
 	var sh: Dictionary = Data.SHAPES[id]
 	var pr: Dictionary = PROFILES[id]
+	if pr.has("mesh"):
+		return _mesh_kit(id, pr, sh, style)
 	var w: float = sh.w
 	var l: float = sh.l
 	var S := {}
@@ -800,6 +809,95 @@ static func _car_kit(id: String, style := {}, lq := false) -> Dictionary:
 	kit["surfaces"] = names
 	if bb:
 		kit["cabin"] = bb.cabin_mesh()
+	return kit
+
+
+## A car body from an imported model. The converter (see README) has already
+## split it into surfaces in car space: paint, glass, dark trim, wheel wells,
+## chrome, and the head and tail lamps. Tail lamps go to their own mesh so
+## they brighten under braking; the outer ends of the lamps double as the
+## indicators. The cabin, wheels and interior come from the profile as usual.
+static func _mesh_kit(id: String, pr: Dictionary, sh: Dictionary, style: Dictionary) -> Dictionary:
+	var f := FileAccess.open(pr.mesh, FileAccess.READ)
+	var body := ArrayMesh.new()
+	var names: Array = []
+	var kit := {}
+	var sig_l := _new_st()
+	var sig_r := _new_st()
+	if f == null or f.get_buffer(4).get_string_from_ascii() != "CPE2":
+		push_error("car mesh missing: %s" % pr.mesh)
+		return {}
+	var n_surf := f.get_32()
+	for si in n_surf:
+		var sname := f.get_buffer(f.get_32()).get_string_from_utf8()
+		var nv := f.get_32()
+		var pos := f.get_buffer(nv * 12).to_float32_array()
+		var nor := f.get_buffer(nv * 12).to_float32_array()
+		var idx := f.get_buffer(f.get_32() * 4).to_int32_array()
+		for t in range(0, idx.size(), 3):  # glTF winds front faces anticlockwise, Godot clockwise
+			var tmp := idx[t + 1]
+			idx[t + 1] = idx[t + 2]
+			idx[t + 2] = tmp
+		var P := PackedVector3Array()
+		var N := PackedVector3Array()
+		P.resize(nv)
+		N.resize(nv)
+		for i in nv:
+			P[i] = Vector3(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2])
+			N[i] = Vector3(nor[i * 3], nor[i * 3 + 1], nor[i * 3 + 2])
+		var C := PackedColorArray()
+		C.resize(nv)
+		C.fill(Color.WHITE)
+		var arr := []
+		arr.resize(Mesh.ARRAY_MAX)
+		arr[Mesh.ARRAY_VERTEX] = P
+		arr[Mesh.ARRAY_NORMAL] = N
+		arr[Mesh.ARRAY_COLOR] = C
+		arr[Mesh.ARRAY_INDEX] = idx
+		if sname == "head" or sname == "tail":
+			# outer ends of the lamps: amber indicators laid just over them
+			for t in range(0, idx.size(), 3):
+				var a := P[idx[t]]
+				var b := P[idx[t + 1]]
+				var c := P[idx[t + 2]]
+				var cx := (a.x + b.x + c.x) / 3.0
+				if absf(cx) < (0.6 if sname == "head" else 0.5):
+					continue
+				var st: SurfaceTool = sig_l if cx < 0.0 else sig_r
+				var na := N[idx[t]]
+				var nb := N[idx[t + 1]]
+				var nc := N[idx[t + 2]]
+				_tri(st, a + na * 0.003, b + nb * 0.003, c + nc * 0.003, na, nb, nc)
+		if sname == "tail":
+			var uv := PackedVector2Array()
+			uv.resize(nv)
+			uv.fill(BodyBuilder.LED_UV)
+			arr[Mesh.ARRAY_TEX_UV] = uv
+			var tm := ArrayMesh.new()
+			tm.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+			kit["tails"] = tm
+			continue
+		if sname == "headlens":
+			sname = "head"
+		body.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+		names.append(sname)
+	# number plate on the tail
+	var plate := _new_st()
+	_box(plate, Vector3(0, 0.6, 0.006), Vector3(0.52, 0.12, 0.016))
+	body.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, plate.commit_to_arrays())
+	names.append("plate")
+	var wx: Array = pr.wheel_x
+	var tyre: Array = pr.tyre
+	var wheels: Array = []
+	for k in 2:
+		var ax: float = pr.wheel[1 + k]
+		wheels.append([-float(wx[k]), -ax, tyre[k]])
+		wheels.append([float(wx[k]), -ax, tyre[k]])
+	kit.merge({"sig_l": sig_l.commit(), "sig_r": sig_r.commit(), "wheels": wheels, "rim_frac": pr.get("rim_frac", 0.66),
+		"r": pr.wheel[0], "ww": tyre[0], "plate_y": 0.6, "plate_z": 0.02, "body": body, "surfaces": names})
+	if not kit.has("tails"):
+		kit["tails"] = ArrayMesh.new()
+	kit["cabin"] = BodyBuilder.new(id, pr, sh, style).cabin_mesh()
 	return kit
 
 
@@ -1275,7 +1373,7 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a"), style 
 			bd.pixel_size = 0.0018
 			bd.modulate = Color("#d9dde1")
 			bd.outline_size = 0
-			bd.position = Vector3(0.0, (PROFILES.get(shape_id, {}).get("body", [[0, 0.8]])[0][1]) - 0.34, 0.02)
+			bd.position = Vector3(0.0, PROFILES.get(shape_id, {}).get("badge_y", (PROFILES.get(shape_id, {}).get("body", [[0, 0.8]])[0][1]) - 0.34), 0.02)
 			_body.add_child(bd)
 			_lod(bd, 0.0, 45.0)
 	if style.has("fleet") and kit.get("truck", false):
@@ -1581,7 +1679,7 @@ func cockpit_eye() -> Vector3:
 		return Vector3(-0.42, 1.72, -3.95)
 	var g: Array = pr.gh
 	var y: float = minf(g[4] + 0.38, g[5] - 0.16)
-	return Vector3(-0.36 * shape.w / 1.84, y, -(g[1] - 1.45))
+	return Vector3(-0.36 * shape.w / 1.84, y, -(g[1] - float(pr.get("eye_back", 1.45))))
 
 
 ## Bonnet camera position in car space.
@@ -1661,7 +1759,7 @@ func build_interior() -> void:
 	for si in 11:
 		var shift := si * 0.02
 		for di in 13:
-			var y_try := yb - di * 0.01
+			var y_try := yb - float(pr.get("dash_drop", 0.0)) - di * 0.01  # low cars: dash sits under the eye line
 			var pad_ok := y_try + 0.09 <= bbi.roof_y(g[1] - 0.06 - shift) - 0.02
 			var hood_ok := y_try + 0.23 <= bbi.roof_y(g[1] - 0.43 - shift) - 0.02
 			if pad_ok and hood_ok:

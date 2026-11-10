@@ -785,11 +785,12 @@ func _build_menu() -> void:
 	_menu["cash"] = a[1]
 	_menu["best"] = b[1]
 	_menu["car"] = c[1]
+	v.add_child(_button("START RUN  →", "amber", "start"))
 	var btns := _row(14)
 	v.add_child(btns)
-	btns.add_child(_button("START RUN  →", "amber", "start"))
 	btns.add_child(_button("GARAGE", "light", "garage"))
-	v.add_child(_button("SETTINGS", "ghost", "settings"))
+	btns.add_child(_button("SETTINGS", "light", "settings"))
+	v.add_child(_eyebrow("How to play"))
 	var how := RichTextLabel.new()
 	how.bbcode_enabled = true
 	how.fit_content = true
@@ -799,9 +800,10 @@ func _build_menu() -> void:
 	how.add_theme_font_size_override("bold_font_size", 22)
 	how.add_theme_color_override("default_color", MUTED)
 	how.text = ("• [b][color=#f3f5ef]Gas[/color][/b] pedal on the right, [b][color=#f3f5ef]brake[/color][/b] pedal on the left.\n"
-		+ "• [b][color=#f3f5ef]Swipe[/color][/b] across the screen to steer. Lane assist settles you into the nearest lane when you lift.\n"
+		+ "• [b][color=#f3f5ef]Steer[/color][/b] like a real car: the car keeps going the way it points, so straighten up yourself. Change the steering method in Settings › Controls.\n"
 		+ "• Pass cars inside 1 m for a [b][color=#f3f5ef]near miss[/color][/b]. Change lanes right beside a car for a [b][color=#f3f5ef]close cut[/color][/b]. Chains build your multiplier.\n"
-		+ "• Cover the distance and hit the points target to face the [b][color=#f3f5ef]boss[/color][/b]. Out-score it before the finish gantry.")
+		+ "• Cover the distance and hit the points target to face the [b][color=#f3f5ef]boss[/color][/b]. Out-score it before the finish gantry.\n"
+		+ "• Watch the [b][color=#f3f5ef]fuel[/color][/b] gauge and pull into the fuel stops on the right.")
 	v.add_child(how)
 
 
@@ -1058,14 +1060,12 @@ func _build_pause() -> void:
 	_pause["score"] = a[1]
 	_pause["dist"] = b[1]
 	_pause["stage"] = c[1]
+	v.add_child(_button("RESUME", "amber", "resume"))
 	var btns := _row(14)
 	v.add_child(btns)
-	btns.add_child(_button("RESUME", "amber", "resume"))
-	btns.add_child(_button("END RUN", "ghost", "quit"))
-	var btns2 := _row(14)
-	v.add_child(btns2)
-	btns2.add_child(_button("REPLAY", "light", "replay"))
-	btns2.add_child(_button("SETTINGS", "light", "settings"))
+	btns.add_child(_button("SETTINGS", "light", "settings"))
+	btns.add_child(_button("REPLAY", "light", "replay"))
+	v.add_child(_button("END RUN", "ghost", "quit"))
 
 
 var _knob_tex: ImageTexture
@@ -1135,14 +1135,12 @@ func _build_over() -> void:
 	_over["cash"] = pay[1]
 	_over["note"] = _wrap("", 21, MUTED)
 	v.add_child(_over.note)
+	v.add_child(_button("RUN AGAIN  →", "amber", "start"))
 	var btns := _row(14)
 	v.add_child(btns)
-	btns.add_child(_button("RUN AGAIN", "amber", "start"))
 	btns.add_child(_button("GARAGE", "light", "garage"))
-	var btns2 := _row(14)
-	v.add_child(btns2)
-	btns2.add_child(_button("WATCH REPLAY", "light", "replay"))
-	btns2.add_child(_button("MENU", "ghost", "menu"))
+	btns.add_child(_button("WATCH REPLAY", "light", "replay"))
+	v.add_child(_button("MAIN MENU", "ghost", "menu"))
 
 
 func show_over(reason: String, score: String, dist: String, bosses: String, cash: String, note: String) -> void:
@@ -1191,72 +1189,155 @@ func _slider_row(parent: Control, key: String, action: String, save_action: Stri
 	_set["v_" + key] = val_l
 
 
+const SETTINGS_TABS := [["controls", "CONTROLS"], ["camera", "CAMERA"], ["display", "DISPLAY & AUDIO"], ["dev", "DEVELOPER"]]
+var settings_tab := "controls"
+
+
+## One option: its name and a short explanation on the left, and its current
+## value on the right (tap to change it).
+func _option_row(parent: Control, key: String, title: String, hint: String) -> void:
+	var r := _row(14)
+	parent.add_child(r)
+	var tv := VBoxContainer.new()
+	tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tv.add_theme_constant_override("separation", 2)
+	tv.add_child(_label(title, 24, LINE))
+	if hint != "":
+		var h := _wrap(hint, 17, MUTED)
+		tv.add_child(h)
+	r.add_child(tv)
+	var b := Button.new()
+	b.add_theme_font_override("font", display_font)
+	b.add_theme_font_size_override("font_size", 24)
+	b.custom_minimum_size = Vector2(220, 58)
+	b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var sb := _flat(SIGN_DEEP, 12, Color(LINE, 0.25), 2)
+	sb.set_content_margin_all(12)
+	var sh := sb.duplicate() as StyleBoxFlat
+	sh.bg_color = SIGN_DEEP.lightened(0.08)
+	b.add_theme_stylebox_override("normal", sb)
+	b.add_theme_stylebox_override("hover", sh)
+	b.add_theme_stylebox_override("pressed", sh)
+	b.add_theme_stylebox_override("disabled", sb)
+	b.add_theme_stylebox_override("focus", _flat(Color.TRANSPARENT, 12, AMBER, 3))
+	for k in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
+		b.add_theme_color_override(k, AMBER)
+	b.add_theme_color_override("font_disabled_color", Color(MUTED, 0.6))
+	b.pressed.connect(func() -> void: act.emit("toggle", key))
+	b.set_meta("row", true)
+	r.add_child(b)
+	_set["t_" + key] = b
+	_set["r_" + key] = r
+
+
+## A group heading inside a settings tab.
+func _group(parent: Control, title: String) -> void:
+	var sp := Control.new()
+	sp.custom_minimum_size.y = 4
+	parent.add_child(sp)
+	parent.add_child(_eyebrow(title))
+	var line := ColorRect.new()
+	line.color = Color(LINE, 0.18)
+	line.custom_minimum_size.y = 2
+	parent.add_child(line)
+
+
 func _build_settings() -> void:
-	var v := _screen("settings", SIGN, 700)
+	var v := _screen("settings", SIGN, 720)
 	v.add_child(_eyebrow("Glovebox · Owner's manual"))
 	v.add_child(_label("SETTINGS", 84, LINE, display_font))
-	# camera (the game keeps drawing underneath, so changes preview live)
-	v.add_child(_eyebrow("Camera"))
+	# tabs: one area of settings at a time instead of one long list
+	var tabs := GridContainer.new()
+	tabs.columns = 2
+	tabs.add_theme_constant_override("h_separation", 8)
+	tabs.add_theme_constant_override("v_separation", 8)
+	v.add_child(tabs)
+	var pages := {}
+	for t in SETTINGS_TABS:
+		var tb := _button(t[1], "light", "")
+		tb.add_theme_font_size_override("font_size", 26)
+		var id: String = t[0]
+		tb.pressed.connect(func() -> void:
+			settings_tab = id
+			render_settings())
+		tabs.add_child(tb)
+		_set["tab_" + id] = tb
+		var page := VBoxContainer.new()
+		page.add_theme_constant_override("separation", 14)
+		page.custom_minimum_size.y = 640  # the same height on every tab, so Done stays put
+		v.add_child(page)
+		pages[id] = page
+		_set["page_" + id] = page
+
+	# --- controls
+	var pc: VBoxContainer = pages.controls
+	_group(pc, "Steering")
+	_option_row(pc, "steer_mode", "Steering method", "Stick, swipe, on-screen wheel, left/right buttons or tilting the phone.")
+	_slider_row(pc, "steer_sens", "set", "save")
+	_option_row(pc, "assist", "Steering assist", "On: the car straightens up to the road when you let go. Off: it keeps its heading, like a real car.")
+	_option_row(pc, "tilt_invert", "Tilt direction", "Flip tilt steering if it feels backwards (tilt only).")
+	_group(pc, "Pedals and feel")
+	_slider_row(pc, "pedal_scale", "set", "save")
+	_option_row(pc, "haptics", "Vibration", "Buzz on near misses and crashes.")
+	pc.add_child(_button("EDIT ON-SCREEN LAYOUT", "amber", "pedal_edit"))
+	var pr := _row(12)
+	pc.add_child(pr)
+	for b in [_button("SWAP PEDALS", "ghost", "pedal_swap"), _button("RESET LAYOUT", "ghost", "pedal_reset")]:
+		b.add_theme_font_size_override("font_size", 24)
+		pr.add_child(b)
+
+	# --- camera (the game keeps drawing underneath, so changes preview live)
+	var pcam: VBoxContainer = pages.camera
+	_group(pcam, "View")
 	var modes := _row(8)
-	v.add_child(modes)
+	pcam.add_child(modes)
 	for m in Data.CAM_MODES:
 		var mb := _button(String(Data.CAM_NAMES[m]).to_upper(), "light", "cam_mode", m)
-		mb.add_theme_font_size_override("font_size", 26)
+		mb.add_theme_font_size_override("font_size", 24)
 		modes.add_child(mb)
 		_set["mode_" + m] = mb
+	_group(pcam, "Adjust this view")
 	for key in ["fov", "height", "dist", "angle"]:
-		_slider_row(v, key, "cam_set", "cam_save")
-	v.add_child(_button("RESET THIS VIEW", "ghost", "cam_reset"))
-	# gameplay
-	v.add_child(_eyebrow("Gameplay"))
-	_slider_row(v, "steer_sens", "set", "save")
-	_slider_row(v, "pedal_scale", "set", "save")
-	_slider_row(v, "mirror_scale", "set", "save")
-	var toggles := [["mirror", "Rear-view mirror"], ["steer_mode", "Steering"], ["tilt_invert", "Tilt direction"], ["orientation", "Screen"], ["assist", "Lane assist"], ["haptics", "Vibration"],
-		["shake", "Camera shake"], ["sound", "Engine sound"], ["units", "Speed units"], ["gfx", "Graphics"]]
-	var grid := GridContainer.new()
-	grid.columns = 2
-	grid.add_theme_constant_override("h_separation", 12)
-	grid.add_theme_constant_override("v_separation", 12)
-	v.add_child(grid)
-	for t in toggles:
-		var b := _toggle(t[1], "toggle")
-		var key: String = t[0]
-		for c in b.pressed.get_connections():
-			b.pressed.disconnect(c.callable)
-		b.pressed.connect(func() -> void: act.emit("toggle", key))
-		grid.add_child(b)
-		_set["t_" + key] = b
-	v.add_child(_button("EDIT PEDAL LAYOUT", "amber", "pedal_edit"))
-	var pr := _row(12)
-	v.add_child(pr)
-	for b in [_button("SWAP PEDALS", "ghost", "pedal_swap"), _button("RESET PEDALS", "ghost", "pedal_reset")]:
-		b.add_theme_font_size_override("font_size", 26)
-		pr.add_child(b)
-	# developer tools
-	v.add_child(_eyebrow("Developer tools"))
-	v.add_child(_wrap("For testing. Unlocks change your saved progress.", 20, MUTED))
+		_slider_row(pcam, key, "cam_set", "cam_save")
+	pcam.add_child(_button("RESET THIS VIEW", "ghost", "cam_reset"))
+	_group(pcam, "Effects")
+	_option_row(pcam, "shake", "Camera shake", "Shake on bumps, crashes and at top speed.")
+
+	# --- display and audio
+	var pd: VBoxContainer = pages.display
+	_group(pd, "Screen")
+	_option_row(pd, "orientation", "Orientation", "Portrait or landscape.")
+	_option_row(pd, "gfx", "Graphics", "Lower it if the game stutters.")
+	_option_row(pd, "units", "Speed units", "")
+	_group(pd, "Rear-view mirror")
+	_option_row(pd, "mirror", "Mirror", "Move it with Edit on-screen layout (Controls).")
+	_slider_row(pd, "mirror_scale", "set", "save")
+	_group(pd, "Audio")
+	_option_row(pd, "sound", "Engine and effects", "")
+
+	# --- developer tools
+	var pdev: VBoxContainer = pages.dev
+	_group(pdev, "Testing")
+	pdev.add_child(_wrap("For testing. Unlocks change your saved progress.", 20, MUTED))
+	_option_row(pdev, "dev_lives", "Infinite lives", "")
+	_option_row(pdev, "dev_fps", "FPS counter", "")
 	var dev := GridContainer.new()
 	dev.columns = 2
 	dev.add_theme_constant_override("h_separation", 12)
 	dev.add_theme_constant_override("v_separation", 12)
-	v.add_child(dev)
-	for t in [["dev_lives", "Infinite lives"], ["dev_fps", "FPS counter"]]:
-		var b := _toggle(t[1], "toggle")
-		var key: String = t[0]
-		for c in b.pressed.get_connections():
-			b.pressed.disconnect(c.callable)
-		b.pressed.connect(func() -> void: act.emit("toggle", key))
-		dev.add_child(b)
-		_set["t_" + key] = b
+	pdev.add_child(dev)
 	for d in [["UNLOCK ALL CARS", "cars"], ["MAX ALL UPGRADES", "upgrades"], ["+$100,000 CASH", "cash"], ["RESET PROGRESS", "reset"]]:
 		var b := _button(d[0], "ghost", "dev", d[1])
-		b.add_theme_font_size_override("font_size", 24)
+		b.add_theme_font_size_override("font_size", 22)
 		dev.add_child(b)
 		_set["dev_" + d[1]] = b
 	_set["dev_note"] = _wrap("", 20, AMBER)
-	v.add_child(_set.dev_note)
-	v.add_child(_button("BACK", "light", "settings_back"))
+	pdev.add_child(_set.dev_note)
+
+	var sp := Control.new()
+	sp.custom_minimum_size.y = 6
+	v.add_child(sp)
+	v.add_child(_button("DONE", "light", "settings_back"))
 	(screens.settings.get_child(0) as ColorRect).color = Color(0.03, 0.04, 0.05, 0.3)
 
 
@@ -1269,7 +1350,7 @@ func dev_note(text: String) -> void:
 func render_settings() -> void:
 	render_cam()
 	_cam_lock = true
-	var sliders := {"steer_sens": ["Steering sensitivity", 0.4, 2.0], "pedal_scale": ["Pedal size", 0.7, 1.4], "mirror_scale": ["Mirror size", 0.6, 1.8]}
+	var sliders := {"steer_sens": ["Sensitivity", 0.4, 2.0], "pedal_scale": ["Pedal size", 0.7, 1.4], "mirror_scale": ["Mirror size", 0.6, 1.8]}
 	for key in sliders:
 		var sl: HSlider = _set["s_" + key]
 		sl.min_value = sliders[key][1]
@@ -1281,7 +1362,7 @@ func render_settings() -> void:
 		_set["v_" + key].text = "x%.2f" % val
 	_cam_lock = false
 	var states := {
-		"assist": "ON" if Save.data.assist else "OFF", "haptics": "ON" if Save.setting("haptics") else "OFF",
+		"assist": "ON" if Save.data.assist else "OFF (REAL)", "haptics": "ON" if Save.setting("haptics") else "OFF",
 		"shake": "ON" if Save.setting("shake") else "OFF", "sound": "ON" if Save.data.sound else "OFF",
 		"units": "MPH" if Save.setting("units") == "mph" else "KM/H",
 		"steer_mode": {"swipe": "SWIPE", "wheel": "WHEEL", "buttons": "BUTTONS", "tilt": "TILT", "stick": "STICK"}.get(Save.setting("steer_mode"), "SWIPE"),
@@ -1293,7 +1374,18 @@ func render_settings() -> void:
 	}
 	for key in states:
 		var b: Button = _set["t_" + key]
-		b.text = "%s:  %s" % [b.get_meta("base"), states[key]]
+		if b.has_meta("row"):
+			b.text = "%s  ›" % states[key]
+		else:
+			b.text = "%s:  %s" % [b.get_meta("base"), states[key]]
+	# tilt direction only matters with tilt steering
+	var tilt: bool = Save.setting("steer_mode") == "tilt"
+	(_set.t_tilt_invert as Button).disabled = not tilt
+	(_set.r_tilt_invert as Control).modulate = Color(1, 1, 1, 1.0 if tilt else 0.45)
+	for t in SETTINGS_TABS:
+		var on: bool = settings_tab == t[0]
+		(_set["page_" + t[0]] as Control).visible = on
+		(_set["tab_" + t[0]] as Button).modulate = Color(1, 1, 1, 1.0 if on else 0.5)
 
 
 # ---------------------------------------------------------------- pedal layout

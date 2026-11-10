@@ -16,7 +16,7 @@ func defaults() -> Dictionary:
 		"cash": 0, "best": 0, "runs": 0,
 		"owned": ["comet"], "selected": "comet", "unlocked": [],
 		"perm": {"accel": 0, "brake": 0, "handling": 0, "top": 0, "lives": 0},
-		"sound": true, "assist": true,
+		"sound": true, "assist": false, "free_steer": true,
 		"cam": _cam_defaults(),
 		"settings": SETTING_DEFAULTS.duplicate(true),
 	}
@@ -90,6 +90,11 @@ func load_data() -> void:
 	if parsed.has("perm") and parsed.perm is Dictionary:
 		for k in parsed.perm:
 			data.perm[k] = int(parsed.perm[k])
+	# steering assist used to snap the car into lanes; it now only straightens
+	# the car up, and starts off so the car drives freely like a real one
+	if not parsed.has("free_steer"):
+		data.assist = false
+		data["free_steer"] = true
 	# the starter car is always in the garage (older saves started with the Kestrel)
 	if data.owned is Array and not data.owned.has("comet"):
 		data.owned.insert(0, "comet")

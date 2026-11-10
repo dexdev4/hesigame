@@ -129,6 +129,8 @@ var _flash: ColorRect
 var touches := {}       # touch index -> {"role": String, "x": float}
 var key_gas := false
 var key_brake := false
+var key_left := false
+var key_right := false
 var in_gas := false
 var in_brake := false
 var ap_t := 0.0
@@ -1577,7 +1579,9 @@ func _update_player(dt: float) -> void:
 	player_accel = lerpf(player_accel, (player.v - v_before) / maxf(dt, 0.0001), minf(1.0, dt * 6.0))
 	if live and not autotest:
 		_analog_steer(dt)
-	_drive_steer(dt, brk, vr)
+		_drive_manual(dt, brk, vr, _steer_val)
+	else:
+		_drive_steer(dt, brk, vr)
 	on_shoulder = absf(player.x) + player.w / 2.0 > Data.ROAD_HALF + 0.25 and not (player.x > 0.0 and _in_station_zone())
 	var side := signf(player.x)
 	var lim := (_right_limit() if side > 0.0 else Data.RAIL) - player.w / 2.0
@@ -1634,6 +1638,41 @@ func _drive_steer(dt: float, brk: bool, vr: float) -> void:
 	player.vx = v * sin(player.yaw)
 	player.x += player.vx * dt
 	player.z += v * cos(player.yaw) * dt
+
+
+## The player's own steering: the input turns the front wheels (like a real
+## steering wheel), they self-centre when you let go, and the car keeps
+## whatever heading it has: nothing pulls it back into a lane. Full input
+## asks for about the most the tyres can give at the current speed, so the
+## same push feels alike at 60 and 200 km/h; small inputs are softened for
+## fine corrections. Steering assist (optional) only straightens the car up
+## to the road when you let go.
+func _drive_manual(dt: float, brk: bool, vr: float, cmd: float) -> void:
+	var v := player.v
+	var wb := player.l * 0.6
+	var grip: float = st.grip * (1.0 - 0.18 * clampf(vr, 0.0, 1.2)) * (0.6 if on_shoulder else 1.0) * (0.75 if brk and v > 3.0 else 1.0)
+	var lock := 0.6
+	# wheel angle that reaches the grip limit at this speed (full input reaches it)
+	var at_limit := atan(grip * wb / maxf(v * v, 0.01))
+	var span := minf(lock, at_limit)
+	var c := clampf(cmd * float(Save.setting("steer_sens")), -1.0, 1.0)
+	c = signf(c) * pow(absf(c), 1.4)
+	var want := c * span
+	if absf(cmd) < 0.001 and Save.data.assist and v > 3.0:
+		# steering assist: ease the nose back parallel to the road
+		want = clampf(atan(-player.yaw * 1.6 * wb / maxf(v, 0.5)), -span * 0.5, span * 0.5)
+	if v < 0.2:
+		want = player.steer if absf(cmd) < 0.001 else c * lock  # parked: wheels turn but the car does not
+	player.steer = move_toward(player.steer, want, maxf(span, 0.05) * 6.0 * dt)
+	var r := v * tan(player.steer) / wb
+	if absf(r) * v > grip:
+		r = signf(r) * grip / maxf(v, 0.1)  # past the grip limit: the car runs wide
+	player.yaw_rate = r
+	player.yaw = clampf(player.yaw + r * dt, -0.7, 0.7)
+	player.vx = v * sin(player.yaw)
+	player.x += player.vx * dt
+	player.z += v * cos(player.yaw) * dt
+	target_x = player.x  # the autopilot (if it takes over) starts from here
 
 
 ## Point the player's car so its sideways speed is vx (after a knock or a
@@ -2368,7 +2407,6 @@ func _update_hud() -> void:
 # ---------------------------------------------------------------- input
 
 var _steer_val := 0.0
-var _steer_active := false
 
 
 ## Wheel and button steering: the input sets how far ahead of the car the
@@ -2377,8 +2415,11 @@ var _steer_active := false
 func _analog_steer(dt: float) -> void:
 	var mode: String = Save.setting("steer_mode")
 	var held := false
-	var left := false
-	var right := false
+	var left := key_left
+	var right := key_right
+	var swipe := 0.0
+	var swiping := false
+	var vw := get_viewport().get_visible_rect().size
 	for k in touches:
 		match touches[k].role:
 			"wheel":
@@ -2387,45 +2428,36 @@ func _analog_steer(dt: float) -> void:
 				left = true
 			"right":
 				right = true
+			"steer":
+				# swipe: how far the finger has moved sideways from where it landed
+				swiping = true
+				swipe = clampf((float(touches[k].x) - float(touches[k].x0)) / (vw.x * 0.2), -1.0, 1.0)
 	hud.wheel.held = held
 	hud.arrows.left_on = left
 	hud.arrows.right_on = right
+	var want := 0.0
 	if mode == "wheel":
 		if not held:
 			hud.wheel.angle = move_toward(hud.wheel.angle, 0.0, 7.0 * dt)  # springs back to centre
 		var raw := hud.wheel.angle / SteerWheel.MAX_ANGLE
-		_steer_val = 0.0 if absf(raw) < 0.04 else raw
-		held = held or absf(_steer_val) > 0.0
+		want = 0.0 if absf(raw) < 0.04 else raw
+		_steer_val = want
 	elif mode == "tilt":
-		var raw := _tilt_value()
-		_steer_val = lerpf(_steer_val, raw, minf(1.0, dt * 12.0))
-		held = absf(_steer_val) > 0.03
+		_steer_val = lerpf(_steer_val, _tilt_value(), minf(1.0, dt * 12.0))
 	elif mode == "stick":
-		# analog: the push sets the steering directly, easing back to straight on release
-		var want := hud.stick.value()
-		_steer_val = move_toward(_steer_val, want, (10.0 if want != 0.0 else 6.0) * dt)
-		held = absf(_steer_val) > 0.01
+		want = hud.stick.value()
+		_steer_val = move_toward(_steer_val, want, (10.0 if want != 0.0 else 8.0) * dt)
 	elif mode == "buttons":
-		var want := (1.0 if right else 0.0) - (1.0 if left else 0.0)
-		_steer_val = move_toward(_steer_val, want, (4.0 if want != 0.0 else 7.0) * dt)  # eases in and out
-		held = absf(_steer_val) > 0.01
-	else:
-		return
-	if not _live():
-		return
-	if held:
-		var lead := 1.7 * float(Save.setting("steer_sens"))
-		target_x = clampf(player.x + _steer_val * lead, -(Data.RAIL + 1.0), _right_limit() + 1.0)
-		_steer_active = true
-	elif _steer_active and Save.data.assist:
-		_steer_active = false
-		# lane assist: settle into the lane the car is heading for
-		target_x = _nearest_x(player.x + player.vx * 0.3)
-	elif not Save.data.assist:
-		# no input and no assist: the steering is straight, so the car just keeps
-		# going where it is (the target follows it instead of pulling it back)
-		_steer_active = false
-		target_x = player.x
+		want = (1.0 if right else 0.0) - (1.0 if left else 0.0)
+		_steer_val = move_toward(_steer_val, want, (3.0 if want != 0.0 else 8.0) * dt)  # eases in, lets go quickly
+	else:  # swipe
+		want = swipe if swiping else 0.0
+		_steer_val = move_toward(_steer_val, want, 12.0 * dt)
+	# the arrow keys steer in every mode (desktop testing)
+	if mode != "buttons" and (key_left or key_right):
+		_steer_val = move_toward(_steer_val, (1.0 if key_right else 0.0) - (1.0 if key_left else 0.0), 3.0 * dt)
+	if absf(_steer_val) < 0.01:
+		_steer_val = 0.0
 
 
 var _tilt_zero := 0.0
@@ -2480,7 +2512,7 @@ func _input(event: InputEvent) -> void:
 			var role := hud.role_at(e.position) if state == S.PLAY else "ui"
 			if role == "":
 				role = "steer"
-			touches[e.index] = {"role": role, "x": e.position.x}
+			touches[e.index] = {"role": role, "x": e.position.x, "x0": e.position.x}
 			if role == "stick":
 				hud.stick.press(e.position)
 			if role == "wheel":
@@ -2490,20 +2522,12 @@ func _input(event: InputEvent) -> void:
 			touches.erase(e.index)
 			if tt and tt.role == "stick":
 				hud.stick.release()
-			if tt and tt.role == "steer" and Save.data.assist and _live():
-				var others := false
-				for k in touches:
-					if touches[k].role == "steer":
-						others = true
-				if not others:
-					target_x = _nearest_x(target_x)
 		_refresh_inputs()
 	elif event is InputEventScreenDrag:
 		var e := event as InputEventScreenDrag
 		var tt: Variant = touches.get(e.index)
 		if tt == null:
 			return
-		var dx: float = e.position.x - tt.x
 		tt.x = e.position.x
 		if tt.role == "stick":
 			hud.stick.drag(e.position)
@@ -2511,10 +2535,6 @@ func _input(event: InputEvent) -> void:
 			var a: float = (e.position - hud.wheel.centre()).angle()
 			hud.wheel.angle = clampf(hud.wheel.angle + wrapf(a - tt.a, -PI, PI), -SteerWheel.MAX_ANGLE, SteerWheel.MAX_ANGLE)
 			tt.a = a
-		if tt.role == "steer" and _live():
-			var vw := get_viewport().get_visible_rect().size
-			var sens: float = (16.0 if vw.y > vw.x else 13.0) * float(Save.setting("steer_sens"))
-			target_x = clampf(target_x + dx / vw.x * sens, -(Data.RAIL + 1.0), _right_limit() + 1.0)
 	elif event is InputEventKey:
 		var k := event as InputEventKey
 		if k.echo:
@@ -2525,11 +2545,9 @@ func _input(event: InputEvent) -> void:
 			KEY_DOWN, KEY_S, KEY_SPACE:
 				key_brake = k.pressed
 			KEY_LEFT, KEY_A:
-				if k.pressed and _live():
-					target_x = _step_lane(target_x, -1)
+				key_left = k.pressed
 			KEY_RIGHT, KEY_D:
-				if k.pressed and _live():
-					target_x = _step_lane(target_x, 1)
+				key_right = k.pressed
 			KEY_ESCAPE, KEY_P:
 				if k.pressed:
 					if state == S.PLAY:
@@ -2672,6 +2690,8 @@ func _on_act(action: String, arg: String) -> void:
 						sound.play("ding", 1.3 + lv * 0.08)
 			hud.render_garage()
 		"settings":
+			if arg != "":
+				hud.settings_tab = arg  # e.g. --open=settings:camera
 			hud.render_settings()
 			hud.show_screen("settings")
 		"settings_back":

@@ -22,10 +22,10 @@ Each car has its own engine sound, generated live from a small engine model: cyl
 | --- | --- | --- |
 | Accelerate | Hold the accelerator pedal (bottom right) | Up / W |
 | Brake | Hold the brake pedal (bottom left) | Down / S / Space |
-| Steer | Swipe left or right anywhere else on the screen | Left / Right (one lane per press) |
+| Steer | Swipe left or right anywhere else on the screen (how far your finger moves from where it landed is how far you steer) | Hold Left / Right |
 | Pause | Pause button, or Android Back | Esc / P |
 
-With **Lane assist** on (menu toggle), lifting your finger settles the car into the nearest lane.
+The car drives freely, like a real one: let go of the steering and the wheels self-centre, but the car keeps going the way it points, so you straighten up yourself. Nothing pulls it back into a lane. **Steering assist** (Settings › Controls, off by default) gently straightens the car up to the road when you let go, without snapping it to a lane.
 
 ### Cameras
 
@@ -36,12 +36,13 @@ Tap **CAM** (top right) to switch between **Chase**, **Hood** and **Cockpit** vi
 
 ### Settings
 
-Open **Settings** from the main menu or the pause menu. The game keeps drawing behind it, so camera changes preview live.
+Open **Settings** from the main menu or the pause menu. It has four tabs, each split into labelled groups with a short explanation under every option: **Controls** (steering method, sensitivity, steering assist, tilt direction, pedal size, vibration, on-screen layout), **Camera** (view, adjustments, camera shake), **Display & Audio** (orientation, graphics, speed units, mirror, sound) and **Developer**. The game keeps drawing behind it, so camera changes preview live.
+
+The main menu puts **Start run** first, with **Garage** and **Settings** under it and a short how-to-play. The pause menu leads with **Resume** and keeps **End run** apart at the bottom, and the run-over screen leads with **Run again**.
 - **Camera:** choose a view and set its field of view, height, distance (forward/back for hood and cockpit) and angle. **Reset this view** restores the defaults.
 - **Starter car:** the **Comet Coupe**, a low two-door built from an imported 3D model, is the car every new garage starts with (existing saves get it free too). It has see-through glass with the full cabin and cockpit view inside, brake lights that brighten when you brake, and indicators at the outer ends of its head and tail lights. The **Hornet Compact** ($800), a short turbocharged hatchback coupe, is built the same way, and the Kestrel is now a cheap upgrade ($1,200).
-- **Driving physics:** cars steer like real ones. The car turns only by rolling forward on its turned front wheels (you can see them turn), so it can't rotate or slide sideways when it's stopped, and at a crawl it needs plenty of lock to move over. The front wheels turn at a limited rate, the available lock shrinks with speed, and the tyres grip only up to a limit, so asking for too much at speed makes the car run wide. Braking hard and driving on the shoulder cost grip. The body leans out of turns, and traffic, bosses and police also move over only as fast as they're rolling forward.
-- **Gameplay:** steering sensitivity, pedal size, lane assist, vibration, camera shake, engine sound, and speed in km/h or mph.
-- **Steering:** **Stick**: a floating analog stick that appears wherever you put your finger (away from the pedals) and steers as far as you push it left or right; **Swipe** anywhere on the screen, an on-screen **Wheel** you turn with your thumb (it springs back to centre when you let go), **Buttons** for left and right, or **Tilt** (tilt the phone; the angle you hold it at when a run starts or resumes counts as straight, and **Tilt direction** flips it if it feels backwards). With the wheel or buttons the car steers in proportion to your input, and lane assist settles it into a lane when you let go.
+- **Driving physics:** cars steer like real ones. The car turns only by rolling forward on its turned front wheels (you can see them turn), so it can't rotate or slide sideways when it's stopped, and at a crawl it needs plenty of lock to move over. The front wheels turn at a limited rate, the available lock shrinks with speed, and the tyres grip only up to a limit, so asking for too much at speed makes the car run wide. You steer it yourself the whole time: there is no lane snapping. Braking hard and driving on the shoulder cost grip. The body leans out of turns, and traffic, bosses and police also move over only as fast as they're rolling forward.
+- **Steering:** **Stick**: a floating analog stick that appears wherever you put your finger (away from the pedals) and steers as far as you push it left or right; **Swipe** anywhere on the screen, an on-screen **Wheel** you turn with your thumb (it springs back to centre when you let go), **Buttons** for left and right, or **Tilt** (tilt the phone; the angle you hold it at when a run starts or resumes counts as straight, and **Tilt direction** flips it if it feels backwards). Every method turns the front wheels: full input asks for about the most grip the tyres have at your speed, so it feels the same at 60 and 200 km/h, and small inputs are softened for fine corrections.
 - **Screen:** **Portrait** or **Landscape**. The game locks to the one you choose, so turning the phone never switches it by accident.
 - **Graphics:** **High** (full shadows, anti-aliasing, speed blur at the screen edges and a colour grade), **Medium** or **Low** for older phones. On the first run on a phone the game checks the frame rate and steps down a level if it's struggling.
 - **Developer tools:** **Infinite lives**, an **FPS counter**, **Unlock all cars**, **Max all upgrades**, **+$100,000 cash** and **Reset progress** (tap twice; keeps your settings).
@@ -132,7 +133,7 @@ Arguments placed after `--` on the command line:
 - `--open=garage` / `--open=garage:up`: open the Garage on start.
 - `--shot=SECONDS:PATH`: save a screenshot.
 - `--cam=chase|hood|cockpit`: start in that camera view (not saved). `--cam=inspect` looks across the cabin from the back seat.
-- `--open=settings` / `--open=pedal_edit`: open the settings screen or the pedal editor on start.
+- `--open=settings` (or `--open=settings:controls|camera|display|dev` for a tab) / `--open=pedal_edit`: open the settings screen or the pedal editor on start.
 - `--car=ID` / `--autospeed=M/S`: test-drive another car (not saved) and set how fast the test driver goes.
 - `--steer=swipe|wheel|buttons|tilt|stick` (with `--fake-tilt=DEGREES` to simulate tilting) / `--orient=portrait|landscape`: try a steering method or orientation without saving it.
 - `--idcolor`: draw each traffic car in a flat unique colour with no fog or scenery; with `--burst` it also logs where each car should be, to measure flicker.

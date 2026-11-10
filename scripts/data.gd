@@ -20,6 +20,7 @@ const SHAPES := {
 	"rcoupe": {"w": 1.9, "l": 4.5, "b": 0.75, "t": 1.29, "c0": 0.3, "c1": 0.62, "ins": 0.2, "spoiler": true},
 	"hyper":  {"w": 2.05, "l": 4.75, "b": 0.68, "t": 1.13, "c0": 0.3, "c1": 0.62, "ins": 0.22, "spoiler": true},
 	"coupe":  {"w": 1.84, "l": 4.3, "b": 0.8, "t": 1.27, "c0": 0.15, "c1": 0.66, "ins": 0.15},
+	"compact": {"w": 1.82, "l": 4.05, "b": 0.8, "t": 1.33, "c0": 0.1, "c1": 0.64, "ins": 0.14},
 	"van":    {"w": 2.00, "l": 5.2, "b": 2.25, "t": 2.25, "c0": 0.0, "c1": 0.0, "ins": 0.0, "van": true},
 	"truck":  {"w": 2.50, "l": 11.0, "b": 3.9, "t": 3.9, "c0": 0.0, "c1": 0.0, "ins": 0.0, "truck": true},
 }
@@ -34,6 +35,10 @@ const CARS := [
 		"engine": {"cyl": 4, "idle": 820, "redline": 7000, "res": 2.4, "decay": 2.3, "var": 0.05, "uneven": 0.03, "rasp": 0.4, "pops": 0.3, "turbo": false},
 		"name": "Comet Coupe", "shape": "coupe", "color": "#123f8c", "accel": 5.4, "brake": 9.0, "grip": 9.2, "lat": 4.3, "top": 50.0, "price": 0, "boss": -1,
 		"blurb": "Your starter car. A low, light two-door coupe."},
+	{"id": "hornet", "fuel": "regular", "tank": 40, "style": {"rim": "5spoke", "rim_color": "#2a2c30", "caliper": "#c62828", "badge": "HORNET", "plate": "HRN 115"},
+		"engine": {"cyl": 4, "idle": 880, "redline": 7200, "res": 2.5, "decay": 2.2, "var": 0.05, "uneven": 0.03, "rasp": 0.5, "pops": 0.5, "turbo": true},
+		"name": "Hornet Compact", "shape": "compact", "color": "#e8b10f", "accel": 5.5, "brake": 9.1, "grip": 9.4, "lat": 4.4, "top": 51.0, "price": 800, "boss": -1,
+		"blurb": "A short, turbocharged hatchback coupe. Nimble and cheap to run."},
 	{"id": "kestrel", "fuel": "regular", "tank": 40, "style": {"rim": "5spoke", "roofwing": true, "wiper": true, "caliper": "#55595e", "badge": "KESTREL", "plate": "KST 160"},
 		"engine": {"cyl": 4, "idle": 850, "redline": 6800, "res": 2.3, "decay": 2.4, "var": 0.06, "uneven": 0.03, "rasp": 0.45, "pops": 0.2, "turbo": false},
 		"name": "Kestrel 1.6", "shape": "hatch", "color": "#d5dbe2", "accel": 5.6, "brake": 9.2, "grip": 9.4, "lat": 4.4, "top": 52.0, "price": 1200, "boss": -1,

@@ -3,9 +3,11 @@
 import json,struct,sys
 import numpy as np
 from PIL import Image
-# usage: python3 tools/convert_coupe.py tools/models/starter_coupe.glb assets/models/starter_coupe.mesh
+# usage: python3 tools/convert_coupe.py MODEL.glb OUT.mesh [GLASS_MIN_Y]
+#   dark texture above GLASS_MIN_Y (default 0.84 m) is window glass, below it black trim
 import io
 src,out=sys.argv[1:3]
+GLASS_Y=float(sys.argv[3]) if len(sys.argv)>3 else 0.84
 d=open(src,'rb').read()
 ln=struct.unpack('<I',d[12:16])[0]; j=json.loads(d[20:20+ln])
 off=20+ln; bl=struct.unpack('<I',d[off:off+4])[0]; B=d[off+8:off+8+bl]
@@ -20,7 +22,6 @@ def acc(i):
     return arr.reshape(a['count'],NC[a['type']]) if NC[a['type']]>1 else arr
 A=tex(j['textures'][j['materials'][0]['pbrMetallicRoughness']['baseColorTexture']['index']]['source'])
 E=tex(j['textures'][j['materials'][0]['emissiveTexture']['index']]['source'])
-REAR=2.13
 def to_game(p):
     return np.stack([-p[:,0],p[:,1],-(p[:,2]+REAR)],1)   # rotate 180 about y, rear bumper to z=0
 def ngame(n):
@@ -31,8 +32,8 @@ def classify(uv,pos):
     a=samp(A,uv); e=samp(E,uv); lum=a.mean(1)
     k=np.full(len(uv),'paint',dtype=object)
     dark=lum<0.07
-    k[dark&(pos[:,1]>0.84)]='glass'
-    k[dark&(pos[:,1]<=0.84)]='dark'
+    k[dark&(pos[:,1]>GLASS_Y)]='glass'
+    k[dark&(pos[:,1]<=GLASS_Y)]='dark'
     k[(a[:,0]>0.6)&(a[:,1]>0.6)&(a[:,2]>0.6)]='headlens'
     k[(a[:,0]>0.35)&(a[:,1]<0.2)&(a[:,2]<0.2)]='tail'
     k[(e[:,0]>0.5)&(e[:,1]>0.5)]='head'
@@ -42,6 +43,7 @@ surf={}
 def add(kind,P,N,UV=None):
     s=surf.setdefault(kind,{'p':[],'n':[]}); s['p'].append(P); s['n'].append(N)
 p=j['meshes'][0]['primitives'][0]
+REAR=-float(j['accessors'][p['attributes']['POSITION']]['min'][2])  # rear bumper to z = 0
 P=acc(p['attributes']['POSITION']); N=acc(p['attributes']['NORMAL']); UV=acc(p['attributes']['TEXCOORD_0']); T=acc(p['indices']).reshape(-1,3)
 tp=P[T]; tn=N[T]; tu=UV[T]
 MAXD=3
@@ -55,8 +57,11 @@ for depth in range(MAXD+1):
     dis=np.zeros(len(tp),bool)
     for v in range(3):
         cv=classify((tu[:,v]*0.9+mu[:,0]*0.1),(tp[:,v]*0.9+m[:,0]*0.1))
-        coarse=lambda q: np.where((q=='paint')|(q=='dark'),'body',q)
-        dis|=coarse(cv)!=coarse(c)  # refine only along glass and lamp edges
+        # refine along glass and lamp edges, and the big black lower panels
+        # (the thin panel lines higher up are left alone: too many triangles)
+        low=(tp[:,v,1]<0.55)
+        coarse=lambda q: np.where((q=='paint')|((q=='dark')&~low),'body',q)
+        dis|=coarse(cv)!=coarse(c)
     # emit settled triangles
     keep=~dis
     for kind in set(c[keep]):

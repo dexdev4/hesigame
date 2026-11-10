@@ -79,6 +79,12 @@ const PROFILES := {
 		"body": [[0.0, 0.88, 0.84], [0.25, 0.93, 0.95], [0.6, 0.97, 1.0], [2.6, 0.94, 1.0], [3.0, 0.86, 0.98], [3.5, 0.8, 0.95], [4.0, 0.7, 0.9], [4.3, 0.6, 0.8]],
 		"gh": [0.62, 2.83, 1.2, 2.4, 0.93, 1.25, 0.8, 0.64], "pillars": [[0.0, 0.3], [0.9, 1.0]],
 		"rim_frac": 0.68, "tyre": [0.245, 0.245], "wheel": [0.345, 0.82, 3.44], "wheel_x": [0.778, 0.752], "badge_y": 0.7, "eye_back": 1.3, "dash_drop": 0.17},
+	# compact hatchback coupe, also from an imported model (assets/models/compact_coupe.mesh)
+	"compact": {
+		"mesh": "res://assets/models/compact_coupe.mesh",
+		"body": [[0.0, 0.96, 0.88], [0.25, 1.05, 0.97], [0.5, 1.0, 1.0], [2.4, 0.95, 1.0], [2.75, 0.87, 0.98], [3.25, 0.8, 0.96], [3.75, 0.7, 0.92], [4.05, 0.6, 0.82]],
+		"gh": [0.35, 2.66, 0.78, 2.15, 0.97, 1.3, 0.8, 0.64], "pillars": [[0.0, 0.3], [0.9, 1.0]],
+		"rim_frac": 0.68, "tyre": [0.234, 0.234], "wheel": [0.335, 0.71, 3.21], "wheel_x": [0.768, 0.752], "badge_y": 0.75, "eye_back": 1.2, "dash_drop": 0.17},
 	# panel van: short sloping bonnet, steep windscreen, tall slab-sided cargo
 	# box with solid panels behind the cab, twin rear doors, tall tail lamps
 	"van": {

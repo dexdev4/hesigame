@@ -47,7 +47,7 @@ def entry(sid, name):
         "body": d["body"], "gh": gh, "pillars": [[0.0, 0.28], [0.5, 0.54], [0.93, 1.0]],
         "rim_frac": 0.7, "tyre": [d["tyre"], d["tyre"]], "wheel": d["wheel"], "wheel_x": d["wheel_x"],
         "plate_y": 0.62, "badge_y": 0.74, "eye_back": round(eye_back, 2), "eye_y": round(eye_y, 3),
-        "dash_drop": 0.17 if roof < 1.2 else (0.12 if roof < 1.32 else 0.0),
+        "dash_drop": 0.17 if roof < 1.35 else 0.0,
         "dash_hw": round(min(d["ws_hw"] * 0.85, 0.7), 2), "ws_base_hw": round(min(d["ws_hw"] * 0.8, 0.7), 2),
         "mirror_d": round(gh[3] - 0.05, 2),
     }

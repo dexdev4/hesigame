@@ -52,7 +52,7 @@ const PROFILES := {
 		"badge_y": 0.74,
 		"eye_back": 1.3,
 		"eye_y": 1.088,
-		"dash_drop": 0.12,
+		"dash_drop": 0.17,
 		"dash_hw": 0.52,
 		"ws_base_hw": 0.49,
 		"mirror_d": 2.01},
@@ -70,7 +70,7 @@ const PROFILES := {
 		"badge_y": 0.74,
 		"eye_back": 1.3,
 		"eye_y": 1.088,
-		"dash_drop": 0.12,
+		"dash_drop": 0.17,
 		"dash_hw": 0.52,
 		"ws_base_hw": 0.49,
 		"mirror_d": 2.01},
@@ -1922,24 +1922,24 @@ static func _shell_of(body: ArrayMesh, names: Array, sh: Dictionary) -> Dictiona
 
 
 ## A cockpit point moved inside the measured shell (with a little clearance).
-static func _inside_shell(v: Vector3, shell: Dictionary) -> Vector3:
+static func _inside_shell(v: Vector3, shell: Dictionary, m := 0.025) -> Vector3:
 	var nd: int = shell.nd
 	var nx: int = shell.nx
 	var ny: int = shell.ny
 	var di := clampi(int(-v.z / SHELL_STEP), 0, nd - 1)
 	var xi := clampi(int(absf(v.x) / SHELL_STEP), 0, nx - 1)
 	var t: float = (shell.top as PackedFloat32Array)[di * nx + xi]
-	if t < 90.0 and v.y > t - 0.025:
-		v.y = t - 0.025
+	if t < 90.0 and v.y > t - m:
+		v.y = t - m
 	var yi := clampi(int(v.y / SHELL_STEP), 0, ny - 1)
 	var sd: float = (shell.side as PackedFloat32Array)[di * ny + yi]
-	if sd < 90.0 and absf(v.x) > sd - 0.025:
-		v.x = signf(v.x) * maxf(sd - 0.025, 0.0)
+	if sd < 90.0 and absf(v.x) > sd - m:
+		v.x = signf(v.x) * maxf(sd - m, 0.0)
 	# and in front of the tail panel / rear window
 	var xi2 := clampi(int(absf(v.x) / SHELL_STEP), 0, nx - 1)
 	var bk: float = (shell.back as PackedFloat32Array)[xi2 * ny + yi]
-	if bk > -90.0 and -v.z < bk + 0.03 and -v.z < 1.3:
-		v.z = -(bk + 0.03)
+	if bk > -90.0 and -v.z < bk + m + 0.005 and -v.z < 1.3:
+		v.z = -(bk + m + 0.005)
 	return v
 
 
@@ -2143,13 +2143,19 @@ func body_node() -> Node3D:
 
 
 ## Driver's eye position in car space.
-func cockpit_eye() -> Vector3:
+func cockpit_eye(clamp_to_shell := true) -> Vector3:
 	var pr: Dictionary = PROFILES.get(_shape_id, PROFILES.sedan)
 	if not pr.has("gh"):
 		return Vector3(-0.42, 1.72, -3.95)
 	var g: Array = pr.gh
 	var y: float = float(pr.eye_y) if pr.has("eye_y") else minf(g[4] + 0.38, g[5] - 0.16)
-	return Vector3(-0.36 * shape.w / 1.84, y + 0.035, -(g[1] - float(pr.get("eye_back", 1.45))))
+	var eye := Vector3(-0.36 * shape.w / 1.84, y + 0.035, -(g[1] - float(pr.get("eye_back", 1.45))))
+	if pr.has("mesh") and clamp_to_shell:
+		# the head must stay inside the real roof, door frames and rear glass:
+		# the top of the head is 9 cm above the eye, with 3 cm to spare
+		var up := Vector3(0, 0.09, 0)
+		eye = _inside_shell(eye + up, _shell(_shape_id), 0.03) - up
+	return eye
 
 
 ## Bonnet camera position in car space.

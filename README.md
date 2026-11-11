@@ -159,3 +159,5 @@ Arguments placed after `--` on the command line:
 ```bash
 godot --headless --path . -- --autotest --fast --quit-after=90
 ```
+
+- Cockpit camera: the driver's eye is kept inside each imported body's real roof, door frames and rear glass, so the head never clips through the headliner or pillars.

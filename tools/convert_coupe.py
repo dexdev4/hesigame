@@ -9,10 +9,12 @@ import io
 src,out=sys.argv[1:3]
 GLASS_Y=float(sys.argv[3]) if len(sys.argv)>3 else 0.84
 FLAGS=sys.argv[4:]
-LINES='lines' in FLAGS          # carve the texture's shut lines and handles
+LQ='lq' in FLAGS               # the light distance version (no carved lines)
+LINES=('lines' in FLAGS) and not LQ          # carve the texture's shut lines and handles
 GLOSS_TRIM='gloss' in FLAGS     # black lower panels as gloss black
 BODYSIDE='bodyside' in FLAGS    # paint the broad black lower bodyside band
 RED_PAINT=False
+PAINT_LIGHT=False
 PAINT_LUM=0.3
 d=open(src,'rb').read()
 ln=struct.unpack('<I',d[12:16])[0]; j=json.loads(d[20:20+ln])
@@ -51,7 +53,8 @@ def classify(uv,pos):
         k[(k=='paint')&(ratio<0.72)&(~dark)]='gloss'
         # faint heater lines printed on the rear window are still glass
         k[(k=='gloss')&(lum<0.13)&(~dark)&(pos[:,1]>GLASS_Y)]='glass'
-    k[(a[:,0]>0.6)&(a[:,1]>0.6)&(a[:,2]>0.6)]='headlens'
+    if not PAINT_LIGHT:  # on a white car the paint itself is 'white'
+        k[(a[:,0]>0.6)&(a[:,1]>0.6)&(a[:,2]>0.6)]='headlens'
     if not RED_PAINT:  # red lens areas count as tail lamp, unless the car itself is red
         k[(a[:,0]>0.35)&(a[:,1]<0.2)&(a[:,2]<0.2)]='tail'
     # number plates painted into the texture: white panels across the middle
@@ -85,8 +88,10 @@ _vals,_cnt=np.unique(_cols,axis=0,return_counts=True)
 _paint=_vals[np.argmax(_cnt)]*16/255.0
 RED_PAINT=bool(_paint[0]>0.3 and _paint[1]<0.2 and _paint[2]<0.2)
 PAINT_LUM=float(_paint.mean())
+PAINT_LIGHT=bool(PAINT_LUM>0.6)
 print('paint colour',(_paint*255).astype(int),'red paint' if RED_PAINT else '')
-MAXD=3
+ORIG_CLS=None
+MAXD=1 if LQ else 3
 total=0
 if LINES:
     # texel categories (paint, dark, white, red, lit head, lit tail) and a
@@ -95,7 +100,8 @@ if LINES:
     _lum=A.mean(2)
     _cat=np.zeros(_lum.shape,np.int8)
     _cat[_lum<0.07]=1
-    _cat[(A[...,0]>0.6)&(A[...,1]>0.6)&(A[...,2]>0.6)]=2
+    if not PAINT_LIGHT:
+        _cat[(A[...,0]>0.6)&(A[...,1]>0.6)&(A[...,2]>0.6)]=2
     if not RED_PAINT:
         _cat[(A[...,0]>0.35)&(A[...,1]<0.2)&(A[...,2]<0.2)]=3
     _Eb=np.asarray(Image.fromarray((E*255).astype(np.uint8)).resize((A.shape[1],A.shape[0])),dtype=np.float32)/255
@@ -161,7 +167,7 @@ for kind in set(c):
 # the other parts, by material: wheel wells, solid paint (mirrors, spoiler),
 # chrome, black trim, matte aero parts; calipers are left out (the game's
 # wheels bring their own)
-BY_MAT={'WheelWell':'under','PaintSolid':'paint','Chrome':'chrome','TrimBlack':'gloss','AeroBlack':'dark'}
+BY_MAT={'WheelWell':'under','PaintSolid':'paint','Chrome':'chrome','TrimBlack':'gloss','AeroBlack':'dark','Cargo':'paint','LampRed':'tail'}
 for q in j['meshes'][0]['primitives'][1:]:
     mname=j['materials'][q['material']].get('name','')
     kind=BY_MAT.get(mname)
@@ -170,6 +176,50 @@ for q in j['meshes'][0]['primitives'][1:]:
         continue
     P2=acc(q['attributes']['POSITION']); N2=acc(q['attributes']['NORMAL']); T2=acc(q['indices']).reshape(-1)
     add(kind,P2[T2],N2[T2])
+# ---- measure the car and write its profile (tools/profiles/NAME.json)
+def _measure():
+    import os
+    P0=to_game(P)                                   # every vertex of the main body
+    cls0=classify(UV[T].mean(1),P[T].mean(1))       # class of each original triangle
+    gtri=to_game(P[T[cls0=='glass']].reshape(-1,3)) if (cls0=='glass').any() else P0
+    L=float(-P0[:,2].min()); W=float(2*np.abs(P0[:,0]).max())
+    D=-P0[:,2]
+    roof=float(P0[:,1].max())
+    side=gtri[np.abs(gtri[:,0])>0.45]
+    belt=float(np.percentile(side[:,1],8)) if len(side) else 0.9
+    up=gtri[gtri[:,1]>belt+0.07]                       # real window glass, not dark rear-panel texture
+    gd=-up[:,2] if len(up) else -gtri[:,2]
+    g0=float(np.percentile(gd,0.5)); g1=float(np.percentile(gd,99.5))
+    hi=D[P0[:,1]>roof-0.045]
+    g2=float(hi.min()); g3=float(hi.max())
+    def width_at(mask): 
+        return float(np.abs(P0[mask,0]).max()) if mask.any() else W/2
+    wbase=float(np.abs(side[:,0]).max()) if len(side) else W/2*0.8
+    wsel=up[(-up[:,2])>g1-0.25]
+    ws_hw=float(np.abs(wsel[:,0]).max()) if len(wsel) else wbase*0.7
+    wroof=width_at(P0[:,1]>roof-0.08)
+    # shoulder height and body width along the car
+    body=[]
+    for d in [0.0,0.1,0.3,0.7,1.2,1.8,2.4,3.0,3.5,3.9,4.2,L]:
+        if d>L: continue
+        sel=np.abs(D-d)<0.06
+        if not sel.any(): continue
+        top=float(P0[sel,1].max())
+        if g0<d<g1: top=min(top,belt+0.04)
+        body.append([round(d,3),round(top,3),round(width_at(sel)/(W/2),3)])
+    # wheels from the nodes
+    wn=[n for n in j['nodes'] if n.get('name','').startswith('Wheel_')]
+    rear=[n for n in wn if n['translation'][2]<0]; front=[n for n in wn if n['translation'][2]>0]
+    r=float(wn[0]['translation'][1])
+    rear_d=float(np.mean([REAR+n['translation'][2] for n in rear])); front_d=float(np.mean([REAR+n['translation'][2] for n in front]))
+    wx=[float(np.mean([abs(n['translation'][0]) for n in rear])),float(np.mean([abs(n['translation'][0]) for n in front]))]
+    wm=j['meshes'][1]['primitives'][0]; wpos=acc(wm['attributes']['POSITION'])
+    tyre=float(wpos[:,0].max()-wpos[:,0].min())
+    axles=sorted(rear_d_ for rear_d_ in [REAR+n['translation'][2] for n in wn])
+    return {"L":round(L,3),"W":round(W,3),"roof":round(roof,3),"belt":round(belt,3),
+        "gh":[round(g0,3),round(g1,3),round(g2,3),round(g3,3),round(belt,3),round(roof,3),round(wbase/(W/2),3),round(wroof/(W/2),3)],
+        "body":body,"wheel":[round(r,3),round(rear_d,3),round(front_d,3)],"wheel_x":[round(wx[0],3),round(wx[1],3)],"tyre":round(tyre,3),
+        "ws_hw":round(ws_hw,3),"axles":[round(a,3) for a in sorted(set(round(a,2) for a in axles))]}
 res={}
 for kind,s in surf.items():
     pp=to_game(np.concatenate(s['p'])); nn=ngame(np.concatenate(s['n']))
@@ -191,6 +241,11 @@ for dd in np.arange(0.4,3.8,0.2):
     if sel.any(): print('glass d %.2f ymin %.3f ymax %.3f xmax %.3f'%(dd,gp[sel,1].min(),gp[sel,1].max(),np.abs(gp[sel,0]).max()))
 sel=(np.abs(allp[:,0])<0.15)&(np.abs(allp[:,1]-0.55)<0.05)
 print('rear face z at plate height',allp[sel,2].max())
+import json,os
+_prof=_measure() if not LQ else None
+os.makedirs(os.path.join(os.path.dirname(os.path.abspath(__file__)),'profiles'),exist_ok=True)
+if _prof: json.dump(_prof,open(os.path.join(os.path.dirname(os.path.abspath(__file__)),'profiles',os.path.splitext(os.path.basename(out))[0]+'.json'),'w'))
+if _prof: print('profile',{k:_prof[k] for k in ('L','W','roof','belt','gh','wheel','wheel_x','tyre')})
 # binary: magic, surface count, then per surface: name, vertex count, positions,
 # normals, index count, indices (vertices shared where position and normal match)
 order=['paint','glass','dark','under','chrome','gloss','plate','headlens','head','tail']

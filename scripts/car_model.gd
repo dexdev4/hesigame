@@ -19,6 +19,98 @@ static var _beam_mesh: ArrayMesh
 # gh (greenhouse): [base rear z, base front z, roof rear z, roof front z, base y, roof y, base width, roof width].
 # pillars: side-window pillar spans along the side, 0 = rear edge, 1 = front edge.
 const PROFILES := {
+	# BEGIN IMPORTED PROFILES
+	"kestrel": {
+		"mesh": "res://assets/models/car_kestrel.mesh",
+		"mesh_lq": "res://assets/models/car_kestrel_lq.mesh",
+		"body": [[0, 1.07, 0.847], [0.1, 1.051, 0.895], [0.3, 1.051, 0.976], [0.7, 1.051, 0.998], [1.2, 1.051, 0.997], [1.8, 1.051, 0.959], [2.4, 1.051, 0.952], [3, 0.904, 0.989], [3.5, 0.826, 0.968], [3.9, 0.737, 0.923], [4.2, 0.654, 0.809], [4.25, 0.61, 0.707]],
+		"gh": [0.07, 2.535, 0.295, 1.93, 1.011, 1.418, 0.919, 0.559],
+		"pillars": [[0, 0.28], [0.5, 0.54], [0.93, 1]],
+		"rim_frac": 0.7,
+		"tyre": [0.235, 0.235],
+		"wheel": [0.35, 0.75, 3.39],
+		"wheel_x": [0.815, 0.8],
+		"plate_y": 0.62,
+		"badge_y": 0.74,
+		"eye_back": 1.3,
+		"eye_y": 1.248,
+		"dash_drop": 0,
+		"dash_hw": 0.53,
+		"ws_base_hw": 0.5,
+		"mirror_d": 1.88},
+	"bruiser": {
+		"mesh": "res://assets/models/car_bruiser.mesh",
+		"mesh_lq": "res://assets/models/car_bruiser_lq.mesh",
+		"body": [[0, 0.879, 0.857], [0.1, 0.899, 0.913], [0.3, 0.91, 0.95], [0.7, 1.037, 1], [1.2, 0.995, 0.997], [1.8, 0.995, 0.954], [2.4, 0.995, 0.944], [3, 0.857, 0.942], [3.5, 0.841, 0.976], [3.9, 0.82, 0.95], [4.2, 0.791, 0.959], [4.8, 0.648, 0.715]],
+		"gh": [0.73, 2.495, 1.33, 2.055, 0.955, 1.289, 0.83, 0.524],
+		"pillars": [[0, 0.28], [0.5, 0.54], [0.93, 1]],
+		"rim_frac": 0.7,
+		"tyre": [0.265, 0.265],
+		"wheel": [0.36, 1.02, 3.85],
+		"wheel_x": [0.835, 0.81],
+		"plate_y": 0.62,
+		"badge_y": 0.74,
+		"eye_back": 1.3,
+		"eye_y": 1.088,
+		"dash_drop": 0.12,
+		"dash_hw": 0.52,
+		"ws_base_hw": 0.49,
+		"mirror_d": 2.01},
+	"copperhead": {
+		"mesh": "res://assets/models/car_copperhead.mesh",
+		"mesh_lq": "res://assets/models/car_copperhead_lq.mesh",
+		"body": [[0, 0.879, 0.857], [0.1, 0.899, 0.913], [0.3, 0.91, 0.95], [0.7, 1.037, 1], [1.2, 0.995, 0.997], [1.8, 0.995, 0.954], [2.4, 0.995, 0.944], [3, 0.857, 0.942], [3.5, 0.841, 0.976], [3.9, 0.82, 0.95], [4.2, 0.791, 0.959], [4.8, 0.648, 0.715]],
+		"gh": [0.73, 2.495, 1.33, 2.055, 0.955, 1.289, 0.83, 0.524],
+		"pillars": [[0, 0.28], [0.5, 0.54], [0.93, 1]],
+		"rim_frac": 0.7,
+		"tyre": [0.265, 0.265],
+		"wheel": [0.36, 1.02, 3.85],
+		"wheel_x": [0.835, 0.81],
+		"plate_y": 0.62,
+		"badge_y": 0.74,
+		"eye_back": 1.3,
+		"eye_y": 1.088,
+		"dash_drop": 0.12,
+		"dash_hw": 0.52,
+		"ws_base_hw": 0.49,
+		"mirror_d": 2.01},
+	"halcyon": {
+		"mesh": "res://assets/models/car_halcyon.mesh",
+		"mesh_lq": "res://assets/models/car_halcyon_lq.mesh",
+		"body": [[0, 0.841, 0.871], [0.1, 0.856, 0.923], [0.3, 0.874, 0.965], [0.7, 0.919, 0.995], [1.2, 0.896, 1], [1.8, 0.896, 0.947], [2.4, 0.896, 0.918], [3, 0.794, 0.937], [3.5, 0.795, 0.888], [3.9, 0.73, 0.94], [4.2, 0.623, 0.875], [4.5, 0.473, 0.666]],
+		"gh": [0.815, 2.655, 1.555, 2.325, 0.856, 1.104, 0.744, 0.545],
+		"pillars": [[0, 0.28], [0.5, 0.54], [0.93, 1]],
+		"rim_frac": 0.7,
+		"tyre": [0.27, 0.27],
+		"wheel": [0.35, 0.87, 3.52],
+		"wheel_x": [0.87, 0.835],
+		"plate_y": 0.62,
+		"badge_y": 0.74,
+		"eye_back": 1.49,
+		"eye_y": 0.832,
+		"dash_drop": 0.17,
+		"dash_hw": 0.5,
+		"ws_base_hw": 0.47,
+		"mirror_d": 2.28},
+	"static": {
+		"mesh": "res://assets/models/car_static.mesh",
+		"mesh_lq": "res://assets/models/car_static_lq.mesh",
+		"body": [[0, 0.841, 0.871], [0.1, 0.856, 0.923], [0.3, 0.874, 0.965], [0.7, 0.919, 0.995], [1.2, 0.899, 1], [1.8, 0.899, 0.947], [2.4, 0.899, 0.918], [3, 0.794, 0.937], [3.5, 0.795, 0.888], [3.9, 0.73, 0.94], [4.2, 0.623, 0.875], [4.5, 0.473, 0.666]],
+		"gh": [0.835, 2.655, 1.555, 2.325, 0.859, 1.104, 0.744, 0.545],
+		"pillars": [[0, 0.28], [0.5, 0.54], [0.93, 1]],
+		"rim_frac": 0.7,
+		"tyre": [0.27, 0.27],
+		"wheel": [0.35, 0.87, 3.52],
+		"wheel_x": [0.87, 0.835],
+		"plate_y": 0.62,
+		"badge_y": 0.74,
+		"eye_back": 1.49,
+		"eye_y": 0.828,
+		"dash_drop": 0.17,
+		"dash_hw": 0.5,
+		"ws_base_hw": 0.47,
+		"mirror_d": 2.28},
+	# END IMPORTED PROFILES
 	# Optional shape keys read by BodyBuilder: corner = plan-view corner radii
 	# [tail, nose]; flare / fender = arch flares and wing peaks [rear, front];
 	# crease_h / tumble = shoulder crease height and how far the side leans in
@@ -1927,7 +2019,7 @@ func cockpit_eye() -> Vector3:
 	if not pr.has("gh"):
 		return Vector3(-0.42, 1.72, -3.95)
 	var g: Array = pr.gh
-	var y: float = minf(g[4] + 0.38, g[5] - 0.16)
+	var y: float = float(pr.eye_y) if pr.has("eye_y") else minf(g[4] + 0.38, g[5] - 0.16)
 	return Vector3(-0.36 * shape.w / 1.84, y, -(g[1] - float(pr.get("eye_back", 1.45))))
 
 
@@ -1957,6 +2049,8 @@ static func _strap(st: SurfaceTool, a: Vector3, b: Vector3, w: float, t: float) 
 ## "tablet" (a tall floating tablet) or "retro" (a small radio); pods = small
 ## extra gauges on the dash top; two_tone = lower dash in the leather colour;
 ## cage = a roll hoop behind the seats. dials = [speedo ring, rev ring, needle].
+## Imported cars keep the cabin style of the generated body they replaced.
+const CABIN_ALIAS := {"kestrel": "hatch", "bruiser": "muscle", "copperhead": "fastback", "halcyon": "super", "static": "rcoupe"}
 const CABINS := {
 	"hot_hatch": {"leather": "#23262b", "insert": "#2f62b0", "stitch": "#5a9bff", "ambient": "#3d8bff", "strip": "#3b4047", "wheel": "flat", "screen": "tablet",
 		"dials": ["#5a9bff", "#e6e6e6", "#ff4a2a"], "accent": "#5a9bff"},
@@ -2048,7 +2142,7 @@ func build_interior() -> void:
 
 	var bbi := BodyBuilder.new(_shape_id, pr, shape, {})  # for the real roof line
 	var S := {}
-	var cab: Dictionary = CABINS.get(_shape_id, {})
+	var cab: Dictionary = CABINS.get(CABIN_ALIAS.get(_shape_id, _shape_id), {})
 	var bucket: bool = cab.get("seats", "comfort") == "bucket"
 	var scr: String = cab.get("screen", "wide")
 	var keys := ["carpet", "trim", "dash", "pad", "leather", "cloth", "insert", "chrome", "alu", "vent", "screen", "red", "stitch", "ambient", "map", "route", "accent"]

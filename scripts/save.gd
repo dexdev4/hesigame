@@ -16,7 +16,7 @@ func defaults() -> Dictionary:
 		"cash": 0, "best": 0, "runs": 0,
 		"owned": ["comet"], "selected": "comet", "unlocked": [],
 		"perm": {"accel": 0, "brake": 0, "handling": 0, "top": 0, "lives": 0},
-		"sound": true, "assist": false, "free_steer": true,
+		"sound": true, "assist": false, "free_steer": true, "looks": {},
 		"cam": _cam_defaults(),
 		"settings": SETTING_DEFAULTS.duplicate(true),
 	}
@@ -107,6 +107,34 @@ func persist() -> void:
 	var f := FileAccess.open(PATH, FileAccess.WRITE)
 	if f:
 		f.store_string(JSON.stringify(data))
+
+
+## The paint and wheels chosen in the workshop for a car, over its factory look.
+func car_color(c: Dictionary) -> Color:
+	var lk: Dictionary = data.get("looks", {}).get(c.id, {})
+	var col: String = lk.get("color", "")
+	return Color(col) if col != "" else Color(c.color)
+
+
+func car_style(c: Dictionary) -> Dictionary:
+	var st: Dictionary = (c.style as Dictionary).duplicate()
+	var lk: Dictionary = data.get("looks", {}).get(c.id, {})
+	for k in ["rim", "rim_color"]:
+		if lk.has(k):
+			st[k] = lk[k]
+	return st
+
+
+func set_look(id: String, key: String, value: String) -> void:
+	if not data.has("looks") or not data.looks is Dictionary:
+		data["looks"] = {}
+	var lk: Dictionary = data.looks.get(id, {})
+	if value == "":
+		lk.erase(key)
+	else:
+		lk[key] = value
+	data.looks[id] = lk
+	persist()
 
 
 ## Developer tools: own and unlock every car.

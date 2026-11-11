@@ -67,6 +67,7 @@ var _editing := false
 var _drag := {}
 var _over := {}
 var garage_tab := "cars"
+var _solid: Array[Control] = []  # panels on sheet screens (drags elsewhere turn the garage camera)
 var fps_label: Label
 var _fuel_bar: ProgressBar
 var _fuel_val: Label
@@ -307,12 +308,55 @@ func _apply_safe_area() -> void:
 	_kmh.get_parent().offset_bottom = -(26 + bottom)
 	# menu panels fill the width on phones and stay readable on wide screens
 	for k in screens:
+		if screens[k].has_meta("sheet"):
+			_layout_sheet(screens[k], vp, top, bottom)
+			continue
 		var margin: MarginContainer = screens[k].get_child(1).get_child(0)
 		var side := maxf(34.0, (vp.x - float(margin.get_meta("max_w"))) / 2.0)
 		margin.add_theme_constant_override("margin_left", int(side))
 		margin.add_theme_constant_override("margin_right", int(side))
 		margin.add_theme_constant_override("margin_top", int(60 + top))
 		margin.add_theme_constant_override("margin_bottom", int(60 + bottom))
+
+
+func _layout_sheet(scr: Control, vp: Vector2, top: float, bottom: float) -> void:
+	var portrait := vp.y > vp.x
+	if scr.has_meta("panel"):
+		var panel: PanelContainer = scr.get_meta("panel")
+		var w := minf(vp.x - 24.0, float(panel.get_meta("max_w")))
+		if not portrait:
+			w = minf(w, vp.x * 0.5)
+		panel.custom_minimum_size.x = w
+		panel.offset_left = -w / 2.0
+		panel.offset_right = w / 2.0
+		panel.offset_bottom = -(12.0 + bottom)
+		if not portrait:
+			# landscape: the panel sits on the right, the car stays in view on the left
+			panel.anchor_left = 1.0
+			panel.anchor_right = 1.0
+			panel.offset_left = -w - 16.0
+			panel.offset_right = -16.0
+		else:
+			panel.anchor_left = 0.5
+			panel.anchor_right = 0.5
+	if scr == screens.get("garage"):
+		(_garage.scroll as ScrollContainer).custom_minimum_size.y = clampf(vp.y * (0.27 if portrait else 0.42), 220.0, 620.0)
+	if _menu.has("head") and scr == screens.get("menu"):
+		var head: MarginContainer = _menu.head
+		head.add_theme_constant_override("margin_top", int(20 + top))
+		head.add_theme_constant_override("margin_left", 22)
+		head.add_theme_constant_override("margin_right", 22)
+
+
+## True when a touch at pos lands on one of the sheet panels (not the 3D view).
+func ui_blocks(pos: Vector2) -> bool:
+	for c in _solid:
+		if c.is_visible_in_tree() and c.get_global_rect().has_point(pos):
+			return true
+	for k in screens:
+		if screens[k].visible and not screens[k].has_meta("sheet"):
+			return true  # a full-screen menu is open
+	return false
 
 
 # ---------------------------------------------------------------- play HUD
@@ -768,43 +812,160 @@ func show_hint() -> void:
 
 # ---------------------------------------------------------------- menus
 
+## A screen that leaves the 3D view clear: no scrim, nothing that blocks
+## touches except its own panels (listed in _solid so dragging elsewhere
+## turns the garage camera).
+func _sheet_screen(name: String) -> Control:
+	var scr := Control.new()
+	scr.set_anchors_preset(Control.PRESET_FULL_RECT)
+	scr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	scr.set_meta("sheet", true)
+	scr.visible = false
+	root.add_child(scr)
+	screens[name] = scr
+	return scr
+
+
+## A panel pinned to the bottom of a sheet screen, centred and width-capped.
+func _bottom_panel(scr: Control, max_w := 720.0) -> VBoxContainer:
+	var panel := PanelContainer.new()
+	var sb := _sign_style(SIGN)
+	sb.bg_color = Color(SIGN, 0.94)
+	panel.add_theme_stylebox_override("panel", sb)
+	panel.anchor_left = 0.5
+	panel.anchor_right = 0.5
+	panel.anchor_top = 1.0
+	panel.anchor_bottom = 1.0
+	panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	panel.set_meta("max_w", max_w)
+	scr.add_child(panel)
+	_solid.append(panel)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 14)
+	panel.add_child(vb)
+	scr.set_meta("panel", panel)
+	return vb
+
+
 func _build_menu() -> void:
-	var v := _screen("menu")
-	v.add_child(_eyebrow("Interstate 4 · Eastbound · All lanes open"))
-	var title := _label("REDLINE\nRUSH", 112, LINE, display_font)
-	title.add_theme_constant_override("line_spacing", -30)
-	v.add_child(title)
-	v.add_child(_wrap("Weave through four lanes of traffic. Close passes and late lane changes at speed pay the most. Three taps and the run is over.", 26))
-	var stats := _row(12)
-	v.add_child(stats)
+	var scr := _sheet_screen("menu")
+	# soft shading top and bottom so the text reads over the workshop
+	for top in [true, false]:
+		var g := TextureRect.new()
+		var grad := Gradient.new()
+		grad.set_color(0, Color(0, 0, 0, 0.55))
+		grad.set_color(1, Color(0, 0, 0, 0.0))
+		var gt := GradientTexture2D.new()
+		gt.gradient = grad
+		gt.fill_from = Vector2(0, 0) if top else Vector2(0, 1)
+		gt.fill_to = Vector2(0, 1) if top else Vector2(0, 0)
+		g.texture = gt
+		g.stretch_mode = TextureRect.STRETCH_SCALE
+		g.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		g.anchor_right = 1.0
+		if top:
+			g.anchor_bottom = 0.22
+		else:
+			g.anchor_top = 0.6
+			g.anchor_bottom = 1.0
+		scr.add_child(g)
+	# title and cash across the top
+	var head := MarginContainer.new()
+	head.anchor_right = 1.0
+	head.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	scr.add_child(head)
+	_menu["head"] = head
+	var hr := _row(14)
+	hr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	head.add_child(hr)
+	var tv := VBoxContainer.new()
+	tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tv.add_theme_constant_override("separation", 0)
+	tv.add_child(_eyebrow("Exit 12 · Service area · Your garage"))
+	var title := _label("REDLINE RUSH", 64, LINE, display_font)
+	title.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.6))
+	title.add_theme_constant_override("shadow_offset_y", 3)
+	tv.add_child(title)
+	hr.add_child(tv)
+	var chips := VBoxContainer.new()
+	chips.add_theme_constant_override("separation", 6)
+	chips.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hr.add_child(chips)
 	var a := _stat("$0", "Cash", AMBER)
 	var b := _stat("0", "Best run")
-	var c := _stat("Comet", "Your car")
-	for s in [a, b, c]:
-		stats.add_child(s[0])
+	for st in [a, b]:
+		(st[0] as Control).custom_minimum_size.x = 150
+		chips.add_child(st[0])
 	_menu["cash"] = a[1]
 	_menu["best"] = b[1]
-	_menu["car"] = c[1]
+	# the car and what to do with it, at the bottom
+	var v := _bottom_panel(scr)
+	var nr := _row(10)
+	v.add_child(nr)
+	var nv := VBoxContainer.new()
+	nv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	nv.add_theme_constant_override("separation", 0)
+	nv.add_child(_eyebrow("On the turntable"))
+	_menu["car"] = _label("", 46, LINE, display_font)
+	nv.add_child(_menu.car)
+	nr.add_child(nv)
+	_menu["fuel"] = _label("", 15, AMBER, mono_font)
+	_menu.fuel.size_flags_vertical = Control.SIZE_SHRINK_END
+	nr.add_child(_menu.fuel)
+	var grid := GridContainer.new()
+	grid.columns = 4
+	grid.add_theme_constant_override("h_separation", 10)
+	v.add_child(grid)
+	for k in ["accel", "top", "grip", "brake"]:
+		var sv := VBoxContainer.new()
+		sv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		sv.add_theme_constant_override("separation", 2)
+		var lab := _label("", 14, MUTED, mono_font)
+		sv.add_child(lab)
+		var bar := _bar(_fill_amber, 8)
+		sv.add_child(bar)
+		grid.add_child(sv)
+		_menu["l_" + k] = lab
+		_menu["b_" + k] = bar
 	v.add_child(_button("START RUN  →", "amber", "start"))
-	var btns := _row(14)
+	var btns := GridContainer.new()
+	btns.columns = 3
+	btns.add_theme_constant_override("h_separation", 10)
+	btns.add_theme_constant_override("v_separation", 10)
 	v.add_child(btns)
-	btns.add_child(_button("GARAGE", "light", "garage"))
-	btns.add_child(_button("SETTINGS", "light", "settings"))
-	v.add_child(_eyebrow("How to play"))
+	for bd in [["CARS", "garage", "cars"], ["WORKSHOP", "garage", "up"], ["SETTINGS", "settings", ""]]:
+		var bt := _button(bd[0], "light", bd[1], bd[2])
+		bt.add_theme_font_size_override("font_size", 28)
+		btns.add_child(bt)
+	var help := _button("HOW TO PLAY", "ghost", "help")
+	help.add_theme_font_size_override("font_size", 22)
+	v.add_child(help)
+	v.add_child(_label("Drag to look around your car", 15, MUTED, mono_font))
+	_build_help()
+
+
+func _build_help() -> void:
+	var v := _screen("help")
+	v.add_child(_eyebrow("Driver's handbook"))
+	v.add_child(_label("HOW TO PLAY", 72, LINE, display_font))
 	var how := RichTextLabel.new()
 	how.bbcode_enabled = true
 	how.fit_content = true
 	how.scroll_active = false
 	how.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	how.add_theme_font_size_override("normal_font_size", 22)
-	how.add_theme_font_size_override("bold_font_size", 22)
+	how.add_theme_font_size_override("normal_font_size", 23)
+	how.add_theme_font_size_override("bold_font_size", 23)
 	how.add_theme_color_override("default_color", MUTED)
-	how.text = ("• [b][color=#f3f5ef]Gas[/color][/b] pedal on the right, [b][color=#f3f5ef]brake[/color][/b] pedal on the left.\n"
-		+ "• [b][color=#f3f5ef]Steer[/color][/b] like a real car: the car keeps going the way it points, so straighten up yourself. Change the steering method in Settings › Controls.\n"
-		+ "• Pass cars inside 1 m for a [b][color=#f3f5ef]near miss[/color][/b]. Change lanes right beside a car for a [b][color=#f3f5ef]close cut[/color][/b]. Chains build your multiplier.\n"
-		+ "• Cover the distance and hit the points target to face the [b][color=#f3f5ef]boss[/color][/b]. Out-score it before the finish gantry.\n"
-		+ "• Watch the [b][color=#f3f5ef]fuel[/color][/b] gauge and pull into the fuel stops on the right.")
+	how.text = ("• [b][color=#f3f5ef]Gas[/color][/b] pedal on the right, [b][color=#f3f5ef]brake[/color][/b] pedal on the left.\n\n"
+		+ "• [b][color=#f3f5ef]Steer[/color][/b] like a real car: it keeps going the way it points, so straighten up yourself. Change the steering method in Settings › Controls.\n\n"
+		+ "• Pass cars inside 1 m for a [b][color=#f3f5ef]near miss[/color][/b]. Change lanes right beside a car for a [b][color=#f3f5ef]close cut[/color][/b]. Chains build your multiplier.\n\n"
+		+ "• Cover the distance or hit the points target and the [b][color=#f3f5ef]boss[/color][/b] (or the police) arrives 10 seconds later. Out-score the boss before the finish gantry.\n\n"
+		+ "• Watch the [b][color=#f3f5ef]fuel[/color][/b] gauge and pull into the fuel stops on the right.\n\n"
+		+ "• Spend your winnings in the [b][color=#f3f5ef]garage[/color][/b]: new cars, upgrades, paint and wheels.")
 	v.add_child(how)
+	v.add_child(_button("BACK", "light", "menu"))
 
 
 func _toggle(text: String, action: String) -> Button:
@@ -826,34 +987,56 @@ func _toggle(text: String, action: String) -> Button:
 func render_menu() -> void:
 	_menu.cash.text = "$" + Fmt.num(Save.data.cash)
 	_menu.best.text = Fmt.num(Save.data.best)
-	_menu.car.text = Data.car_by_id(Save.data.selected).name
+	var c := Data.car_by_id(Save.data.selected)
+	_menu.car.text = String(c.name).to_upper()
+	_menu.fuel.text = "%s · %d L" % [String(Data.FUEL_GRADES[c.get("fuel", "regular")].name).to_upper(), int(c.get("tank", 45))]
+	# with your permanent upgrades applied
+	var accel: float = c.accel * (1.0 + 0.06 * Save.perm_level("accel"))
+	var top: float = c.top * (1.0 + 0.04 * Save.perm_level("top"))
+	var grip: float = c.grip * (1.0 + 0.06 * Save.perm_level("handling"))
+	var brake: float = c.brake * (1.0 + 0.06 * Save.perm_level("brake"))
+	var rows := {"accel": ["ACCEL %.1f" % accel, accel / 13.0], "top": ["TOP %d KM/H" % roundi(top * 3.6), top / 95.0],
+		"grip": ["GRIP %.1f" % grip, grip / 16.0], "brake": ["BRAKES %.1f" % brake, brake / 16.0]}
+	for k in rows:
+		_menu["l_" + k].text = rows[k][0]
+		_menu["b_" + k].value = clampf(rows[k][1], 0.0, 1.0)
+
+
+const GARAGE_TABS := [["cars", "CARS"], ["up", "UPGRADES"], ["paint", "PAINT"], ["wheels", "WHEELS"]]
 
 
 func _build_garage() -> void:
-	var v := _screen("garage", SIGN, 720)
+	var scr := _sheet_screen("garage")
+	var v := _bottom_panel(scr)
 	var head := _row(10)
 	v.add_child(head)
 	var tv := VBoxContainer.new()
 	tv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	tv.add_child(_eyebrow("Exit 12 · Service area"))
-	tv.add_child(_label("GARAGE", 84, LINE, display_font))
+	tv.add_theme_constant_override("separation", 0)
+	_garage["eyebrow"] = _eyebrow("Exit 12 · Service area")
+	tv.add_child(_garage.eyebrow)
+	_garage["title"] = _label("GARAGE", 54, LINE, display_font)
+	tv.add_child(_garage.title)
 	head.add_child(tv)
 	var cv := VBoxContainer.new()
 	cv.alignment = BoxContainer.ALIGNMENT_END
 	var ce := _eyebrow("Cash")
 	ce.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	cv.add_child(ce)
-	_garage["cash"] = _label("$0", 38, AMBER, mono_font)
+	_garage["cash"] = _label("$0", 34, AMBER, mono_font)
 	cv.add_child(_garage.cash)
 	head.add_child(cv)
-	var tabs := _row(8)
+	var tabs := GridContainer.new()
+	tabs.columns = 4
+	tabs.add_theme_constant_override("h_separation", 8)
 	v.add_child(tabs)
-	_garage["tab_cars"] = _button("CARS", "light", "tab", "cars")
-	_garage["tab_up"] = _button("UPGRADES", "light", "tab", "up")
-	tabs.add_child(_garage.tab_cars)
-	tabs.add_child(_garage.tab_up)
+	for t in GARAGE_TABS:
+		var tb := _button(t[1], "light", "tab", t[0])
+		tb.add_theme_font_size_override("font_size", 22)
+		tabs.add_child(tb)
+		_garage["tab_" + t[0]] = tb
 	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size.y = 620
+	scroll.custom_minimum_size.y = 420
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	scroll.scroll_deadzone = 100000  # touch scrolling is handled in _input instead
 	v.add_child(scroll)
@@ -863,7 +1046,37 @@ func _build_garage() -> void:
 	scroll.add_child(list)
 	_garage["list"] = list
 	_garage["scroll"] = scroll
-	v.add_child(_button("BACK TO MENU", "ghost", "menu"))
+	v.add_child(_button("DONE", "light", "menu"))
+
+
+## A colour chip button for the paint and wheel tabs.
+func _swatch(col: Color, caption: String, on: bool, action: String, arg: String) -> Button:
+	var b := Button.new()
+	b.custom_minimum_size = Vector2(0, 92)
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var sb := _flat(SIGN_DEEP, 12, AMBER if on else Color(LINE, 0.15), 4 if on else 2)
+	for k in ["normal", "hover", "pressed", "focus"]:
+		b.add_theme_stylebox_override(k, sb)
+	var vb := VBoxContainer.new()
+	vb.set_anchors_preset(Control.PRESET_FULL_RECT)
+	vb.offset_left = 10
+	vb.offset_right = -10
+	vb.offset_top = 10
+	vb.offset_bottom = -8
+	vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	b.add_child(vb)
+	var chip := Panel.new()
+	chip.custom_minimum_size.y = 40
+	chip.add_theme_stylebox_override("panel", _flat(col, 8, Color(0, 0, 0, 0.4), 2))
+	chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vb.add_child(chip)
+	var l := _label(caption, 15, LINE if on else MUTED, mono_font)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.clip_text = true
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vb.add_child(l)
+	b.pressed.connect(func() -> void: act.emit(action, arg))
+	return b
 
 
 func _card() -> Array:
@@ -879,8 +1092,11 @@ func _card() -> Array:
 
 func render_garage() -> void:
 	_garage.cash.text = "$" + Fmt.num(Save.data.cash)
-	_garage.tab_cars.modulate = Color(1, 1, 1, 1) if garage_tab == "cars" else Color(1, 1, 1, 0.5)
-	_garage.tab_up.modulate = Color(1, 1, 1, 1) if garage_tab == "up" else Color(1, 1, 1, 0.5)
+	for t in GARAGE_TABS:
+		(_garage["tab_" + t[0]] as Button).modulate = Color(1, 1, 1, 1) if garage_tab == t[0] else Color(1, 1, 1, 0.5)
+	var sel_car := Data.car_by_id(Save.data.selected)
+	_garage.title.text = "GARAGE" if garage_tab == "cars" else "WORKSHOP"
+	_garage.eyebrow.text = "EXIT 12 · SERVICE AREA" if garage_tab == "cars" else "WORKING ON · " + String(sel_car.name).to_upper()
 	var list: VBoxContainer = _garage.list
 	for ch in list.get_children():
 		list.remove_child(ch)
@@ -916,6 +1132,11 @@ func render_garage() -> void:
 				btn.disabled = Save.data.cash < c.price
 			btn.size_flags_horizontal = Control.SIZE_SHRINK_END
 			btn.add_theme_font_size_override("font_size", 26)
+			if not sel:
+				var vw := _button("VIEW", "ghost", "preview", c.id)
+				vw.size_flags_horizontal = Control.SIZE_SHRINK_END
+				vw.add_theme_font_size_override("font_size", 22)
+				top.add_child(vw)
 			top.add_child(btn)
 			var sub: String = c.blurb if not locked else "Beat %s to put this car up for sale." % Data.BOSSES[c.boss].name
 			card[1].add_child(_wrap(sub, 20, MUTED))
@@ -936,6 +1157,43 @@ func render_garage() -> void:
 				bar.value = clampf(s[1], 0.0, 1.0)
 				sv.add_child(bar)
 				grid.add_child(sv)
+	elif garage_tab == "paint":
+		var lk: Dictionary = Save.data.get("looks", {}).get(sel_car.id, {})
+		var cur: String = lk.get("color", "")
+		list.add_child(_wrap("Paint for your %s. The colour shows on the car straight away and is free." % sel_car.name, 20, MUTED))
+		var grid := GridContainer.new()
+		grid.columns = 4
+		grid.add_theme_constant_override("h_separation", 10)
+		grid.add_theme_constant_override("v_separation", 10)
+		list.add_child(grid)
+		for pnt in Data.PAINTS:
+			var hex: String = pnt[1]
+			var col := Color(sel_car.color) if hex == "" else Color(hex)
+			grid.add_child(_swatch(col, String(pnt[0]).to_upper(), hex == cur, "paint", hex))
+	elif garage_tab == "wheels":
+		var stl := Save.car_style(sel_car)
+		var cur_rim: String = stl.get("rim", "5spoke")
+		var cur_col: String = stl.get("rim_color", "#c3c8ce")
+		list.add_child(_eyebrow("Wheel design"))
+		var rg := GridContainer.new()
+		rg.columns = 3
+		rg.add_theme_constant_override("h_separation", 10)
+		rg.add_theme_constant_override("v_separation", 10)
+		list.add_child(rg)
+		for rm in Data.RIMS:
+			var on: bool = rm[0] == cur_rim
+			var rb := _button(String(rm[1]).to_upper(), "amber" if on else "ghost", "rim", rm[0])
+			rb.add_theme_font_size_override("font_size", 22)
+			rg.add_child(rb)
+		list.add_child(_eyebrow("Wheel finish"))
+		var cg := GridContainer.new()
+		cg.columns = 3
+		cg.add_theme_constant_override("h_separation", 10)
+		cg.add_theme_constant_override("v_separation", 10)
+		list.add_child(cg)
+		for rc in Data.RIM_COLORS:
+			cg.add_child(_swatch(Color(rc[1]), String(rc[0]).to_upper(), String(rc[1]).to_lower() == cur_col.to_lower(), "rim_color", rc[1]))
+		list.add_child(_button("FACTORY WHEELS", "ghost", "rim_reset"))
 	else:
 		for p in Data.PERM:
 			var lv := Save.perm_level(p.id)
@@ -1764,6 +2022,8 @@ func _scroll_at(pos: Vector2) -> ScrollContainer:
 		if scr.visible:
 			if k == "garage" and (_garage.scroll as ScrollContainer).get_global_rect().has_point(pos):
 				return _garage.scroll
+			if scr.has_meta("sheet"):
+				return null
 			return scr.get_child(1) as ScrollContainer
 	return null
 

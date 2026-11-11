@@ -77,6 +77,8 @@ class Run:
 	var speed_acc := 0.0
 	var dying := 0.0
 	var rematch_t := 0.0
+	var inc_t := 0.0        # countdown until the boss or police arrives
+	var inc_cop := false     # what is coming (kept secret until it arrives)
 	# boss race
 	var b_len := Data.BOSS_RACE_LENGTH
 	var b_dist := 0.0
@@ -166,6 +168,8 @@ var _fps_t := 0.0
 var _env: Environment
 var _sky: Sky
 var _sun: DirectionalLight3D
+var garage: GarageScene
+var _orbit_i := -1
 var _post: ColorRect
 var _post_mat: ShaderMaterial
 var _vig_mat: ShaderMaterial
@@ -252,6 +256,11 @@ func _ready() -> void:
 	cam.far = 1000.0  # mountains and clouds are drawn closer and scaled down, so a short range loses nothing
 	add_child(cam)
 	cam.current = true
+	cam.set_cull_mask_value(GarageScene.LAYER, false)  # the garage has its own camera
+	_sun.set("light_cull_mask", _sun.light_cull_mask & ~GarageScene.LAYER)  # and its own lights
+	garage = GarageScene.new()
+	add_child(garage)
+	garage.set_active(false)
 	sparks = _make_sparks()
 	dust = _make_dust()
 	smoke = _make_smoke()
@@ -587,7 +596,7 @@ func _set_player_car() -> void:
 	if player.model:
 		player.model.queue_free()
 	player.model = CarModel.new()
-	player.model.build(c.shape, Color(c.color), Color("#b5322a"), c.style)
+	player.model.build(c.shape, Save.car_color(c), Color("#b5322a"), Save.car_style(c))
 	player.model.force_detail()
 	add_child(player.model)
 	player.model.build_interior()
@@ -895,8 +904,8 @@ func _start_boss() -> void:
 	boss.lane = 2 if player.x < 0.0 else 1
 	boss.tlane = boss.lane
 	boss.x = Data.LANES[boss.lane]
-	boss.z = player.z - 20.0
-	boss.v = player.v + 8.0
+	boss.z = player.z - 45.0
+	boss.v = player.v + 11.0  # closes in from behind
 	boss.w = sh.w
 	boss.l = sh.l
 	boss.is_boss = true
@@ -1724,6 +1733,7 @@ func _collisions() -> void:
 # ---------------------------------------------------------------- run flow
 
 func _start_run() -> void:
+	_leave_garage()
 	_set_player_car()
 	run = Run.new()
 	run.lives = 3 + Save.perm_level("lives")
@@ -1842,6 +1852,7 @@ var _cop_think := 0.0
 var _yields := 0
 const COP_CHANCE := 0.3   # chance that a boss trigger is a police pursuit instead
 const COP_TIME := 40.0    # seconds to survive to escape
+const BOSS_WARN := 10.0   # seconds of warning before the boss or police arrives
 
 
 ## Police pursuit: a cop car comes up from behind and tries to ram you.
@@ -1964,6 +1975,24 @@ func _update_cop(dt: float) -> void:
 	b.model.flash_lightbar(t)
 
 
+## A stage is complete: warn that the boss (or a police car) is coming in
+## BOSS_WARN seconds, without stopping the game. Fuel stops are moved out of
+## the way of the countdown and the race.
+func _begin_incoming(cop: bool) -> void:
+	run.phase = "incoming"
+	run.inc_t = BOSS_WARN
+	run.inc_cop = cop
+	_clear_station_for(player.v * BOSS_WARN + run.b_len + 300.0)
+	var bi := Data.boss_info(run.stage)
+	if cop or not run.cop_due:
+		hud.banner("BOSS OR POLICE?", "SOMETHING IS COMING IN %d S" % int(BOSS_WARN))
+	else:
+		hud.banner(String(bi.full).to_upper() + " INCOMING", String(bi.line).to_upper())
+	sound.play("ding", 1.2, -2.0)
+	if autotest:
+		print("[autotest] %s incoming stage %d" % ["police" if cop else "boss", run.stage])
+
+
 func _show_boss_intro() -> void:
 	state = S.BOSS_INTRO
 	var bi := Data.boss_info(run.stage)
@@ -2013,10 +2042,19 @@ func _update_run(dt: float) -> void:
 			return
 		var r := Data.stage_req(run.stage)
 		if (run.stage_dist >= r.d or run.stage_score >= r.p) and not _station_busy():
-			if not run.cop_due and (force_cop or randf() < COP_CHANCE):
+			_begin_incoming(not run.cop_due and (force_cop or randf() < COP_CHANCE))
+	elif run.phase == "incoming":
+		# the game carries on; the boss (or the police) turns up when this runs out
+		var before := run.inc_t
+		run.inc_t -= dt
+		if ceili(run.inc_t) != ceili(before) and run.inc_t <= 3.0 and run.inc_t > 0.0:
+			sound.play("ding", 1.6, -6.0)
+		if run.inc_t <= 0.0:
+			if run.inc_cop:
 				_start_cop()
 			else:
-				_show_boss_intro()
+				_start_boss()
+				hud.banner(String(run.b_info.full).to_upper(), "OUT-SCORE HIM IN %s" % Fmt.km(run.b_len))
 	elif run.phase == "cop":
 		run.cop_t += dt
 		run.siren_t -= dt
@@ -2040,7 +2078,7 @@ func _update_run(dt: float) -> void:
 # ---------------------------------------------------------------- frame
 
 func _sim_running() -> bool:
-	return state == S.PLAY or state == S.MENU or state == S.GARAGE or state == S.OVER or state == S.REFUEL
+	return state == S.PLAY or state == S.OVER or state == S.REFUEL  # the menus show the garage instead
 
 
 func _process(delta: float) -> void:
@@ -2382,6 +2420,14 @@ func _update_hud() -> void:
 		d.merge({"title": "POLICE PURSUIT", "sub": "ESCAPE IN %d S" % ceili(maxf(0.0, COP_TIME - run.cop_t)),
 			"l1": "ESCAPE", "l2": "GAP", "f1": run.cop_t / COP_TIME, "f2": clampf(gp / 60.0, 0.0, 1.0),
 			"v1": "%d/%d s" % [int(run.cop_t), int(COP_TIME)], "v2": "%d m" % int(gp), "done1": false, "done2": gp > 30.0})
+	elif run.phase == "incoming":
+		var mystery: bool = run.inc_cop or not run.cop_due
+		var bi := Data.boss_info(run.stage)
+		d.merge({"title": ("BOSS OR POLICE?" if mystery else String(bi.full).to_upper()) + " · %d" % ceili(maxf(run.inc_t, 0.0)),
+			"sub": "ARRIVING IN %d S" % ceili(maxf(run.inc_t, 0.0)), "l1": "ARRIVES", "l2": "RIVAL",
+			"f1": 1.0 - run.inc_t / BOSS_WARN, "f2": 0.0, "v1": "%d s" % ceili(maxf(run.inc_t, 0.0)),
+			"v2": "???" if mystery else Data.boss_skill_name(run.stage).to_upper(), "done1": false, "done2": false})
+		d.boss = true
 	elif run.phase == "boss":
 		var mx := maxf(float(maxi(run.b_score, run.b_rival)) * 1.15, 1000.0)
 		d.merge({"title": "VS " + String(run.b_info.full).to_upper(), "sub": "FINISH " + Fmt.km(maxf(0.0, run.b_len - run.b_dist), 2),
@@ -2506,6 +2552,20 @@ func _input(event: InputEvent) -> void:
 	if state == S.REPLAY:
 		_replay_input(event)
 		return
+	if garage.active and (state == S.MENU or state == S.GARAGE):
+		# drag the 3D view (not the panels) to look round the car
+		if event is InputEventScreenTouch:
+			var e := event as InputEventScreenTouch
+			if e.pressed and not hud.ui_blocks(e.position):
+				_orbit_i = e.index
+			elif not e.pressed and e.index == _orbit_i:
+				_orbit_i = -1
+		elif event is InputEventScreenDrag and (event as InputEventScreenDrag).index == _orbit_i:
+			var e := event as InputEventScreenDrag
+			garage.orbit(e.relative.x, e.relative.y)
+		elif event is InputEventMouseMotion and not OS.has_feature("mobile") and ((event as InputEventMouseMotion).button_mask & MOUSE_BUTTON_MASK_LEFT) \
+				and not hud.ui_blocks((event as InputEventMouseMotion).position):
+			garage.orbit((event as InputEventMouseMotion).relative.x, (event as InputEventMouseMotion).relative.y)
 	if event is InputEventScreenTouch:
 		var e := event as InputEventScreenTouch
 		if e.pressed:
@@ -2588,6 +2648,26 @@ func _go_menu() -> void:
 	hud.set_play_visible(false)
 	hud.render_menu()
 	hud.show_screen("menu")
+	_enter_garage()
+
+
+## Show the workshop with the selected car (or another car to look at).
+func _enter_garage(view_id := "") -> void:
+	if showroom != "" or _inspect.size() > 0:
+		return
+	var c := Data.car_by_id(view_id if view_id != "" else Save.data.selected)
+	if garage.car == null or garage.get_meta("car", "") != c.id + str(Save.car_color(c)) + str(Save.car_style(c)):
+		garage.set_car(c, Save.car_color(c), Save.car_style(c))
+		garage.set_meta("car", c.id + str(Save.car_color(c)) + str(Save.car_style(c)))
+	garage.set_active(true)
+	sound.set_enabled(false)  # no engine drone in the garage
+
+
+func _leave_garage() -> void:
+	if garage.active:
+		garage.set_active(false)
+		cam.current = true
+		sound.set_enabled(Save.data.sound)
 
 
 func _pause() -> void:
@@ -2652,13 +2732,32 @@ func _on_act(action: String, arg: String) -> void:
 			_end_crash()
 			_free_retired()
 			state = S.GARAGE
+			if arg != "":
+				hud.garage_tab = arg
 			hud.render_garage()
 			hud.show_screen("garage")
+			_enter_garage()
+		"help":
+			hud.show_screen("help")
+		"preview":
+			_enter_garage(arg)
+		"paint", "rim", "rim_color", "rim_reset":
+			var key: String = {"paint": "color", "rim": "rim", "rim_color": "rim_color"}.get(action, "")
+			if action == "rim_reset":
+				Save.set_look(Save.data.selected, "rim", "")
+				Save.set_look(Save.data.selected, "rim_color", "")
+			else:
+				Save.set_look(Save.data.selected, key, arg)
+			sound.play("ding", 1.5, -8.0)
+			_enter_garage()
+			hud.render_garage()
 		"menu":
 			_go_menu()
 		"tab":
 			hud.garage_tab = arg
 			hud.render_garage()
+			if state == S.GARAGE:
+				_enter_garage()  # back to your own car after looking at others
 		"buy":
 			var c := Data.car_by_id(arg)
 			if Save.data.cash >= c.price and not Save.owns(arg):
@@ -2669,6 +2768,7 @@ func _on_act(action: String, arg: String) -> void:
 				_set_player_car()
 				_compute_stats()
 				sound.play("ding", 1.5)
+				_enter_garage()
 			hud.render_garage()
 		"select":
 			if Save.owns(arg):
@@ -2676,6 +2776,7 @@ func _on_act(action: String, arg: String) -> void:
 				Save.persist()
 				_set_player_car()
 				_compute_stats()
+				_enter_garage()
 			hud.render_garage()
 		"perm":
 			for p in Data.PERM:
@@ -2690,6 +2791,7 @@ func _on_act(action: String, arg: String) -> void:
 						sound.play("ding", 1.3 + lv * 0.08)
 			hud.render_garage()
 		"settings":
+			_leave_garage()
 			if arg != "":
 				hud.settings_tab = arg  # e.g. --open=settings:camera
 			hud.render_settings()

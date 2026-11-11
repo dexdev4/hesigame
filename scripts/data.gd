@@ -73,6 +73,13 @@ const CARS := [
 		"blurb": "Stage 4 boss car. The fastest thing on the interstate."},
 ]
 
+# Workshop paint and wheel options ("" = the car's factory colour).
+const PAINTS := [["Factory", ""], ["Arctic white", "#eef0f2"], ["Silver", "#b9bec4"], ["Graphite", "#3a3d42"], ["Midnight black", "#121316"],
+	["Race red", "#c4161c"], ["Sunburst orange", "#e86a12"], ["Taxi yellow", "#e8b10f"], ["Lime", "#7cc242"], ["Racing green", "#1f4d2e"],
+	["Electric blue", "#1f6fe0"], ["Deep navy", "#14254f"], ["Royal purple", "#5b2a86"], ["Copper", "#b8622f"]]
+const RIMS := [["steel", "Steel"], ["5spoke", "5-spoke"], ["multi", "Multi-spoke"], ["mesh", "Mesh"], ["turbine", "Turbine"], ["double", "Double-spoke"]]
+const RIM_COLORS := [["Silver", "#c3c8ce"], ["Gunmetal", "#5b5f64"], ["Black", "#2a2c30"], ["White", "#f3f5ef"], ["Gold", "#c9a227"], ["Bronze", "#8c6a3e"]]
+
 const BOSSES := [
 	{"name": "Copperhead", "car": "copperhead", "line": "Lives in the left lane and never signals. Beat his score before the gantry."},
 	{"name": "Night Marshal", "car": "marshal", "line": "Cold, precise, brakes later than you think possible."},

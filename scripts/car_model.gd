@@ -13,7 +13,7 @@ static var _shadow_mat: StandardMaterial3D
 static var _shadow_mesh: PlaneMesh
 static var night := 0.0  # 0 = day .. 1 = dusk with headlights on (set_night)
 static var _beam_mat: StandardMaterial3D
-static var _beam_mesh: PlaneMesh
+static var _beam_mesh: ArrayMesh
 
 # Per-type body data. body stations: [distance from rear (m), top height, width scale].
 # gh (greenhouse): [base rear z, base front z, roof rear z, roof front z, base y, roof y, base width, roof width].
@@ -80,14 +80,14 @@ const PROFILES := {
 	"coupe": {
 		"mesh": "res://assets/models/starter_coupe.mesh",
 		"body": [[0.0, 0.88, 0.84], [0.25, 0.93, 0.95], [0.6, 0.97, 1.0], [2.6, 0.94, 1.0], [3.0, 0.86, 0.98], [3.5, 0.8, 0.95], [4.0, 0.7, 0.9], [4.3, 0.6, 0.8]],
-		"gh": [0.62, 2.83, 1.2, 2.4, 0.93, 1.25, 0.8, 0.64], "pillars": [[0.0, 0.3], [0.9, 1.0]],
-		"rim_frac": 0.68, "tyre": [0.245, 0.245], "wheel": [0.345, 0.82, 3.44], "wheel_x": [0.778, 0.752], "badge_y": 0.7, "eye_back": 1.3, "dash_drop": 0.17},
+		"gh": [0.62, 2.83, 1.45, 2.1, 0.93, 1.2, 0.74, 0.54], "pillars": [[0.0, 0.3], [0.9, 1.0]],
+		"rim_frac": 0.68, "tyre": [0.245, 0.245], "wheel": [0.345, 0.82, 3.44], "wheel_x": [0.778, 0.752], "badge_y": 0.7, "eye_back": 1.3, "dash_drop": 0.17, "dash_hw": 0.52, "ws_base_hw": 0.4, "mirror_d": 2.3},
 	# compact hatchback coupe, also from an imported model (assets/models/compact_coupe.mesh)
 	"compact": {
 		"mesh": "res://assets/models/compact_coupe.mesh",
 		"body": [[0.0, 0.96, 0.88], [0.25, 1.05, 0.97], [0.5, 1.0, 1.0], [2.4, 0.95, 1.0], [2.75, 0.87, 0.98], [3.25, 0.8, 0.96], [3.75, 0.7, 0.92], [4.05, 0.6, 0.82]],
-		"gh": [0.35, 2.66, 0.78, 2.15, 0.97, 1.3, 0.8, 0.64], "pillars": [[0.0, 0.3], [0.9, 1.0]],
-		"rim_frac": 0.68, "tyre": [0.234, 0.234], "wheel": [0.335, 0.71, 3.21], "wheel_x": [0.768, 0.752], "badge_y": 0.75, "eye_back": 1.2, "dash_drop": 0.17},
+		"gh": [0.35, 2.66, 0.9, 1.85, 0.97, 1.26, 0.74, 0.54], "pillars": [[0.0, 0.3], [0.9, 1.0]],
+		"rim_frac": 0.68, "tyre": [0.234, 0.234], "wheel": [0.335, 0.71, 3.21], "wheel_x": [0.768, 0.752], "badge_y": 0.75, "eye_back": 1.2, "dash_drop": 0.17, "dash_hw": 0.52, "ws_base_hw": 0.4, "mirror_d": 2.05},
 	# panel van: short sloping bonnet, steep windscreen, tall slab-sided cargo
 	# box with solid panels behind the cab, twin rear doors, tall tail lamps
 	"van": {
@@ -1416,24 +1416,34 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a"), style 
 	beam.material_override = _beam_mat
 	beam.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	beam.scale = Vector3(shape.w * 4.2, 1.0, 30.0)
-	beam.position = Vector3(0, 0.035, -shape.l - 15.0)
+	beam.position = Vector3(0, 0.035, -shape.l + 0.1)  # starts at the lamps, reaches forward
 	beam.visible = night > 0.01
 	beam.add_to_group("car_beams")
 	add_child(beam)
 	_set_draw_distance(self)
 
 
-static func _beam() -> PlaneMesh:
+static func _beam() -> ArrayMesh:
 	if _beam_mesh == null:
-		_beam_mesh = PlaneMesh.new()
-		_beam_mesh.size = Vector2(1, 1)
+		# a flat strip from the front bumper (z = 0, v = 0) forward to z = -1
+		# (v = 1); scaled per car. UVs set by hand so the cone's narrow end is
+		# always at the lamps.
+		var st := SurfaceTool.new()
+		st.begin(Mesh.PRIMITIVE_TRIANGLES)
+		st.set_normal(Vector3.UP)
+		var vs := [Vector3(-0.5, 0, 0), Vector3(0.5, 0, 0), Vector3(0.5, 0, -1), Vector3(-0.5, 0, -1)]
+		var uvs := [Vector2(0, 0), Vector2(1, 0), Vector2(1, 1), Vector2(0, 1)]
+		for k in [0, 2, 1, 0, 3, 2]:
+			st.set_uv(uvs[k])
+			st.add_vertex(vs[k])
+		_beam_mesh = st.commit()
 		# soft beam: fades out to both sides and towards the far end, brightest
 		# a few metres ahead of the bumper
 		var img := Image.create(64, 256, false, Image.FORMAT_RGBA8)
 		for y in 256:
-			var along := float(y) / 255.0  # 0 at the car .. 1 at the far end (as the plane's v runs)
-			var fz := smoothstep(0.0, 0.08, along) * (1.0 - smoothstep(0.45, 1.0, along))
-			var half := lerpf(0.18, 1.0, pow(along, 0.7))  # a cone: narrow at the lamps, wide ahead
+			var along := float(y) / 255.0  # image row = v: 0 at the lamps .. 1 at the far end
+			var fz := smoothstep(0.0, 0.06, along) * (1.0 - smoothstep(0.55, 1.0, along))
+			var half := lerpf(0.22, 1.0, pow(along, 0.5))  # a cone: narrow at the lamps, wide ahead
 			for x in 64:
 				var across := absf(float(x) / 63.0 - 0.5) * 2.0
 				var fx := 1.0 - smoothstep(half * 0.45, half, across)
@@ -1446,6 +1456,7 @@ static func _beam() -> PlaneMesh:
 		_beam_mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
 		_beam_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 		_beam_mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+		_beam_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	return _beam_mesh
 
 
@@ -1661,9 +1672,25 @@ func set_signal(dir: int, lit: bool) -> void:
 
 
 ## Lean the body (not the wheels) for a sense of weight when steering.
+var _roll := 0.0
+var _pitch := 0.0
+var _bob := 0.0
+
+
 func set_roll(r: float) -> void:
-	if _body:
-		_body.rotation.z = r
+	_roll = r
+	_pose_body()
+
+
+## Roll and pitch about the car's middle at wheel-hub height (like real
+## suspension), so the arches stay round the wheels instead of the whole
+## body swinging about its rear bumper on the ground.
+func _pose_body() -> void:
+	if _body == null or shape.is_empty():
+		return
+	var pivot := Vector3(0.0, _wheel_r, -float(shape.l) * 0.5)
+	var b := Basis.from_euler(Vector3(-_pitch, 0.0, _roll))
+	_body.transform = Transform3D(b, pivot - b * pivot + Vector3(0, _bob, 0))
 
 
 var _tag_pop: Label3D
@@ -1704,8 +1731,9 @@ func set_crash_pose(x: float, heading: float, roll: float, air: float) -> void:
 	var cy := hw * absf(sin(roll)) + hh * absf(cos(roll)) + air
 	var centre := Vector3(0, hh, -shape.l / 2.0)
 	transform = Transform3D(b, Vector3(x, cy, -shape.l / 2.0) - b * centre)
-	if _body:
-		_body.rotation = Vector3.ZERO
+	_roll = 0.0
+	_pitch = 0.0
+	_pose_body()
 	if _shadow_mi:  # the contact shadow only suits a car standing on its wheels
 		_shadow_mi.visible = absf(roll) < 0.3 and air < 0.1
 
@@ -1727,8 +1755,8 @@ func wheel_contacts() -> Array[Vector3]:
 
 ## Pitch the body: positive dips the nose (braking), negative squats (accelerating).
 func set_pitch(p: float) -> void:
-	if _body:
-		_body.rotation.x = -p
+	_pitch = p
+	_pose_body()
 
 
 ## Turn the wheels for a car travelling at v m/s.
@@ -1737,7 +1765,8 @@ func spin(v: float, dt: float) -> void:
 	if _body:
 		_road += v * dt
 		var k := minf(v / 30.0, 1.0)
-		_body.position.y = (0.005 * sin(_road * 1.3 + _phase) + 0.0025 * sin(_road * 4.1 + _phase * 2.0)) * k
+		_bob = (0.005 * sin(_road * 1.3 + _phase) + 0.0025 * sin(_road * 4.1 + _phase * 2.0)) * k
+		_pose_body()
 	var front_z := 0.0
 	for wn in _wheels:
 		front_z = minf(front_z, wn.position.z)
@@ -1855,9 +1884,11 @@ func build_interior() -> void:
 				break
 		if fitted:
 			break
-	_box(S.dash, Vector3(0, yd - 0.08, dzd + 0.3), Vector3(hb * 2.0, 0.26, 0.6))
-	_box(S.pad, Vector3(0, yd + 0.06, dzd + 0.27), Vector3(hb * 2.0 - 0.02, 0.03, 0.52))
-	_box(S.stitch, Vector3(0, yd + 0.076, dzd + 0.53), Vector3(hb * 2.0 - 0.06, 0.004, 0.006))
+	# upper dash: narrower on cars whose windscreen is narrow at its base
+	var hd: float = minf(hb, float(pr.get("dash_hw", hb)))
+	_box(S.dash, Vector3(0, yd - 0.08, dzd + 0.3), Vector3(hd * 2.0, 0.26, 0.6))
+	_box(S.pad, Vector3(0, yd + 0.06, dzd + 0.27), Vector3(hd * 2.0 - 0.02, 0.03, 0.52))
+	_box(S.stitch, Vector3(0, yd + 0.076, dzd + 0.53), Vector3(hd * 2.0 - 0.06, 0.004, 0.006))
 	_box(S.dash, Vector3(0, yd - 0.3, dzd + 0.35), Vector3(hb * 2.0, 0.18, 0.4))               # lower dash
 	_box(S.alu, Vector3(0, yd - 0.11, dzd + 0.605), Vector3(hb * 2.0 - 0.1, 0.025, 0.012))     # trim strip
 	_box(S.ambient, Vector3(0, yd - 0.126, dzd + 0.607), Vector3(hb * 2.0 - 0.12, 0.004, 0.006))  # ambient light line
@@ -1966,7 +1997,7 @@ func build_interior() -> void:
 	_box(S.cloth, Vector3(0, yr - 0.05, -g[3] + 0.05), Vector3(hr * 2.0, 0.05, 0.12))
 	for sd in [-1.0, 1.0]:
 		_box(S.cloth, Vector3(sd * 0.33, yr - 0.06, -g[3] + 0.16), Vector3(0.34, 0.025, 0.17), Basis(Vector3.RIGHT, 0.12))
-		var b0 := Vector3(sd * (hb + 0.03), yb, -g[1])
+		var b0 := Vector3(sd * minf(hb + 0.03, float(pr.get("ws_base_hw", 9.0))), yb, -g[1])  # foot of the A-pillar, at the windscreen's edge
 		var r0 := Vector3(sd * hr, yr, -g[3])
 		var inward := Vector3(-sd * 0.09, 0, 0)
 		_quad(S.trim, b0 + Vector3(0, 0, 0.03), b0 + inward + Vector3(0, 0, 0.05), r0 + inward + Vector3(0, -0.02, 0.05), r0 + Vector3(0, -0.02, 0.03), Vector3(-sd, 0, 0.6).normalized())
@@ -2038,7 +2069,7 @@ func build_interior() -> void:
 	var mirror := MeshInstance3D.new()
 	mirror.mesh = box_mesh(Vector3(0.24, 0.07, 0.03))
 	mirror.material_override = mats.dash
-	mirror.position = Vector3(0, yr - 0.12, -(g[3] - 0.08))
+	mirror.position = Vector3(0, yr - 0.12, -float(pr.get("mirror_d", g[3] - 0.08)))  # at the top of the windscreen
 	_body.add_child(mirror)
 	var glassm := MeshInstance3D.new()
 	glassm.mesh = box_mesh(Vector3(0.22, 0.055, 0.005))

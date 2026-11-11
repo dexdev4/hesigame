@@ -37,6 +37,7 @@ class Vehicle:
 	var yaw := 0.0         # heading (radians, + = nose right): the player's comes from its steering
 	var yaw_rate := 0.0
 	var steer := 0.0       # front road-wheel angle (radians)
+	var course := 0.0      # direction of travel (radians); lags the heading in a slide
 	var b_ahead := false   # boss scoring: this car is ahead of the boss
 	var b_min := 99.0      # closest the boss got while passing it
 	var b_cut := false
@@ -655,6 +656,7 @@ func _reset_world() -> void:
 	player.v = 24.0
 	player.vx = 0.0
 	player.yaw = 0.0
+	player.course = 0.0
 	player.steer = 0.0
 	var z := 45.0
 	while z < 400.0:
@@ -1479,6 +1481,7 @@ func _update_crash(dt: float) -> void:
 	player.v = maxf(c.vel.y, 0.0)
 	player.vx = c.vel.x
 	player.yaw = 0.0
+	player.course = 0.0
 	player.steer = 0.0
 	if scraping and fmod(c.t, 0.12) < dt:
 		_spark_at(Vector3(player.x, 0.3, -player.l * 0.5))
@@ -1684,6 +1687,7 @@ func _drive_steer(dt: float, brk: bool, vr: float) -> void:
 		r = signf(r) * grip / maxf(v, 0.1)  # past the limit: understeer, the car runs wide
 	player.yaw_rate = r
 	player.yaw = clampf(player.yaw + r * dt, -0.6, 0.6)
+	player.course = player.yaw
 	player.vx = v * sin(player.yaw)
 	player.x += player.vx * dt
 	player.z += v * cos(player.yaw) * dt
@@ -1701,26 +1705,34 @@ func _drive_manual(dt: float, brk: bool, vr: float, cmd: float) -> void:
 	var wb := player.l * 0.6
 	var grip: float = st.grip * (1.0 - 0.18 * clampf(vr, 0.0, 1.2)) * (0.6 if on_shoulder else 1.0) * (0.75 if brk and v > 3.0 else 1.0)
 	var lock := 0.6
-	# wheel angle that reaches the grip limit at this speed (full input reaches it)
+	# speed-sensitive steering: full input asks for most (not all) of the grip
+	# at the current speed, so the same push feels alike at any speed and
+	# never snaps the car sideways
 	var at_limit := atan(grip * wb / maxf(v * v, 0.01))
-	var span := minf(lock, at_limit)
+	var span := minf(lock, at_limit * 0.9)
 	var c := clampf(cmd * float(Save.setting("steer_sens")), -1.0, 1.0)
-	c = signf(c) * pow(absf(c), 1.4)
+	c = signf(c) * pow(absf(c), 1.5)  # gentle around the centre for small corrections
 	var want := c * span
 	if absf(cmd) < 0.001 and Save.data.assist and v > 3.0:
 		# steering assist: ease the nose back parallel to the road
 		want = clampf(atan(-player.yaw * 1.6 * wb / maxf(v, 0.5)), -span * 0.5, span * 0.5)
 	if v < 0.2:
 		want = player.steer if absf(cmd) < 0.001 else c * lock  # parked: wheels turn but the car does not
-	player.steer = move_toward(player.steer, want, maxf(span, 0.05) * 6.0 * dt)
-	var r := v * tan(player.steer) / wb
-	if absf(r) * v > grip:
-		r = signf(r) * grip / maxf(v, 0.1)  # past the grip limit: the car runs wide
-	player.yaw_rate = r
-	player.yaw = clampf(player.yaw + r * dt, -0.7, 0.7)
-	player.vx = v * sin(player.yaw)
+	# the wheels turn in a touch slower than they self-centre
+	player.steer = move_toward(player.steer, want, maxf(span, 0.05) * (5.0 if absf(want) > absf(player.steer) else 7.0) * dt)
+	# the nose: turn rate from the wheel angle, reached with a little lag (the car's weight)
+	var r_want := v * tan(player.steer) / wb
+	player.yaw_rate = lerpf(player.yaw_rate, r_want, minf(1.0, dt * 9.0))
+	player.yaw = clampf(player.yaw + player.yaw_rate * dt, -0.7, 0.7)
+	# the direction of travel follows the nose as fast as the tyres can push
+	# it round (sideways force = speed x turn rate); past that the car slides
+	var slip := player.yaw - player.course
+	var max_turn := grip / maxf(v, 1.0)
+	player.course += clampf(slip * 7.0, -max_turn, max_turn) * dt
+	player.course = clampf(player.course, -0.7, 0.7)
+	player.vx = v * sin(player.course)
 	player.x += player.vx * dt
-	player.z += v * cos(player.yaw) * dt
+	player.z += v * cos(player.course) * dt
 	target_x = player.x  # the autopilot (if it takes over) starts from here
 
 
@@ -1728,6 +1740,7 @@ func _drive_manual(dt: float, brk: bool, vr: float, cmd: float) -> void:
 ## bounce off the rail). At a crawl it can only point so far.
 func _set_player_vx(vx: float) -> void:
 	player.yaw = asin(clampf(vx / maxf(player.v, 1.0), -0.5, 0.5))
+	player.course = player.yaw
 	player.vx = player.v * sin(player.yaw)
 
 
@@ -1914,7 +1927,7 @@ const COP_CHANCE := 0.3   # chance that a boss trigger is a police pursuit inste
 const COP_TIME := 40.0    # seconds to survive to escape
 const BOSS_WARN := 10.0   # seconds of warning before the boss or police arrives
 const MUSIC_START := 50.0  # seconds into the boss theme where it fades in
-const MUSIC_DB := 2.0       # boss theme volume
+const MUSIC_DB := -1.5      # boss theme volume
 const BOSS_EDGE := 1.25   # bosses score this much more than their driving alone earns (harder to beat)
 
 
@@ -2065,8 +2078,8 @@ func _boss_music(on: bool, fade := 6.0) -> void:
 var _day := {}  # DAY with the current highway's sky (set_route)
 const DAY := {"sun": Color("#fff0d8"), "sun_e": 1.4, "sun_x": -32.0, "top": Color("#2b5c96"), "hor": Color("#d9d2c2"),
 	"ghor": Color("#c4b69c"), "sky_e": 1.05, "amb": 0.75, "fog": Color("#cdc6b6"), "exp": 1.05}
-const DUSK := {"sun": Color("#ff9a58"), "sun_e": 0.85, "sun_x": -15.0, "top": Color("#2c3768"), "hor": Color("#ea8a5c"),
-	"ghor": Color("#6a4c40"), "sky_e": 0.75, "amb": 0.55, "fog": Color("#94727a"), "exp": 1.05}
+const DUSK := {"sun": Color("#ffa86a"), "sun_e": 1.05, "sun_x": -18.0, "top": Color("#38487e"), "hor": Color("#efa070"),
+	"ghor": Color("#7a5c4c"), "sky_e": 0.9, "amb": 0.7, "fog": Color("#a98a8a"), "exp": 1.08}
 
 
 func _apply_dusk(k: float) -> void:
@@ -2085,7 +2098,7 @@ func _apply_dusk(k: float) -> void:
 	_env.ambient_light_energy = lerpf(_day.amb, DUSK.amb, e)
 	_env.fog_light_color = (_day.fog as Color).lerp(DUSK.fog, e)
 	_env.tonemap_exposure = lerpf(_day.exp, DUSK.exp, e)
-	_env.adjustment_brightness = lerpf(1.0, 0.95, e)
+	_env.adjustment_brightness = 1.0
 	_env.adjustment_saturation = lerpf(1.12, 1.0, e)
 	_env.glow_intensity = lerpf(0.45, 0.9, e)  # lamps bloom more in the gloom
 	CarModel.set_night(e, _sun.global_transform.basis.z.normalized())
@@ -2415,8 +2428,8 @@ func _sync_visuals(delta: float) -> void:
 		player.model.set_crash_pose(player.x, crash.yaw, crash.roll, crash.air)
 		_crash_marks()
 	else:
-		player.model.set_roll(clampf(-player.v * player.yaw_rate * 0.006, -0.06, 0.06))  # leans out of the turn
-		player.model.set_pitch(clampf(-player_accel * 0.0028, -0.022, 0.03))
+		player.model.set_roll(clampf(-player.v * player.yaw_rate * 0.0035, -0.035, 0.035))  # leans out of the turn
+		player.model.set_pitch(clampf(-player_accel * 0.0018, -0.014, 0.02))
 		smoke.emitting = false
 	skids.update_view(player.z)
 	var cam_mode: String = Save.data.cam.mode
@@ -3151,7 +3164,7 @@ func _record(dt: float) -> void:
 		pv[Replay.P_CRASH] = 1.0
 	else:
 		pv[Replay.P_YAW] = player.yaw
-		pv[Replay.P_ROLL] = clampf(-player.v * player.yaw_rate * 0.006, -0.06, 0.06)
+		pv[Replay.P_ROLL] = clampf(-player.v * player.yaw_rate * 0.0035, -0.035, 0.035)
 		pv[Replay.P_PITCH] = clampf(-player_accel * 0.0028, -0.022, 0.03)
 	var live := _live()
 	pv[Replay.P_GAS] = 1.0 if (in_gas if live and not autotest else ap_gas) else 0.0
@@ -3216,6 +3229,7 @@ func _close_replay() -> void:
 	player.v = lv[2]
 	player.vx = lv[3]
 	player.yaw = asin(clampf(player.vx / maxf(player.v, 1.0), -0.5, 0.5))
+	player.course = player.yaw
 	for id in _models:
 		(_models[id] as CarModel).visible = not _retired.has(id)
 	if crash == null:
@@ -3766,6 +3780,7 @@ func _update_pit(dt: float) -> void:
 		var ny := clampf(atan2(player.vx, maxf(player.v, 0.5)), -0.5, 0.5)
 		var r := (ny - player.yaw) / maxf(dt, 0.0001)
 		player.yaw = ny
+		player.course = ny
 		player.yaw_rate = r
 		player.steer = move_toward(player.steer, clampf(atan(r * player.l * 0.6 / maxf(player.v, 0.5)), -0.6, 0.6), 1.8 * dt)
 	player_accel = 0.0

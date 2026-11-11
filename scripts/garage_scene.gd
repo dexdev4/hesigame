@@ -7,6 +7,9 @@ extends Node3D
 
 const LAYER := 2           # render layer bit value (layer 2)
 const ORIGIN := Vector3(0, -400, 0)  # well under the highway's ground
+const ROOM_W := 24.0
+const ROOM_D := 22.0
+const ROOM_H := 6.0
 
 var cam: Camera3D
 var car: CarModel
@@ -83,20 +86,29 @@ func _process(delta: float) -> void:
 	var portrait := vp.y > vp.x
 	# portrait: fit the car's length across the narrow screen; landscape: by height
 	cam.keep_aspect = Camera3D.KEEP_WIDTH if portrait else Camera3D.KEEP_HEIGHT
-	cam.fov = 64.0 if portrait else 40.0
-	var want := _car_len * (0.9 if portrait else 1.45) + 1.8
+	cam.fov = 64.0 if portrait else 50.0
+	var want := _car_len * (0.9 if portrait else 1.25) + 1.6
 	_dist = lerpf(_dist, want, minf(1.0, delta * 3.0))
 	# keep the car clear of the menu panels: above the bottom sheet in
 	# portrait, left of the side panel in landscape
-	cam.v_offset = -1.75 if portrait else -0.15
-	cam.h_offset = 0.0 if portrait else _dist * 0.2
+	cam.v_offset = -1.75 if portrait else -0.1
+	cam.h_offset = 0.0 if portrait else _dist * 0.16
 	_update_cam()
 
 
 func _update_cam() -> void:
 	var aim := Vector3(0, _car_h * 0.45, 0)
-	var off := Vector3(sin(_yaw) * cos(_pitch), sin(_pitch), cos(_yaw) * cos(_pitch)) * _dist
-	cam.position = aim + off
+	var dir := Vector3(sin(_yaw) * cos(_pitch), sin(_pitch), cos(_yaw) * cos(_pitch))
+	# never through a wall or the ceiling: stop short of whichever comes first
+	var reach := _dist
+	var m := 0.8
+	if absf(dir.x) > 0.001:
+		reach = minf(reach, (ROOM_W / 2.0 - m) / absf(dir.x))
+	if absf(dir.z) > 0.001:
+		reach = minf(reach, (ROOM_D / 2.0 - m) / absf(dir.z))
+	if dir.y > 0.001:
+		reach = minf(reach, (ROOM_H - 0.6 - aim.y) / dir.y)
+	cam.position = aim + dir * reach
 	cam.look_at(global_position + aim)
 
 
@@ -161,116 +173,206 @@ func _label(parent: Node3D, text: String, pos: Vector3, size: int, c: Color, rot
 
 
 func _build_room() -> void:
-	var W := 16.0   # room width (x)
-	var D := 14.0   # depth (z)
-	var H := 5.2
-	var floor_m := _mat(Color("#2b2e33"), 0.28, 0.0)
-	var wall_m := _mat(Color("#c9ccd0"), 0.85)
-	var wall_low := _mat(Color("#3a3f46"), 0.7)
+	var W := ROOM_W
+	var D := ROOM_D
+	var H := ROOM_H
+	var floor_m := _mat(Color("#2a2d31"), 0.22, 0.0)
+	var wall_m := _mat(Color("#aeb3b9"), 0.85)
+	var panel_m := _mat(Color("#b9bdc2"), 0.6, 0.3)
+	var wall_low := _mat(Color("#33383f"), 0.7)
 	var amber := _mat(Color("#f5b52e"), 0.5)
+	var amber_glow := _mat(Color("#ffb43a"), 0.4, 0.0, 2.2)
 	var dark := _mat(Color("#16181b"), 0.6)
 	var steel := _mat(Color("#9aa0a6"), 0.35, 0.8)
-	var red := _mat(Color("#b5322a"), 0.45, 0.1)
+	var beam_m := _mat(Color("#3b4047"), 0.5, 0.5)
+	var red := _mat(Color("#b5322a"), 0.4, 0.1)
 	var rubber := _mat(Color("#141516"), 0.9)
+	var wood := _mat(Color("#7a5a3a"), 0.8)
 
-	# floor, walls, ceiling
+	# ---- shell: polished floor with tile joints, walls with ribbed upper panels
 	_box(self, Vector3(0, -0.05, 0), Vector3(W, 0.1, D), floor_m)
-	_box(self, Vector3(0, H + 0.05, 0), Vector3(W, 0.1, D), _mat(Color("#55595f"), 0.9))
+	var joint := _mat(Color("#202326"), 0.5)
+	for k in range(-5, 6):
+		_box(self, Vector3(k * 2.0, 0.001, 0), Vector3(0.02, 0.004, D), joint, Vector3.ZERO, false)
+		_box(self, Vector3(0, 0.001, k * 2.0), Vector3(W, 0.004, 0.02), joint, Vector3.ZERO, false)
+	_box(self, Vector3(0, H + 0.05, 0), Vector3(W, 0.1, D), _mat(Color("#4a4f56"), 0.9))
 	for s in [-1.0, 1.0]:
 		_box(self, Vector3(s * W / 2.0, H / 2.0, 0), Vector3(0.2, H, D), wall_m)
-		_box(self, Vector3(s * (W / 2.0 - 0.11), 0.6, 0), Vector3(0.04, 1.2, D), wall_low)  # dark lower band
-		_box(self, Vector3(s * (W / 2.0 - 0.12), 1.24, 0), Vector3(0.04, 0.08, D), amber)   # amber stripe
-	_box(self, Vector3(0, H / 2.0, -D / 2.0), Vector3(W, H, 0.2), wall_m)
-	_box(self, Vector3(0, 0.6, -D / 2.0 + 0.11), Vector3(W, 1.2, 0.04), wall_low)
-	_box(self, Vector3(0, 1.24, -D / 2.0 + 0.12), Vector3(W, 0.08, 0.04), amber)
-	_box(self, Vector3(0, H / 2.0, D / 2.0), Vector3(W, H, 0.2), wall_m)
+		_box(self, Vector3(s * (W / 2.0 - 0.11), 0.7, 0), Vector3(0.04, 1.4, D), wall_low)
+		_box(self, Vector3(s * (W / 2.0 - 0.12), 1.44, 0), Vector3(0.04, 0.08, D), amber)
+		for k in range(-10, 11):  # ribbed cladding above the stripe
+			_box(self, Vector3(s * (W / 2.0 - 0.13), 3.4, k * 1.0), Vector3(0.05, 3.6, 0.08), panel_m, Vector3.ZERO, false)
+	for z in [-D / 2.0, D / 2.0]:
+		var dz := 1.0 if z < 0 else -1.0
+		_box(self, Vector3(0, H / 2.0, z), Vector3(W, H, 0.2), wall_m)
+		_box(self, Vector3(0, 0.7, z + dz * 0.11), Vector3(W, 1.4, 0.04), wall_low)
+		_box(self, Vector3(0, 1.44, z + dz * 0.12), Vector3(W, 0.08, 0.04), amber)
+	# amber LED strip along the foot of every wall
+	for s in [-1.0, 1.0]:
+		_box(self, Vector3(s * (W / 2.0 - 0.14), 0.06, 0), Vector3(0.03, 0.03, D - 0.4), amber_glow, Vector3.ZERO, false)
+		_box(self, Vector3(0, 0.06, s * (D / 2.0 - 0.14)), Vector3(W - 0.4, 0.03, 0.03), amber_glow, Vector3.ZERO, false)
 
-	# roller door on the back wall, with ribbed slats
+	# ---- ceiling: steel beams, skylights and hanging light bars
+	for k in range(-4, 5):
+		_box(self, Vector3(0, H - 0.25, k * 2.4), Vector3(W, 0.35, 0.18), beam_m, Vector3.ZERO, false)
+	for x in [-6.0, 6.0]:
+		_box(self, Vector3(x, H - 0.02, 0), Vector3(3.0, 0.04, 8.0), _mat(Color("#cfe2ff"), 0.3, 0.0, 1.4), Vector3.ZERO, false)  # skylights
+	for x in [-3.2, 0.0, 3.2]:
+		for z in [-3.0, 3.0]:
+			_box(self, Vector3(x, H - 0.9, z), Vector3(0.3, 0.06, 2.6), dark, Vector3.ZERO, false)
+			_box(self, Vector3(x, H - 0.94, z), Vector3(0.24, 0.02, 2.5), _mat(Color("#fffaf0"), 0.5, 0.0, 3.5), Vector3.ZERO, false)
+			for e in [-1.1, 1.1]:
+				_box(self, Vector3(x, H - 0.55, z + e), Vector3(0.01, 0.7, 0.01), steel, Vector3.ZERO, false)
+
+	# ---- back wall: roller door, sign, high windows
 	var door := Node3D.new()
 	door.position = Vector3(0, 0, -D / 2.0 + 0.14)
 	add_child(door)
-	_box(door, Vector3(0, 1.9, 0), Vector3(5.6, 3.8, 0.04), _mat(Color("#8d939a"), 0.5, 0.5))
-	for k in 19:
-		_box(door, Vector3(0, 0.1 + k * 0.2, 0.03), Vector3(5.5, 0.03, 0.03), _mat(Color("#6c7177"), 0.5, 0.5))
+	_box(door, Vector3(0, 2.1, 0), Vector3(6.4, 4.2, 0.04), _mat(Color("#8d939a"), 0.5, 0.5))
+	for k in 21:
+		_box(door, Vector3(0, 0.1 + k * 0.2, 0.03), Vector3(6.3, 0.03, 0.03), _mat(Color("#6c7177"), 0.5, 0.5))
 	for s in [-1.0, 1.0]:
-		_box(door, Vector3(s * 2.9, 1.95, 0.05), Vector3(0.18, 3.9, 0.1), amber)
-	_box(door, Vector3(0, 3.95, 0.05), Vector3(6.0, 0.25, 0.14), dark)
+		_box(door, Vector3(s * 3.3, 2.15, 0.05), Vector3(0.2, 4.3, 0.1), amber)
+		for k in 9:  # hazard chevrons up the door frame
+			_box(door, Vector3(s * 3.3, 0.25 + k * 0.48, 0.11), Vector3(0.21, 0.12, 0.02), dark, Vector3(0, 0, s * 0.5))
+	_box(door, Vector3(0, 4.35, 0.05), Vector3(6.8, 0.3, 0.16), dark)
+	for x in [-8.5, -6.0, 6.0, 8.5]:  # high windows letting in daylight
+		_box(door, Vector3(x, 4.3, 0.02), Vector3(1.8, 1.0, 0.04), _mat(Color("#bcd4f0"), 0.2, 0.0, 1.6), Vector3.ZERO, false)
+		_box(door, Vector3(x, 4.3, 0.05), Vector3(1.9, 0.06, 0.06), dark)
+		_box(door, Vector3(x, 4.3, 0.05), Vector3(0.06, 1.1, 0.06), dark)
+	_box(self, Vector3(0, 5.2, -D / 2.0 + 0.16), Vector3(5.2, 0.8, 0.06), _mat(Color("#14563a"), 0.6))
+	_box(self, Vector3(0, 5.2, -D / 2.0 + 0.13), Vector3(5.4, 1.0, 0.04), amber)
+	_label(self, "REDLINE RUSH", Vector3(0, 5.24, -D / 2.0 + 0.2), 110, Color("#f3f5ef"), Vector3.ZERO, 0.0075)
+	_label(self, "SERVICE · TUNING · PAINT", Vector3(0, 4.94, -D / 2.0 + 0.2), 44, Color("#f5b52e"), Vector3.ZERO, 0.006)
 
-	# sign over the door
-	_box(self, Vector3(0, 4.55, -D / 2.0 + 0.16), Vector3(4.6, 0.7, 0.06), _mat(Color("#14563a"), 0.6))
-	_label(self, "REDLINE RUSH", Vector3(0, 4.56, -D / 2.0 + 0.2), 96, Color("#f3f5ef"), Vector3.ZERO, 0.0075)
-	_label(self, "SERVICE · TUNING · PAINT", Vector3(0, 4.3, -D / 2.0 + 0.2), 40, Color("#f5b52e"), Vector3.ZERO, 0.006)
-
-	# turntable with an amber ring
+	# ---- turntable: dark plate, LED ring, rubber mat round it
 	_table = Node3D.new()
 	add_child(_table)
-	_cyl(self, Vector3(0, 0.02, 0), 3.3, 0.06, _mat(Color("#1d2024"), 0.35, 0.4), Vector3.ZERO, 64)
-	_cyl(self, Vector3(0, 0.025, 0), 3.42, 0.05, amber, Vector3.ZERO, 64)
-	_cyl(self, Vector3(0, 0.05, 0), 3.2, 0.02, _mat(Color("#25292e"), 0.3, 0.5), Vector3.ZERO, 64)
-	# painted bay lines on the floor
+	_cyl(self, Vector3(0, 0.005, 0), 4.1, 0.01, _mat(Color("#1b1d20"), 0.95), Vector3.ZERO, 64)
+	_cyl(self, Vector3(0, 0.02, 0), 3.3, 0.06, _mat(Color("#1d2024"), 0.3, 0.45), Vector3.ZERO, 64)
+	_cyl(self, Vector3(0, 0.024, 0), 3.42, 0.05, amber_glow, Vector3.ZERO, 64)
+	_cyl(self, Vector3(0, 0.052, 0), 3.2, 0.02, _mat(Color("#25292e"), 0.25, 0.55), Vector3.ZERO, 64)
+	for k in 24:  # brushed rings on the plate
+		var th := TAU * k / 24.0
+		_box(self, Vector3(cos(th) * 2.4, 0.064, sin(th) * 2.4), Vector3(0.6, 0.004, 0.03), _mat(Color("#30353b"), 0.3, 0.6), Vector3(0, -th, 0), false)
+	# bay lines and a drain grate
 	for s in [-1.0, 1.0]:
-		_box(self, Vector3(s * 4.2, 0.002, 0), Vector3(0.12, 0.01, 9.0), amber, Vector3.ZERO, false)
-	_box(self, Vector3(0, 0.002, 4.5), Vector3(8.5, 0.01, 0.12), amber, Vector3.ZERO, false)
+		_box(self, Vector3(s * 4.6, 0.003, 0), Vector3(0.14, 0.01, 10.0), amber, Vector3.ZERO, false)
+	_box(self, Vector3(0, 0.003, 5.0), Vector3(9.3, 0.01, 0.14), amber, Vector3.ZERO, false)
+	_box(self, Vector3(0, 0.003, 6.2), Vector3(3.0, 0.01, 0.3), steel, Vector3.ZERO, false)
 
-	# tool chest and workbench along the left wall
+	# ---- left wall: tool chests, workbench with pegboard and a parts shelf
 	var bench := Node3D.new()
-	bench.position = Vector3(-W / 2.0 + 0.6, 0, -2.5)
+	bench.position = Vector3(-W / 2.0 + 0.6, 0, -3.5)
 	add_child(bench)
-	_box(bench, Vector3(0, 0.55, 0), Vector3(0.75, 1.1, 1.6), red)
+	for bz in [0.0, 1.8]:
+		_box(bench, Vector3(0, 0.55, bz), Vector3(0.75, 1.1, 1.6), red)
+		for k in 6:
+			_box(bench, Vector3(0.38, 0.15 + k * 0.17, bz), Vector3(0.02, 0.13, 1.5), _mat(Color("#9b2a23"), 0.4))
+			_box(bench, Vector3(0.4, 0.15 + k * 0.17, bz), Vector3(0.02, 0.02, 0.5), steel)
+		_box(bench, Vector3(0, 1.12, bz), Vector3(0.78, 0.04, 1.65), dark)
+	_box(bench, Vector3(0, 0.9, 4.2), Vector3(0.8, 0.06, 2.6), wood)  # bench top
+	for z in [3.0, 5.4]:
+		_box(bench, Vector3(0, 0.45, z), Vector3(0.7, 0.9, 0.06), dark)
+	_box(bench, Vector3(-0.27, 2.0, 4.2), Vector3(0.04, 1.6, 2.6), _mat(Color("#d8d2c4"), 0.9))  # pegboard
+	for k in 9:
+		_box(bench, Vector3(-0.22, 1.6 + (k % 3) * 0.4, 3.2 + k * 0.24), Vector3(0.04, 0.32, 0.05), steel)
+	_box(bench, Vector3(0.05, 1.0, 3.6), Vector3(0.3, 0.2, 0.4), _mat(Color("#2f6fd6"), 0.5))  # toolbox
+	# parts shelf with boxes and oil cans
+	var shelf := Node3D.new()
+	shelf.position = Vector3(-W / 2.0 + 0.5, 0, 4.5)
+	add_child(shelf)
+	for y in [0.4, 1.2, 2.0, 2.8]:
+		_box(shelf, Vector3(0, y, 0), Vector3(0.6, 0.04, 2.4), steel)
+	for x in [-0.28, 0.28]:
+		for z in [-1.18, 1.18]:
+			_box(shelf, Vector3(x, 1.5, z), Vector3(0.04, 3.0, 0.04), dark)
+	var box_cols := [Color("#b08850"), Color("#9c7a48"), Color("#c49a5e")]
+	for y in [0.4, 1.2, 2.0]:
+		for k in 4:
+			_box(shelf, Vector3(0, y + 0.2, -0.9 + k * 0.6), Vector3(0.5, 0.36, 0.48), _mat(box_cols[k % 3], 0.9))
 	for k in 6:
-		_box(bench, Vector3(0.38, 0.15 + k * 0.17, 0), Vector3(0.02, 0.13, 1.5), _mat(Color("#9b2a23"), 0.45))
-		_box(bench, Vector3(0.4, 0.15 + k * 0.17, 0), Vector3(0.02, 0.02, 0.5), steel)
-	_box(bench, Vector3(0, 1.12, 0), Vector3(0.78, 0.04, 1.65), dark)
-	_box(bench, Vector3(0, 0.45, 2.1), Vector3(0.8, 0.06, 2.2), _mat(Color("#7a5a3a"), 0.8))  # bench top
-	for z in [1.1, 3.1]:
-		_box(bench, Vector3(0, 0.22, z), Vector3(0.7, 0.44, 0.06), dark)
-	_box(bench, Vector3(-0.27, 1.7, 2.1), Vector3(0.04, 1.6, 2.2), _mat(Color("#d8d2c4"), 0.9))  # pegboard
-	for k in 7:
-		_box(bench, Vector3(-0.22, 1.35 + (k % 3) * 0.4, 1.3 + k * 0.26), Vector3(0.04, 0.32, 0.05), steel)
+		_cyl(shelf, Vector3(0.05, 2.95, -1.0 + k * 0.4), 0.1, 0.26, _mat([Color("#c62828"), Color("#1f4e8c"), Color("#f5b52e")][k % 3], 0.4, 0.2), Vector3.ZERO, 16)
 
-	# stacked tyres and an oil drum on the right
-	for k in 4:
-		var tz := -3.6 + (k % 2) * 0.05
-		_cyl(self, Vector3(W / 2.0 - 0.7, 0.13 + k * 0.25, tz), 0.36, 0.24, rubber)
-		_cyl(self, Vector3(W / 2.0 - 0.7, 0.13 + k * 0.25, tz), 0.22, 0.25, dark)
-	for k in 3:
-		_cyl(self, Vector3(W / 2.0 - 0.7, 0.13 + k * 0.25, -2.6), 0.36, 0.24, rubber)
+	# ---- right wall: tyre rack, drums, compressor, extinguisher, posters
+	for row in 2:
+		for k in 5:
+			var tz := -6.0 + k * 0.62
+			_cyl(self, Vector3(W / 2.0 - 0.6, 0.38 + row * 0.8, tz), 0.36, 0.24, rubber, Vector3(0, 0, PI / 2.0))
+			_cyl(self, Vector3(W / 2.0 - 0.6, 0.38 + row * 0.8, tz), 0.22, 0.25, dark, Vector3(0, 0, PI / 2.0))
+	for y in [0.0, 0.8, 1.6]:
+		_box(self, Vector3(W / 2.0 - 0.6, y + 0.02, -4.75), Vector3(0.8, 0.04, 3.4), steel)
 	_cyl(self, Vector3(W / 2.0 - 0.8, 0.45, 2.6), 0.3, 0.9, _mat(Color("#1f4e8c"), 0.5, 0.3))
 	_cyl(self, Vector3(W / 2.0 - 1.5, 0.45, 2.9), 0.3, 0.9, red)
+	_cyl(self, Vector3(W / 2.0 - 0.9, 0.35, 5.0), 0.28, 0.7, _mat(Color("#d64a1e"), 0.4, 0.2), Vector3(PI / 2.0, 0, 0))  # compressor tank
+	_box(self, Vector3(W / 2.0 - 0.9, 0.8, 5.0), Vector3(0.4, 0.3, 0.4), dark)
+	_cyl(self, Vector3(W / 2.0 - 0.3, 0.45, 0.6), 0.09, 0.55, red, Vector3.ZERO, 16)  # extinguisher
+	var posters := [["TURBO", Color("#c62828")], ["PREMIUM OIL", Color("#1f4e8c")], ["RACE TYRES", Color("#1b1e23")]]
+	for k in posters.size():
+		var pz := -1.5 + k * 1.6
+		_box(self, Vector3(W / 2.0 - 0.12, 2.6, pz), Vector3(0.02, 1.4, 1.0), _mat(posters[k][1], 0.6))
+		_label(self, posters[k][0], Vector3(W / 2.0 - 0.14, 2.6, pz), 64, Color("#f3f5ef"), Vector3(0, -PI / 2.0, 0), 0.005)
 
-	# a two-post lift standing at the back right
+	# ---- a two-post lift and a diagnostics cart in the back corners
 	for s in [-1.0, 1.0]:
-		_box(self, Vector3(W / 2.0 - 3.4 + s * 1.5, 1.9, -D / 2.0 + 1.6), Vector3(0.3, 3.8, 0.3), _mat(Color("#2f6fd6"), 0.5, 0.2))
-	_box(self, Vector3(W / 2.0 - 3.4, 3.85, -D / 2.0 + 1.6), Vector3(3.3, 0.18, 0.3), _mat(Color("#2f6fd6"), 0.5, 0.2))
+		_box(self, Vector3(W / 2.0 - 4.4 + s * 1.6, 2.0, -D / 2.0 + 1.8), Vector3(0.32, 4.0, 0.32), _mat(Color("#2f6fd6"), 0.45, 0.2))
+	_box(self, Vector3(W / 2.0 - 4.4, 4.05, -D / 2.0 + 1.8), Vector3(3.5, 0.2, 0.32), _mat(Color("#2f6fd6"), 0.45, 0.2))
+	var cart := Node3D.new()
+	cart.position = Vector3(-W / 2.0 + 3.0, 0, -D / 2.0 + 1.6)
+	add_child(cart)
+	_box(cart, Vector3(0, 0.55, 0), Vector3(0.7, 0.9, 0.5), dark)
+	_box(cart, Vector3(0, 1.3, 0), Vector3(0.6, 0.45, 0.06), dark)
+	_box(cart, Vector3(0, 1.3, 0.035), Vector3(0.52, 0.36, 0.01), _mat(Color("#2a8ad8"), 0.3, 0.0, 1.8))
+	for x in [-0.28, 0.28]:
+		_cyl(cart, Vector3(x, 0.06, 0.2), 0.06, 0.05, rubber, Vector3(0, 0, PI / 2.0), 12)
+	# traffic cones by the door
+	for k in 3:
+		var cp := Vector3(-4.2 + k * 0.6, 0, -D / 2.0 + 1.0)
+		var cone := MeshInstance3D.new()
+		var cm := CylinderMesh.new()
+		cm.top_radius = 0.03
+		cm.bottom_radius = 0.17
+		cm.height = 0.55
+		cone.mesh = cm
+		cone.material_override = _mat(Color("#ff6a1a"), 0.5)
+		cone.position = cp + Vector3(0, 0.3, 0)
+		cone.layers = LAYER
+		add_child(cone)
+		_box(self, cp + Vector3(0, 0.02, 0), Vector3(0.4, 0.04, 0.4), _mat(Color("#ff6a1a"), 0.5))
 
-	# ceiling light strips and the lights themselves
-	for x in [-3.0, 0.0, 3.0]:
-		_box(self, Vector3(x, H - 0.05, 0), Vector3(0.25, 0.05, 6.5), _mat(Color("#fffaf0"), 0.5, 0.0, 3.0), Vector3.ZERO, false)
-	for p in [Vector3(-3.2, H - 0.3, 2.6), Vector3(3.2, H - 0.3, 2.6), Vector3(0.0, H - 0.3, -3.0)]:
+	# ---- lights: key spots on the car, soft fill, a cool rim from the door side
+	for p in [Vector3(-3.4, H - 1.0, 3.2), Vector3(3.4, H - 1.0, 3.2), Vector3(0.0, H - 1.0, -3.4)]:
 		var sp := SpotLight3D.new()
 		sp.position = p
 		sp.light_color = Color("#fff4e2")
-		sp.light_energy = 6.0
-		sp.spot_range = 12.0
-		sp.spot_angle = 48.0
+		sp.light_energy = 7.0
+		sp.spot_range = 14.0
+		sp.spot_angle = 46.0
 		sp.spot_attenuation = 0.8
 		sp.shadow_enabled = true
 		sp.light_cull_mask = LAYER
 		add_child(sp)
 		sp.look_at(global_position + Vector3(0, 0.5, 0))
 	var fill := OmniLight3D.new()
-	fill.position = Vector3(0, 3.2, 4.0)
-	fill.light_energy = 1.2
-	fill.omni_range = 14.0
+	fill.position = Vector3(0, 3.6, 5.0)
+	fill.light_energy = 1.4
+	fill.omni_range = 18.0
 	fill.light_cull_mask = LAYER
 	add_child(fill)
 	var back := OmniLight3D.new()
-	back.position = Vector3(0, 2.5, -5.0)
-	back.light_energy = 0.8
+	back.position = Vector3(0, 3.0, -7.0)
+	back.light_energy = 1.0
 	back.light_color = Color("#cfe0ff")
-	back.omni_range = 10.0
+	back.omni_range = 14.0
 	back.light_cull_mask = LAYER
 	add_child(back)
+	for x in [-9.0, 9.0]:  # the wall corners would be very dark otherwise
+		var o := OmniLight3D.new()
+		o.position = Vector3(x, 3.5, 0)
+		o.light_energy = 0.7
+		o.omni_range = 10.0
+		o.light_cull_mask = LAYER
+		add_child(o)
 
 
 func _set_layers(n: Node) -> void:

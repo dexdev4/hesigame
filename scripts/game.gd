@@ -1010,9 +1010,6 @@ func _start_boss() -> void:
 	_boss_think_t = 0.0
 	_boss_off = 0.0
 	finish_z = player.z + run.b_len
-	for c in traffic:
-		if absf(c.z - player.z) < 30.0:
-			c.z += 60.0  # breathing room at the start
 	var everyone: Array[Vehicle] = traffic.duplicate()
 	everyone.append(player)
 	for c in everyone:

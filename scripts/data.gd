@@ -115,6 +115,11 @@ const BOONS := [
 	{"id": "score", "name": "Show-off", "desc": "+15% to every point earned", "tag": "SCORE"},
 	{"id": "combo", "name": "Adrenaline", "desc": "Combo timer lasts 1 s longer", "tag": "COMBO"},
 	{"id": "fuel", "name": "Pit crew", "desc": "Fills your tank to the brim, free", "tag": "REFUEL"},
+	{"id": "shield", "name": "Crumple zone", "desc": "The next hit costs no life", "tag": "SHIELD"},
+	{"id": "armour", "name": "Roll cage", "desc": "1.5 s longer protection after every hit", "tag": "DEFENCE"},
+	{"id": "calm", "name": "Rolling roadblock", "desc": "Traffic drives 10% slower for this run", "tag": "TRAFFIC"},
+	{"id": "eco", "name": "Eco tune", "desc": "Burns 25% less fuel for this run", "tag": "FUEL"},
+	{"id": "cash", "name": "Sponsor deal", "desc": "A bonus of $400 per stage cleared, now", "tag": "CASH"},
 ]
 
 const TRAFFIC_COLORS := ["#c9ccd1", "#dfe2e4", "#26292f", "#50555d", "#1f3a66", "#9b1c1c",

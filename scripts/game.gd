@@ -70,7 +70,10 @@ class Run:
 	var stage_dist := 0.0
 	var stage_score := 0
 	var lives := 3
-	var mods := {"accel": 1.0, "brake": 1.0, "handling": 1.0, "top": 1.0, "score": 1.0}
+	var mods := {"accel": 1.0, "brake": 1.0, "handling": 1.0, "top": 1.0, "score": 1.0, "traffic": 1.0, "eco": 1.0}
+	var shield := 0          # hits the crumple zone will absorb
+	var armour := 0.0        # extra seconds of protection after a hit
+	var clear_t := 0.0       # traffic stays away while this runs down
 	var combo_time := 3.5
 	var combo := 0
 	var combo_t := 0.0
@@ -729,7 +732,7 @@ func _try_spawn(z: float, lane_hint := -1, v_override := 0.0) -> bool:
 	c.w = sh.w
 	c.l = sh.l
 	c.truck = shape == "truck"
-	c.cruise = v_override if v_override > 0.0 else [31.0, 27.5, 24.0, 20.5][lane] + randf_range(-1.6, 1.6) - (2.0 if c.truck else 0.0)
+	c.cruise = v_override if v_override > 0.0 else ([31.0, 27.5, 24.0, 20.5][lane] + randf_range(-1.6, 1.6) - (2.0 if c.truck else 0.0)) * (run.mods.traffic if run else 1.0)
 	c.v = c.cruise
 	c.lc_t = randf_range(2.0, 9.0)
 	c.ahead = z > player.z + player.l
@@ -822,12 +825,12 @@ func _update_traffic(dt: float) -> void:
 		c.vx = 0.0
 		if c.hit:
 			# knocked: it slides and spins out while it brakes to a stop
-			c.slide = move_toward(c.slide, 0.0, 6.0 * dt)
+			c.slide = move_toward(c.slide, 0.0, 11.0 * dt)
 			c.x += c.slide * dt
 			c.vx = c.slide
 			c.spin += c.spin_rate * dt
-			c.spin_rate *= exp(-1.6 * dt)
-			c.spin = clampf(c.spin, -1.4, 1.4)
+			c.spin_rate *= exp(-3.0 * dt)
+			c.spin = clampf(c.spin, -1.1, 1.1)
 			c.x = clampf(c.x, -(Data.RAIL - c.w * 0.5), Data.RAIL - c.w * 0.5)
 		if c.tlane == c.lane and _cop_behind(c):
 			# siren behind: get out of the way, to the right if there is room, else the left
@@ -883,6 +886,9 @@ func _update_traffic(dt: float) -> void:
 	for c in traffic:
 		if c.z > player.z and c.z < player.z + 440.0:
 			ahead += 1
+	if run and run.clear_t > 0.0:
+		run.clear_t -= dt
+		return
 	for k in 2:
 		if ahead < dens * 4.4 and _try_spawn(player.z + randf_range(380.0, 440.0)):
 			ahead += 1
@@ -1370,7 +1376,11 @@ func _autopilot(dt: float) -> void:
 func _hit(reason: String, other: Vehicle = null) -> void:
 	if not _live() or run.invuln > 0.0:
 		return
-	if not (Save.setting("dev_lives") or godmode):
+	var shielded := run.shield > 0
+	if shielded:
+		run.shield -= 1
+		_notify("CRUMPLE ZONE SAVED YOU", "hot")
+	elif not (Save.setting("dev_lives") or godmode):
 		run.lives -= 1
 	var v0 := player.v
 	var side := 0.0  # which side the hit came from (+ = right)
@@ -1380,7 +1390,7 @@ func _hit(reason: String, other: Vehicle = null) -> void:
 		side = signf(player.x)  # guardrail
 	if side == 0.0:
 		side = 1.0 if randf() < 0.5 else -1.0
-	run.invuln = 2.4
+	run.invuln = 2.4 + run.armour
 	run.combo = 0
 	run.combo_t = 0.0
 	var jolt := 0.6
@@ -1411,7 +1421,7 @@ func _hit(reason: String, other: Vehicle = null) -> void:
 		_start_crash(v0, side, other)
 		_notify(reason, "bad")
 	else:
-		_notify(reason + " · -1 LIFE", "bad")
+		_notify(reason + (" · SAVED" if shielded else " · -1 LIFE"), "bad")
 
 
 ## A knock with another car that the player survives: real momentum trade.
@@ -1436,16 +1446,16 @@ func _knock(o: Vehicle) -> void:
 		o.v = maxf(0.0, (mp * vp + mo * vo + mp * e * (vp - vo)) / (mp + mo))
 		var off := clampf(dx / ((player.w + o.w) * 0.5), -1.0, 1.0)  # off-centre hits spin
 		var dv := absf(rel)
-		o.spin_rate += off * dv * 0.16 / mo
-		o.slide += off * dv * 0.12 / mo
-		player.yaw_rate -= off * dv * 0.03
+		o.spin_rate += off * dv * 0.1 / mo
+		o.slide += off * dv * 0.07 / mo
+		player.yaw_rate -= off * dv * 0.02
 	else:
-		var dvx := clampf(absf(player.vx - o.vx) + 2.5, 2.5, 6.5)
+		var dvx := clampf(absf(player.vx - o.vx) + 1.8, 1.8, 4.5)
 		_set_player_vx(player.vx - s * dvx * mo / (mp + mo))
-		player.yaw_rate -= s * 0.5 * mo / (mp + mo)
+		player.yaw_rate -= s * 0.3 * mo / (mp + mo)
 		player.v *= 0.92  # metal scraping metal
-		o.slide += s * dvx * mp / (mp + mo)
-		o.spin_rate += s * clampf(player.v - o.v, -8.0, 8.0) * 0.06 / mo
+		o.slide += s * dvx * mp / (mp + mo) * 0.7
+		o.spin_rate += s * clampf(player.v - o.v, -8.0, 8.0) * 0.04 / mo
 		o.v *= 0.9
 	o.hit = true
 	o.cruise = 0.0
@@ -1510,8 +1520,8 @@ func _start_crash(v0: float, side: float, other: Vehicle) -> void:
 	var k := clampf(v0 / 30.0, 0.5, 1.6)
 	crash.yaw = player.yaw
 	# knocked away from whatever it hit, nose swung towards it
-	crash.vel = Vector2(player.vx * 0.4 - side * randf_range(2.5, 4.5) * k, v0 * 0.86)
-	crash.yaw_rate = side * randf_range(1.7, 2.8) * k
+	crash.vel = Vector2(player.vx * 0.3 - side * randf_range(1.5, 3.0) * k, v0 * 0.78)
+	crash.yaw_rate = side * randf_range(1.0, 1.7) * k
 	if other and other.z < player.z:  # hit from behind (the police): shoved forward
 		crash.vel.y = maxf(crash.vel.y, other.v * 0.9)
 	# fast enough and the tyres can dig in sideways and trip it over
@@ -1540,9 +1550,9 @@ func _update_crash(dt: float) -> void:
 			# traction is gone: the tyres scrub sideways and roll on slowly
 			# sideways the tyres scrub at about 0.8 g; rolling forward they only
 			# drag a little, more the further the car is turned across its path
-			sl = move_toward(sl, 0.0, 7.8 * dt)
-			f = move_toward(f, 0.0, (1.4 + 6.5 * absf(sl) / maxf(c.vel.length(), 1.0)) * dt)
-			c.yaw_rate = move_toward(c.yaw_rate, 0.0, 1.1 * dt)
+			sl = move_toward(sl, 0.0, 12.0 * dt)
+			f = move_toward(f, 0.0, (3.2 + 8.0 * absf(sl) / maxf(c.vel.length(), 1.0)) * dt)
+			c.yaw_rate = move_toward(c.yaw_rate, 0.0, 2.6 * dt)
 			if c.can_trip and absf(sl) > 6.5 and c.t > 0.2:
 				# the leading tyres dig in and the car flips over sideways
 				c.can_trip = false
@@ -1550,10 +1560,10 @@ func _update_crash(dt: float) -> void:
 				sl *= 0.6
 		else:
 			# on its side or roof: steel on asphalt
-			var fr := 8.0 * dt
+			var fr := 12.0 * dt
 			sl = move_toward(sl, 0.0, fr)
 			f = move_toward(f, 0.0, fr)
-			c.yaw_rate = move_toward(c.yaw_rate, 0.0, 2.6 * dt)
+			c.yaw_rate = move_toward(c.yaw_rate, 0.0, 4.0 * dt)
 			scraping = c.vel.length() > 3.0
 		var face := roundi(c.roll / (PI / 2.0))
 		var off := c.roll - face * PI / 2.0
@@ -1700,8 +1710,8 @@ func _crash_collide(o: Vehicle) -> void:
 	c.yaw_rate -= (arm.x * imp.y - arm.y * imp.x) / inertia * 0.6
 	if autotest and j > 1.0:
 		print("[autotest] crash contact j=%.1f side=%.2f %s" % [j, n.dot(r), "truck" if o.truck else ""])
-	o.spin_rate += signf(n.x) * minf(j / mo * 0.25, 2.5)  # the struck car spins out
-	o.slide += n.x * minf(j / mo * 0.4, 5.0)
+	o.spin_rate += signf(n.x) * minf(j / mo * 0.16, 1.6)  # the struck car spins out
+	o.slide += n.x * minf(j / mo * 0.25, 3.2)
 	if j > 3.0:
 		_hitstop = maxf(_hitstop, 0.06)
 	if j > 4.0:
@@ -1763,7 +1773,7 @@ func _update_player(dt: float) -> void:
 	if run and state == S.PLAY and run.dying <= 0.0:
 		# fuel: a full tank lasts FUEL_RANGE_KM flat out, longer driven gently
 		var lpm: float = st.tank / (Data.FUEL_RANGE_KM * 1000.0 * Data.station_scale)
-		lpm *= 0.55 + (0.25 if gas else 0.0) + 0.2 * clampf(vr * vr, 0.0, 1.0)
+		lpm *= (0.55 + (0.25 if gas else 0.0) + 0.2 * clampf(vr * vr, 0.0, 1.0)) * run.mods.eco
 		run.fuel = maxf(0.0, run.fuel - lpm * player.v * dt)
 		if live and _pit_ready():
 			_start_pit()
@@ -2029,6 +2039,18 @@ func _show_pick(bi: Dictionary, unlocked_new: bool) -> void:
 		_apply_boon(opts[0].id)
 
 
+## After an upgrade is chosen: the traffic around you melts away so there is
+## room to get a hand on the wheel again. Cars from 80 m behind to 260 m ahead
+## are removed and nothing new appears for a second.
+func _clear_road() -> void:
+	for i in range(traffic.size() - 1, -1, -1):
+		var c := traffic[i]
+		if c.z > player.z - 80.0 and c.z < player.z + 260.0:
+			_retire(c)
+			traffic.remove_at(i)
+	run.clear_t = 1.0
+
+
 func _apply_boon(id: String) -> void:
 	if run == null:
 		return
@@ -2043,7 +2065,18 @@ func _apply_boon(id: String) -> void:
 		"fuel":
 			run.fuel = st.tank
 			run.fuel_warned = 0
+		"shield": run.shield += 1
+		"armour": run.armour += 1.5
+		"calm":
+			run.mods.traffic *= 0.9
+			for c in traffic:
+				c.cruise *= 0.9
+		"eco": run.mods.eco *= 0.75
+		"cash":
+			run.cash_bonus += 400 * run.stage
+			_notify("SPONSOR DEAL · +$%s" % Fmt.num(400 * run.stage), "hot")
 	_compute_stats()
+	_clear_road()
 	run.stage += 1
 	run.cop_due = false
 	run.phase = "cruise"

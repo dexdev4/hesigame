@@ -43,6 +43,16 @@ void fragment() {
 	float far_k = smoothstep(18.0, 40.0, min(abs(x - edge_r), abs(x - edge_l)));
 	vec3 fields = mix(grass_b, field, smoothstep(0.45, 0.6, n1));
 	vec3 col = mix(mown, fields, far_k) * (0.9 + 0.14 * n2);
+	// natural variety: broad drifts of colour, darker clumps, dry patches
+	float n0 = pnoise(vec2(x * 0.018, z * 0.018), PERIOD * 0.018);
+	float n3 = pnoise(vec2(x * 0.35, z * 0.35) + 17.0, PERIOD * 0.35);
+	col *= 0.88 + 0.24 * n0;
+	col = mix(col, col * vec3(0.78, 0.86, 0.74), smoothstep(0.62, 0.78, n3) * 0.7);
+	col = mix(col, field * 1.05, smoothstep(0.7, 0.85, n0 * 0.6 + n1 * 0.4) * 0.5);
+	// wildflowers: tiny bright specks out in the grass
+	float fl = hash(floor(vec2(x * 3.0, z * 3.0)));
+	float flower = step(0.992, fl) * smoothstep(3.0, 6.0, min(abs(x - edge_r), abs(x - edge_l)));
+	col = mix(col, mix(vec3(0.95, 0.9, 0.4), vec3(0.92, 0.94, 0.98), step(0.996, fl)), flower * 0.8);
 	// worn dirt strip along the pavement
 	float d = min(abs(x - edge_r), abs(x - edge_l));
 	col = mix(col, dirt, (1.0 - smoothstep(0.0, 1.4 + n2, d)) * 0.7);

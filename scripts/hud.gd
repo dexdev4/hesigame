@@ -680,7 +680,7 @@ func update_play(d: Dictionary) -> void:
 		_max_lives = d.max_lives
 		_lives_ctrl.queue_redraw()
 	_kmh.text = d.kmh
-	_unit.text = "%s  ·  GEAR %d" % [d.unit, d.gear]
+	_unit.text = "%s  ·  GEAR %d  ·  %s" % [d.unit, d.gear, d.get("clock", "")]
 	_rpm.value = clampf(d.rpm, 0.0, 1.0)
 	_rpm.add_theme_stylebox_override("fill", _fill_red if d.rpm > 0.9 else (_fill_amber if d.rpm > 0.75 else _fill_white))
 	_kmh.add_theme_color_override("font_color", AMBER if d.fast else LINE)

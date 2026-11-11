@@ -149,8 +149,7 @@ static func _car_shader_mat(key: String, params: Dictionary) -> ShaderMaterial:
 	m.shader = _paint_shader
 	for k in params:
 		m.set_shader_parameter(k, params[k])
-	if night > 0.0:
-		_dusk_params(m)  # a car built at dusk reflects the dusk sky
+	_dusk_params(m)  # a car built now reflects the sky of the moment
 	_mats[key] = m
 	return m
 
@@ -1470,18 +1469,27 @@ const DUSK_ENV := {"env_zenith": Color(0.1, 0.11, 0.22), "env_horizon": Color(0.
 static var _sun_dir := Vector3(-0.545, 0.53, 0.65)
 
 
+static var _env_zenith: Color = DAY_ENV.env_zenith
+static var _env_horizon: Color = DAY_ENV.env_horizon
+
+
 static func _dusk_params(m: ShaderMaterial) -> void:
 	if m.shader != _paint_shader and m.shader != _glass_shader:
 		return
-	for p in DAY_ENV:
-		m.set_shader_parameter(p, (DAY_ENV[p] as Color).lerp(DUSK_ENV[p], night))
+	m.set_shader_parameter("env_zenith", _env_zenith)
+	m.set_shader_parameter("env_horizon", _env_horizon)
 	m.set_shader_parameter("env_sun_dir", _sun_dir)
 
 
-static func set_night(k: float, sun_dir: Vector3) -> void:
+## The time of day for every car at once: k = how far the lights are on
+## (0 day .. 1 night), sun_dir points at the sun (or moon), and the paint and
+## glass reflect a sky of zenith/horizon colours.
+static func set_night(k: float, sun_dir: Vector3, zenith: Color = DAY_ENV.env_zenith, horizon: Color = DAY_ENV.env_horizon) -> void:
 	var was_on := night > 0.01
 	night = k
 	_sun_dir = sun_dir
+	_env_zenith = zenith
+	_env_horizon = horizon
 	_beam()
 	_beam_mat.albedo_color = Color(1, 1, 1, k)
 	lamp(Color("#fff6d8"), 2.0).emission_energy_multiplier = lerpf(2.0, 7.0, k)

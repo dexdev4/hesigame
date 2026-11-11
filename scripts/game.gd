@@ -34,6 +34,9 @@ class Vehicle:
 	var is_cop := false
 	var id := 0
 	var yielding := false  # pulling over for the police
+	var spin := 0.0        # a knocked car: extra yaw as it spins out (radians)
+	var spin_rate := 0.0
+	var slide := 0.0       # sideways slide after a knock (m/s)
 	var yaw := 0.0         # heading (radians, + = nose right): the player's comes from its steering
 	var yaw_rate := 0.0
 	var steer := 0.0       # front road-wheel angle (radians)
@@ -167,9 +170,9 @@ var _retired := {}   # vehicle id -> replay clock when the car left the road
 var _next_id := 1
 var _fps_t := 0.0
 var _env: Environment
-var _dusk := 0.0         # 0 = afternoon .. 1 = dusk (during boss encounters)
-var _dusk_target := 0.0
-var _test_dusk := -1.0
+var _hour := 14.0        # time of day in the game world (0..24); 1 real minute = 2 hours
+var _hour_lock := -1.0   # --hour test aid: hold the clock here
+var _lights := 0.0       # how much the cars' lights are on (0 day .. 1 night)
 var _music: AudioStreamPlayer
 var _music_tween: Tween
 var _head_spots: Array[SpotLight3D] = []
@@ -231,8 +234,9 @@ func _ready() -> void:
 		if a.begins_with("--route="):  # drive this highway (test aid; opens it if needed)
 			Save.data.route_sel = int(a.substr(8))
 			Save.data.routes = maxi(int(Save.data.get("routes", 1)), Save.data.route_sel + 1)
-		if a.begins_with("--dusk="):  # hold the light at this much dusk, 0..1 (test aid)
-			_test_dusk = float(a.substr(7))
+		if a.begins_with("--hour="):  # hold the clock at this hour, 0..24 (test aid)
+			_hour_lock = float(a.substr(7))
+			_hour = _hour_lock
 		if a.begins_with("--fuel="):  # start runs with this fraction of a tank (test aid)
 			_test_fuel = float(a.substr(7))
 		if a.begins_with("--start-stage="):  # begin runs at this stage (test aid)
@@ -386,6 +390,8 @@ func _build_environment() -> void:
 	sm.ground_curve = 0.06
 	sm.sun_angle_max = 26.0
 	sm.sun_curve = 0.12
+	sm.sky_cover = _star_texture()
+	sm.sky_cover_modulate = Color(1, 1, 1, 0)
 	sky.sky_material = sm
 	sky.radiance_size = Sky.RADIANCE_SIZE_128
 	env.sky = sky
@@ -451,6 +457,23 @@ func _build_environment() -> void:
 	_post_mat.shader = load("res://shaders/post.gdshader")
 	_vig_mat = ShaderMaterial.new()
 	_vig_mat.shader = load("res://shaders/vignette.gdshader")
+
+
+## A night sky full of stars (an equirectangular map for the sky cover).
+func _star_texture() -> ImageTexture:
+	var img := Image.create(1024, 512, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 99
+	for k in 1400:
+		var x := rng.randi() % 1024
+		var y := rng.randi_range(0, 250)  # upper half: above the horizon
+		var b := pow(rng.randf(), 3.0)
+		var c := Color(0.85 + 0.15 * rng.randf(), 0.88, 1.0, 0.35 + 0.65 * b)
+		img.set_pixel(x, y, c)
+		if b > 0.7 and x < 1023:
+			img.set_pixel(x + 1, y, Color(c, c.a * 0.5))
+	return ImageTexture.create_from_image(img)
 
 
 ## Graphics quality: High (full shadows, anti-aliasing, speed blur and
@@ -794,6 +817,15 @@ func _update_traffic(dt: float) -> void:
 		c.braking = dv < -0.6
 		c.z += c.v * dt
 		c.vx = 0.0
+		if c.hit:
+			# knocked: it slides and spins out while it brakes to a stop
+			c.slide = move_toward(c.slide, 0.0, 6.0 * dt)
+			c.x += c.slide * dt
+			c.vx = c.slide
+			c.spin += c.spin_rate * dt
+			c.spin_rate *= exp(-1.6 * dt)
+			c.spin = clampf(c.spin, -1.4, 1.4)
+			c.x = clampf(c.x, -(Data.RAIL - c.w * 0.5), Data.RAIL - c.w * 0.5)
 		if c.tlane == c.lane and _cop_behind(c):
 			# siren behind: get out of the way, to the right if there is room, else the left
 			var dirs := [1, -1] if c.lane < 3 else [-1, 1]
@@ -1348,17 +1380,20 @@ func _hit(reason: String, other: Vehicle = null) -> void:
 	run.invuln = 2.4
 	run.combo = 0
 	run.combo_t = 0.0
-	player.v *= 0.55
-	shake = 1.0
-	_flash.color.a = 0.4
+	var jolt := 0.6
 	if other:
-		other.hit = true
-		other.v = maxf(other.v, player.v + 5.0)
+		_knock(other)
+		jolt = clampf(absf(v0 - player.v) / 12.0 + 0.4, 0.4, 1.3)
 		var s := signf(other.x - player.x)
-		if s == 0.0:
-			s = 1.0
-		_set_player_vx(-s * 3.2)
-		target_x = Data.LANES[Data.nearest_lane(player.x - s * 1.5)]
+		target_x = Data.LANES[Data.nearest_lane(player.x - (s if s != 0.0 else 1.0) * 1.5)]
+	else:
+		# a barrier: a glancing scrape costs little, hitting it at an angle a lot
+		player.v *= lerpf(0.9, 0.55, clampf(absf(player.course) / 0.35, 0.0, 1.0))
+		jolt = 0.8
+	shake = jolt
+	_flash.color.a = 0.25 + 0.2 * jolt
+	if jolt > 0.7:
+		_debris_at(Vector3(player.x, 0.6, -player.l * 0.7), Save.car_color(Data.car_by_id(Save.data.selected)), 16)
 	sparks.position = Vector3(player.x, 0.6, -player.l * 0.5)
 	sparks.restart()
 	sparks.emitting = true
@@ -1369,6 +1404,94 @@ func _hit(reason: String, other: Vehicle = null) -> void:
 		_notify(reason, "bad")
 	else:
 		_notify(reason + " · -1 LIFE", "bad")
+
+
+## A knock with another car that the player survives: real momentum trade.
+## Running into the back of a car shoves it on and costs you about the speed
+## difference (bounce 0.3); a side swipe pushes both apart and kicks both
+## noses round, so you have to catch the car. The other car brakes, slides
+## and spins out. Trucks are 3.5 times as heavy.
+func _knock(o: Vehicle) -> void:
+	var mp := 1.0
+	var mo := 3.5 if o.truck else 1.0
+	var dx := o.x - player.x
+	var side_on := absf(dx) > (player.w + o.w) * 0.5 - 0.5
+	var s := signf(dx) if dx != 0.0 else 1.0
+	if not side_on:
+		var vp := player.v
+		var vo := o.v
+		var e := 0.3
+		var rel := vp - vo
+		if o.z < player.z:  # it ran into us (from behind)
+			rel = -rel
+		player.v = maxf(0.0, (mp * vp + mo * vo - mo * e * (vp - vo)) / (mp + mo))
+		o.v = maxf(0.0, (mp * vp + mo * vo + mp * e * (vp - vo)) / (mp + mo))
+		var off := clampf(dx / ((player.w + o.w) * 0.5), -1.0, 1.0)  # off-centre hits spin
+		var dv := absf(rel)
+		o.spin_rate += off * dv * 0.16 / mo
+		o.slide += off * dv * 0.12 / mo
+		player.yaw_rate -= off * dv * 0.03
+	else:
+		var dvx := clampf(absf(player.vx - o.vx) + 2.5, 2.5, 6.5)
+		_set_player_vx(player.vx - s * dvx * mo / (mp + mo))
+		player.yaw_rate -= s * 0.5 * mo / (mp + mo)
+		player.v *= 0.92  # metal scraping metal
+		o.slide += s * dvx * mp / (mp + mo)
+		o.spin_rate += s * clampf(player.v - o.v, -8.0, 8.0) * 0.06 / mo
+		o.v *= 0.9
+	o.hit = true
+	o.cruise = 0.0
+	o.lc_t = 1e9
+	o.tlane = o.lane
+
+
+func _make_debris() -> CPUParticles3D:
+	var p := CPUParticles3D.new()
+	p.emitting = false
+	p.one_shot = true
+	p.amount = 32
+	p.lifetime = 1.8
+	p.explosiveness = 1.0
+	p.direction = Vector3(0, 1, 0)
+	p.spread = 80.0
+	p.initial_velocity_min = 3.0
+	p.initial_velocity_max = 9.0
+	p.gravity = Vector3(0, -9.8, 0)
+	p.angular_velocity_min = -720.0
+	p.angular_velocity_max = 720.0
+	p.scale_amount_min = 0.4
+	p.scale_amount_max = 1.3
+	p.particle_flag_rotate_y = true
+	var m := BoxMesh.new()
+	m.size = Vector3(0.14, 0.03, 0.1)
+	p.mesh = m
+	var g := Gradient.new()  # body panels, black trim, glass
+	g.set_color(0, Color(1, 1, 1))
+	g.add_point(0.5, Color(0.08, 0.08, 0.09))
+	g.set_color(1, Color(0.75, 0.85, 0.9))
+	p.color_initial_ramp = g
+	var mat := StandardMaterial3D.new()
+	mat.vertex_color_use_as_albedo = true
+	mat.roughness = 0.4
+	mat.metallic = 0.3
+	p.material_override = mat
+	add_child(p)
+	return p
+
+
+var _debris: CPUParticles3D
+
+
+## A burst of bits (body panel in `paint`, trim and glass) flying off.
+func _debris_at(pos: Vector3, paint: Color, n := 32) -> void:
+	if _debris == null:
+		_debris = _make_debris()
+	var g := _debris.color_initial_ramp
+	g.set_color(0, paint)
+	_debris.amount = n
+	_debris.position = pos
+	_debris.restart()
+	_debris.emitting = true
 
 
 # ---------------------------------------------------------------- last-life crash
@@ -1388,6 +1511,7 @@ func _start_crash(v0: float, side: float, other: Vehicle) -> void:
 	# something side-on while sliding (see _crash_collide) is what usually rolls it
 	crash.can_trip = v0 > 26.0 and randf() < clampf((v0 - 26.0) / 50.0, 0.08, 0.3)
 	run.dying = 8.0
+	_debris_at(Vector3(player.x, 0.7, -player.l * 0.6), Save.car_color(Data.car_by_id(Save.data.selected)), 40)
 	player.v = maxf(crash.vel.y, 0.0)
 	hud.set_play_visible(false)  # let the crash play out full screen
 	shake = 1.4
@@ -1406,8 +1530,10 @@ func _update_crash(dt: float) -> void:
 	if grounded:
 		if on_wheels:
 			# traction is gone: the tyres scrub sideways and roll on slowly
-			sl = move_toward(sl, 0.0, 6.5 * dt)
-			f = move_toward(f, 0.0, (2.6 + 3.0 * absf(sl) / maxf(c.vel.length(), 1.0)) * dt)
+			# sideways the tyres scrub at about 0.8 g; rolling forward they only
+			# drag a little, more the further the car is turned across its path
+			sl = move_toward(sl, 0.0, 7.8 * dt)
+			f = move_toward(f, 0.0, (1.4 + 6.5 * absf(sl) / maxf(c.vel.length(), 1.0)) * dt)
 			c.yaw_rate = move_toward(c.yaw_rate, 0.0, 1.1 * dt)
 			if c.can_trip and absf(sl) > 6.5 and c.t > 0.2:
 				# the leading tyres dig in and the car flips over sideways
@@ -1566,6 +1692,10 @@ func _crash_collide(o: Vehicle) -> void:
 	c.yaw_rate -= (arm.x * imp.y - arm.y * imp.x) / inertia * 0.6
 	if autotest and j > 1.0:
 		print("[autotest] crash contact j=%.1f side=%.2f %s" % [j, n.dot(r), "truck" if o.truck else ""])
+	o.spin_rate += signf(n.x) * minf(j / mo * 0.25, 2.5)  # the struck car spins out
+	o.slide += n.x * minf(j / mo * 0.4, 5.0)
+	if j > 4.0:
+		_debris_at(Vector3(contact.x, 0.6, -(contact.y - player.z)), Save.car_color(Data.car_by_id(Save.data.selected)), 20)
 	if j > 2.0:
 		sound.play("crash", randf_range(0.85, 1.1), clampf(-14.0 + j, -14.0, 0.0))
 		shake = maxf(shake, minf(1.2, j * 0.08))
@@ -1709,9 +1839,9 @@ func _drive_manual(dt: float, brk: bool, vr: float, cmd: float) -> void:
 	# at the current speed, so the same push feels alike at any speed and
 	# never snaps the car sideways
 	var at_limit := atan(grip * wb / maxf(v * v, 0.01))
-	var span := minf(lock, at_limit * 0.9)
+	var span := minf(lock, at_limit * 0.95)
 	var c := clampf(cmd * float(Save.setting("steer_sens")), -1.0, 1.0)
-	c = signf(c) * pow(absf(c), 1.5)  # gentle around the centre for small corrections
+	c = signf(c) * pow(absf(c), 1.2)  # a little softer round the centre for fine corrections
 	var want := c * span
 	if absf(cmd) < 0.001 and Save.data.assist and v > 3.0:
 		# steering assist: ease the nose back parallel to the road
@@ -1719,16 +1849,16 @@ func _drive_manual(dt: float, brk: bool, vr: float, cmd: float) -> void:
 	if v < 0.2:
 		want = player.steer if absf(cmd) < 0.001 else c * lock  # parked: wheels turn but the car does not
 	# the wheels turn in a touch slower than they self-centre
-	player.steer = move_toward(player.steer, want, maxf(span, 0.05) * (5.0 if absf(want) > absf(player.steer) else 7.0) * dt)
+	player.steer = move_toward(player.steer, want, maxf(span, 0.05) * (12.0 if absf(want) > absf(player.steer) else 14.0) * dt)
 	# the nose: turn rate from the wheel angle, reached with a little lag (the car's weight)
 	var r_want := v * tan(player.steer) / wb
-	player.yaw_rate = lerpf(player.yaw_rate, r_want, minf(1.0, dt * 9.0))
+	player.yaw_rate = lerpf(player.yaw_rate, r_want, minf(1.0, dt * 22.0))
 	player.yaw = clampf(player.yaw + player.yaw_rate * dt, -0.7, 0.7)
 	# the direction of travel follows the nose as fast as the tyres can push
 	# it round (sideways force = speed x turn rate); past that the car slides
 	var slip := player.yaw - player.course
 	var max_turn := grip / maxf(v, 1.0)
-	player.course += clampf(slip * 7.0, -max_turn, max_turn) * dt
+	player.course += clampf(slip * 16.0, -max_turn * 1.15, max_turn * 1.15) * dt
 	player.course = clampf(player.course, -0.7, 0.7)
 	player.vx = v * sin(player.course)
 	player.x += player.vx * dt
@@ -1799,9 +1929,7 @@ func _start_run() -> void:
 	_leave_garage()
 	_set_route(int(Save.data.get("route_sel", 0)))
 	_boss_music(false, 0.5)
-	_dusk = 0.0
-	_dusk_target = 0.0
-	_apply_dusk(0.0)
+	_apply_time(_hour)
 	_set_player_car()
 	run = Run.new()
 	run.lives = 3 + Save.perm_level("lives")
@@ -1819,7 +1947,7 @@ func _start_run() -> void:
 	hud.show_screen("")
 	hud.set_play_visible(true)
 	var ri := Data.route_info(Data.route)
-	hud.banner("%s · %s → %s" % [ri.name, String(ri.from).to_upper(), String(ri.to).to_upper()], "STAGE 1 · " + String(Data.boss_info(1).full).to_upper() + " WAITS AHEAD")
+	hud.banner(ri.name, "%s → %s · STAGE 1" % [String(ri.from).to_upper(), String(ri.to).to_upper()])
 	hud.show_hint()
 	_calibrate_tilt()
 
@@ -2082,43 +2210,87 @@ const DUSK := {"sun": Color("#ffa86a"), "sun_e": 1.05, "sun_x": -18.0, "top": Co
 	"ghor": Color("#7a5c4c"), "sky_e": 0.9, "amb": 0.7, "fog": Color("#a98a8a"), "exp": 1.08}
 
 
-func _apply_dusk(k: float) -> void:
+## The sky through the day: keyframes at set hours, blended between. Day
+## keys take their sky colours from the highway's country (_day).
+const TIME_KEYS := [
+	[0.0, {"sun": Color("#9fb4ff"), "e": 0.22, "elev": 40.0, "top": Color("#070b18"), "hor": Color("#1c2440"), "ghor": Color("#0c0f14"), "sky": 0.3, "amb": 0.34, "fog": Color("#1c2333"), "exp": 1.18, "lights": 1.0, "far": Color(0.22, 0.25, 0.38), "haze": Color(0.12, 0.14, 0.22)}],
+	[5.0, {"sun": Color("#9fb4ff"), "e": 0.22, "elev": 30.0, "top": Color("#0a1022"), "hor": Color("#26304e"), "ghor": Color("#10131a"), "sky": 0.32, "amb": 0.36, "fog": Color("#232a3c"), "exp": 1.18, "lights": 1.0, "far": Color(0.25, 0.28, 0.4), "haze": Color(0.15, 0.17, 0.26)}],
+	[6.3, {"sun": Color("#ffb07a"), "e": 0.6, "elev": 3.0, "top": Color("#2c3a6a"), "hor": Color("#f0a47a"), "ghor": Color("#5a4a44"), "sky": 0.6, "amb": 0.5, "fog": Color("#a08a8c"), "exp": 1.06, "lights": 0.6, "far": Color(0.7, 0.55, 0.55), "haze": Color(0.78, 0.55, 0.48)}],
+	[8.0, {"sun": Color("#fff0dc"), "e": 1.25, "elev": 24.0, "top": "day", "hor": "day", "ghor": Color("#c4b69c"), "sky": 1.0, "amb": 0.72, "fog": Color("#cdc6b6"), "exp": 1.05, "lights": 0.0, "far": Color(1, 1, 1), "haze": Color(0.85, 0.82, 0.76)}],
+	[12.5, {"sun": Color("#fffaf0"), "e": 1.5, "elev": 58.0, "top": "day", "hor": "day", "ghor": Color("#c8bca4"), "sky": 1.1, "amb": 0.8, "fog": Color("#d6d2c6"), "exp": 1.02, "lights": 0.0, "far": Color(1, 1, 1), "haze": Color(0.86, 0.84, 0.8)}],
+	[16.0, {"sun": Color("#fff0d8"), "e": 1.4, "elev": 32.0, "top": "day", "hor": "day", "ghor": Color("#c4b69c"), "sky": 1.05, "amb": 0.75, "fog": Color("#cdc6b6"), "exp": 1.05, "lights": 0.0, "far": Color(1, 1, 1), "haze": Color(0.85, 0.82, 0.76)}],
+	[18.6, {"sun": Color("#ffa86a"), "e": 1.0, "elev": 8.0, "top": Color("#38487e"), "hor": Color("#efa070"), "ghor": Color("#7a5c4c"), "sky": 0.85, "amb": 0.62, "fog": Color("#a98a8a"), "exp": 1.08, "lights": 0.45, "far": Color(0.62, 0.46, 0.46), "haze": Color(0.72, 0.44, 0.36)}],
+	[20.0, {"sun": Color("#ff7a5a"), "e": 0.35, "elev": 1.0, "top": Color("#1a2246"), "hor": Color("#b0606a"), "ghor": Color("#3a2c30"), "sky": 0.45, "amb": 0.42, "fog": Color("#5a4a5a"), "exp": 1.12, "lights": 1.0, "far": Color(0.4, 0.32, 0.4), "haze": Color(0.36, 0.26, 0.3)}],
+	[21.5, {"sun": Color("#9fb4ff"), "e": 0.22, "elev": 40.0, "top": Color("#070b18"), "hor": Color("#1c2440"), "ghor": Color("#0c0f14"), "sky": 0.3, "amb": 0.34, "fog": Color("#1c2333"), "exp": 1.18, "lights": 1.0, "far": Color(0.22, 0.25, 0.38), "haze": Color(0.12, 0.14, 0.22)}],
+	[24.0, {"sun": Color("#9fb4ff"), "e": 0.22, "elev": 40.0, "top": Color("#070b18"), "hor": Color("#1c2440"), "ghor": Color("#0c0f14"), "sky": 0.3, "amb": 0.34, "fog": Color("#1c2333"), "exp": 1.18, "lights": 1.0, "far": Color(0.22, 0.25, 0.38), "haze": Color(0.12, 0.14, 0.22)}],
+]
+
+
+func _key_val(k: Dictionary, name: String) -> Variant:
+	var v: Variant = k[name]
+	if v is String:  # "day": the country's own sky colour
+		return _day.top if name == "top" else _day.hor
+	return v
+
+
+## Light the world for this hour of the day.
+func _apply_time(hour: float) -> void:
 	if _day.is_empty():
 		_day = DAY.duplicate()
-	var e := smoothstep(0.0, 1.0, k)
-	_sun.light_color = (_day.sun as Color).lerp(DUSK.sun, e)
-	_sun.light_energy = lerpf(_day.sun_e, DUSK.sun_e, e)
-	_sun.rotation_degrees.x = lerpf(_day.sun_x, DUSK.sun_x, e)
+	hour = fposmod(hour, 24.0)
+	var i := 0
+	while i < TIME_KEYS.size() - 2 and hour >= float(TIME_KEYS[i + 1][0]):
+		i += 1
+	var h0: float = TIME_KEYS[i][0]
+	var h1: float = TIME_KEYS[i + 1][0]
+	var a: Dictionary = TIME_KEYS[i][1]
+	var b: Dictionary = TIME_KEYS[i + 1][1]
+	var f := smoothstep(0.0, 1.0, (hour - h0) / maxf(h1 - h0, 0.001))
+	var col := func(n: String) -> Color: return (_key_val(a, n) as Color).lerp(_key_val(b, n), f)
+	var num := func(n: String) -> float: return lerpf(float(a[n]), float(b[n]), f)
+	# the sun crosses from east to west by day; the moon hangs high at night
+	var day_t := clampf((hour - 6.0) / 14.0, 0.0, 1.0)
+	_sun.rotation_degrees = Vector3(-num.call("elev"), lerpf(-115.0, 75.0, day_t), 0.0)
+	_sun.light_color = col.call("sun")
+	_sun.light_energy = num.call("e")
 	var sm := _sky.sky_material as ProceduralSkyMaterial
+	var top: Color = col.call("top")
+	var hor: Color = col.call("hor")
 	if sm:
-		sm.sky_top_color = (_day.top as Color).lerp(DUSK.top, e)
-		sm.sky_horizon_color = (_day.hor as Color).lerp(DUSK.hor, e)
-		sm.ground_horizon_color = (_day.ghor as Color).lerp(DUSK.ghor, e)
-		sm.sky_energy_multiplier = lerpf(_day.sky_e, DUSK.sky_e, e)
-	_env.ambient_light_energy = lerpf(_day.amb, DUSK.amb, e)
-	_env.fog_light_color = (_day.fog as Color).lerp(DUSK.fog, e)
-	_env.tonemap_exposure = lerpf(_day.exp, DUSK.exp, e)
-	_env.adjustment_brightness = 1.0
-	_env.adjustment_saturation = lerpf(1.12, 1.0, e)
-	_env.glow_intensity = lerpf(0.45, 0.9, e)  # lamps bloom more in the gloom
-	CarModel.set_night(e, _sun.global_transform.basis.z.normalized())
+		sm.sky_top_color = top
+		sm.sky_horizon_color = hor
+		sm.ground_horizon_color = col.call("ghor")
+		sm.sky_energy_multiplier = num.call("sky")
+	_env.ambient_light_energy = num.call("amb")
+	_env.fog_light_color = col.call("fog")
+	_env.tonemap_exposure = num.call("exp")
+	_lights = num.call("lights")
+	_env.adjustment_saturation = lerpf(1.12, 0.9, _lights)
+	_env.glow_intensity = lerpf(0.45, 1.0, _lights)  # lamps bloom more in the dark
+	CarModel.set_night(smoothstep(0.0, 1.0, _lights), _sun.global_transform.basis.z.normalized(), top, hor)
 	if scenery:
-		scenery.set_dusk(e)
+		scenery.set_sky_tint(col.call("far"), col.call("haze"))
+		scenery.set_night(smoothstep(0.3, 1.0, _lights))
+	if sm and sm.sky_cover:
+		sm.sky_cover_modulate = Color(1, 1, 1, smoothstep(0.7, 1.0, _lights) * 0.9)  # stars
 	for sp in _head_spots:
 		if is_instance_valid(sp):
-			sp.visible = e > 0.02
-			sp.light_energy = 6.0 * e
+			sp.visible = _lights > 0.02
+			sp.light_energy = 6.0 * smoothstep(0.0, 1.0, _lights)
 
 
-func _update_dusk(dt: float) -> void:
-	if _test_dusk >= 0.0:
-		_dusk_target = _test_dusk
-	if is_equal_approx(_dusk, _dusk_target):
-		return
-	_dusk = move_toward(_dusk, _dusk_target, dt / (8.0 if _dusk_target > _dusk else 10.0))
-	_apply_dusk(_dusk)
-	if autotest and (_dusk == 0.0 or _dusk == 1.0):
-		print("[autotest] light now %s (sun %.2f)" % ["dusk" if _dusk == 1.0 else "day", _sun.light_energy])
+## Time passes while you drive: one real minute is two hours.
+func _update_time(dt: float) -> void:
+	if _hour_lock >= 0.0:
+		_hour = _hour_lock
+	else:
+		_hour = fposmod(_hour + dt * (2.0 / 60.0), 24.0)
+	_apply_time(_hour)
+
+
+func clock_text() -> String:
+	var m := int(_hour * 60.0)
+	return "%02d:%02d" % [(m / 60) % 24, m % 60]
 
 
 ## Real headlight beams on the player's car (the others get light pools).
@@ -2136,8 +2308,8 @@ func _add_head_spots() -> void:
 		sp.spot_angle_attenuation = 1.6  # soft edge to the cone
 		sp.shadow_enabled = false
 		sp.light_cull_mask = sp.light_cull_mask & ~GarageScene.LAYER
-		sp.visible = _dusk > 0.02
-		sp.light_energy = 6.0 * smoothstep(0.0, 1.0, _dusk)
+		sp.visible = _lights > 0.02
+		sp.light_energy = 6.0 * smoothstep(0.0, 1.0, _lights)
 		player.model.add_child(sp)
 		_head_spots.append(sp)
 
@@ -2145,7 +2317,6 @@ func _add_head_spots() -> void:
 ## The boss encounter is over (won, lost or escaped): back to daylight.
 func _boss_mood_end(fade := 6.0) -> void:
 	_boss_music(false, fade)
-	_dusk_target = 0.0
 
 
 ## A stage is complete: warn that the boss (or a police car) is coming in
@@ -2155,7 +2326,6 @@ func _begin_incoming(cop: bool) -> void:
 	run.phase = "incoming"
 	run.inc_t = BOSS_WARN
 	run.inc_cop = cop
-	_dusk_target = 1.0  # dusk falls over the countdown; headlights come on
 	_boss_music(true)
 	_clear_station_for(player.v * BOSS_WARN + run.b_len + 300.0)
 	var bi := Data.boss_info(run.stage)
@@ -2213,7 +2383,6 @@ func _update_run(dt: float) -> void:
 					run.rematch_t = 0.5  # after the fuel stop
 				else:
 					_start_boss()
-					_dusk_target = 1.0
 					_boss_music(true)
 					hud.banner("REMATCH", "OUT-SCORE HIM IN %s" % Fmt.km(run.b_len))
 			return
@@ -2318,8 +2487,8 @@ func _process(delta: float) -> void:
 	if state == S.REFUEL and run:
 		_pump_frame(delta)
 	_probe_gfx(delta)
-	if state != S.PAUSED:
-		_update_dusk(delta)
+	if _sim_running():
+		_update_time(delta)
 	_post_speed()
 	var now := Time.get_ticks_msec() / 1000.0
 	if _test_crash > 0.0 and now > _test_crash and _live():
@@ -2408,7 +2577,7 @@ func _place(c: Vehicle, delta: float) -> void:
 	c.model.spin(c.v, delta)
 	c.model.position = Vector3(c.x, 0.0, -(c.z - player.z))
 	# a car points where it is going (none of them can move sideways while stopped)
-	c.model.rotation.y = -(c.yaw if c == player else atan2(c.vx, maxf(c.v, 1.0)))
+	c.model.rotation.y = -(c.yaw if c == player else atan2(c.vx, maxf(c.v, 1.0)) + c.spin)
 	c.model.set_wheel_steer(c.steer if c == player else clampf(atan2(c.vx, maxf(c.v, 1.0)) * 2.5, -0.5, 0.5))
 	c.model.set_brake(c.braking)
 	var dir := 0
@@ -2466,8 +2635,11 @@ func _crash_marks() -> void:
 			skids.add_point(i, contacts[i].x, player.z - contacts[i].z, clampf(sl / 6.0, 0.4, 1.0))
 		else:
 			skids.lift(i)
-	smoke.emitting = sliding or (c.air <= 0.0 and c.vel.length() > 3.0)
+	smoke.emitting = sliding or (c.air <= 0.0 and c.vel.length() > 3.0) or c.settled
 	smoke.position = Vector3(player.x, 0.3, -player.l * 0.5)
+	if c.settled:  # the wrecked engine smokes once it comes to rest
+		var h3 := Vector2(sin(c.yaw), cos(c.yaw))
+		smoke.position = Vector3(player.x + h3.x * player.l * 0.35, 0.7, -player.l * 0.5 - h3.y * player.l * 0.35)
 
 
 func _speed_text() -> Array:
@@ -2593,6 +2765,7 @@ func _update_hud() -> void:
 		"fuel": run.fuel / maxf(st.tank, 1.0),
 		"fuel_l": "%d L" % ceili(run.fuel),
 		"fuel_next": _fuel_next_text(),
+		"clock": clock_text(),
 	}
 	if run.phase == "cop":
 		var gp: float = maxf(0.0, player.z - (boss.z + boss.l)) if boss else 99.0
@@ -2668,16 +2841,16 @@ func _analog_steer(dt: float) -> void:
 		want = 0.0 if absf(raw) < 0.04 else raw
 		_steer_val = want
 	elif mode == "tilt":
-		_steer_val = lerpf(_steer_val, _tilt_value(), minf(1.0, dt * 12.0))
+		_steer_val = lerpf(_steer_val, _tilt_value(), minf(1.0, dt * 18.0))
 	elif mode == "stick":
 		want = hud.stick.value()
-		_steer_val = move_toward(_steer_val, want, (10.0 if want != 0.0 else 8.0) * dt)
+		_steer_val = move_toward(_steer_val, want, (18.0 if want != 0.0 else 12.0) * dt)
 	elif mode == "buttons":
 		want = (1.0 if right else 0.0) - (1.0 if left else 0.0)
-		_steer_val = move_toward(_steer_val, want, (3.0 if want != 0.0 else 8.0) * dt)  # eases in, lets go quickly
+		_steer_val = move_toward(_steer_val, want, (5.0 if want != 0.0 else 10.0) * dt)  # eases in, lets go quickly
 	else:  # swipe
 		want = swipe if swiping else 0.0
-		_steer_val = move_toward(_steer_val, want, 12.0 * dt)
+		_steer_val = move_toward(_steer_val, want, 20.0 * dt)
 	# the arrow keys steer in every mode (desktop testing)
 	if mode != "buttons" and (key_left or key_right):
 		_steer_val = move_toward(_steer_val, (1.0 if key_right else 0.0) - (1.0 if key_left else 0.0), 3.0 * dt)

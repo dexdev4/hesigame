@@ -37,6 +37,9 @@ var _km_label: Label3D
 var _gantry: Node3D
 var _clouds: Node3D
 var _far_mats: Array[ShaderMaterial] = []
+var _pool_mat: StandardMaterial3D
+var _pools: MeshInstance3D
+var _hill_mat: StandardMaterial3D
 var _oncoming: Array = []   # {model, x, z, v}
 var _t := 0.0
 
@@ -116,6 +119,7 @@ func _ready() -> void:
 
 	_build_loops()
 	_build_trees()
+	_build_hills()
 	_build_far()
 	_build_km_sign()
 	_build_gantry()
@@ -287,6 +291,43 @@ func _build_loops() -> void:
 		for s in [-1.0, 1.0]:
 			lamps[M.lamp].append([Vector3(MEDIAN_X + s * 3.9, 9.88, z), Vector3(1.0, 0.16, 0.38)])
 	_loop(55.0).add_child(_merged(lamps))
+	# pools of lamplight on both carriageways, shown at night (see set_night)
+	var pst := SurfaceTool.new()
+	pst.begin(Mesh.PRIMITIVE_TRIANGLES)
+	pst.set_normal(Vector3.UP)
+	for z in _loop_zs(55.0):
+		for cx in [MEDIAN_X + 7.0, MEDIAN_X - 7.0]:
+			var hw := 9.0
+			var hl := 10.0
+			var v := [Vector3(cx - hw, 0.04, z - hl), Vector3(cx + hw, 0.04, z - hl), Vector3(cx + hw, 0.04, z + hl), Vector3(cx - hw, 0.04, z + hl)]
+			var uv := [Vector2(0, 0), Vector2(1, 0), Vector2(1, 1), Vector2(0, 1)]
+			for k in [0, 2, 1, 0, 3, 2]:
+				pst.set_uv(uv[k])
+				pst.add_vertex(v[k])
+	var pools := MeshInstance3D.new()
+	pools.mesh = pst.commit()
+	var g := Gradient.new()
+	g.set_color(0, Color(1.0, 0.86, 0.6, 0.55))
+	g.set_color(1, Color(1.0, 0.8, 0.5, 0.0))
+	g.add_point(0.45, Color(1.0, 0.84, 0.58, 0.3))
+	var gt := GradientTexture2D.new()
+	gt.gradient = g
+	gt.fill = GradientTexture2D.FILL_RADIAL
+	gt.fill_from = Vector2(0.5, 0.5)
+	gt.fill_to = Vector2(0.5, 0.0)
+	_pool_mat = StandardMaterial3D.new()
+	_pool_mat.albedo_texture = gt
+	_pool_mat.albedo_color = Color(1, 1, 1, 0)
+	_pool_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	_pool_mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	_pool_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_pool_mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+	_pool_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	pools.material_override = _pool_mat
+	pools.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	pools.visible = false
+	_pools = pools
+	_loop(55.0).add_child(pools)
 
 	# farm fences, every 3 m
 	var fence := {M.wood: []}
@@ -500,12 +541,84 @@ func _build_trees() -> void:
 func set_biome(land: Dictionary) -> void:
 	for k in ["grass_a", "grass_b", "field", "dirt"]:
 		_grass_mat.set_shader_parameter(k, land[k])
+	if _hill_mat:
+		_hill_mat.albedo_color = (land.grass_b as Color).lerp(land.field, 0.2).darkened(0.08)
 
 
-## Dusk on the horizon: mountains and clouds take on the evening colours.
-func set_dusk(k: float) -> void:
-	var tint := Color(1, 1, 1).lerp(Color(0.62, 0.44, 0.46), k)
-	var haze := Color(0.85, 0.82, 0.76).lerp(Color(0.72, 0.42, 0.34), k)
+## Rolling country beyond the fields on both sides: low grassy hills with
+## darker woods along their crests, one seamless TREE_PERIOD strip repeated
+## (so it scrolls with the road like the trees). Colour follows the highway's
+## country (set_biome).
+func _build_hills() -> void:
+	var holder := _loop(TREE_PERIOD)
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var nx := 16
+	var nz := 60
+	var w := TAU / TREE_PERIOD
+	for side in [1.0, -1.0]:
+		var x0: float = (Data.RAIL + 78.0) if side > 0.0 else (OPP_X - Data.RAIL - 78.0)
+		var seed_ph := 0.0 if side > 0.0 else 2.3
+		var hgt := func(xi: float, z: float) -> float:
+			var d := xi * 260.0  # metres out from the hills' foot
+			var ramp := smoothstep(0.0, 70.0, d)
+			var hh := 14.0 + 9.0 * sin(z * w * 2.0 + seed_ph) + 7.0 * sin(z * w * 5.0 + 1.7 + seed_ph) + 4.0 * sin(z * w * 11.0 + d * 0.02)
+			hh += 10.0 * sin(d * 0.018 + z * w * 3.0 + seed_ph)
+			return maxf(0.0, hh) * ramp - 0.5
+		for rep in 3:
+			var zbase := VIEW_BEHIND - rep * TREE_PERIOD
+			for i in nx:
+				for j in nz:
+					var xa := float(i) / nx
+					var xb := float(i + 1) / nx
+					var za := float(j) / nz * TREE_PERIOD
+					var zb := float(j + 1) / nz * TREE_PERIOD
+					var quad := [[xa, za], [xb, za], [xb, zb], [xa, zb]]
+					var verts: Array = []
+					var cols: Array = []
+					for q in quad:
+						var hx: float = hgt.call(q[0], q[1])
+						var px: float = x0 + side * q[0] * 260.0
+						verts.append(Vector3(px, hx, zbase - q[1]))
+						# woods on the higher ground, meadow below
+						var wood := smoothstep(16.0, 26.0, hx)
+						cols.append(Color(1, 1, 1).lerp(Color(0.55, 0.62, 0.5), wood))
+					var n: Vector3 = ((verts[1] as Vector3) - (verts[0] as Vector3)).cross((verts[3] as Vector3) - (verts[0] as Vector3)).normalized()
+					if n.y < 0.0:
+						n = -n
+					for k in [0, 1, 2, 0, 2, 3]:
+						st.set_color(cols[k])
+						st.set_normal(n)
+						st.add_vertex(verts[k])
+	st.generate_normals()
+	var mi := MeshInstance3D.new()
+	mi.mesh = st.commit()
+	_hill_mat = StandardMaterial3D.new()
+	_hill_mat.vertex_color_use_as_albedo = true
+	_hill_mat.albedo_color = Color(0.3, 0.42, 0.18)
+	_hill_mat.roughness = 1.0
+	_hill_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mi.material_override = _hill_mat
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	holder.add_child(mi)
+
+
+## Night: street lamps come on and light the road, reflectors and road studs
+## shine brighter. k = 0 (day) .. 1 (night).
+func set_night(k: float) -> void:
+	(M.lamp as StandardMaterial3D).emission_energy_multiplier = lerpf(0.15, 7.0, k)
+	(M.lamp as StandardMaterial3D).albedo_color = Color("#9a9a92").lerp(Color("#f4ecc8"), k)
+	(M.amber as StandardMaterial3D).emission_energy_multiplier = lerpf(1.2, 4.0, k)
+	(M.amber_cut as ShaderMaterial).set_shader_parameter("glow", lerpf(1.2, 4.0, k))
+	if _pool_mat:
+		_pool_mat.albedo_color = Color(1, 1, 1, k)
+		_pools.visible = k > 0.02
+	for m in _road_mats:
+		(m as ShaderMaterial).set_shader_parameter("stud_glow", lerpf(0.5, 3.0, k))
+
+
+## The time of day on the horizon: mountains and clouds take its colours.
+func set_sky_tint(tint: Color, haze: Color) -> void:
 	for m in _far_mats:
 		m.set_shader_parameter("tint", tint)
 		m.set_shader_parameter("haze_col", haze)

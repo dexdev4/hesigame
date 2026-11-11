@@ -9,6 +9,7 @@ uniform float road_half = 7.2;
 uniform vec3 asphalt : source_color = vec3(0.17, 0.18, 0.2);
 uniform vec3 shoulder : source_color = vec3(0.3, 0.3, 0.31);
 uniform vec3 paint : source_color = vec3(0.91, 0.89, 0.83);
+uniform float stud_glow = 0.5;  // road studs shine brighter at night
 uniform float detail = 1.0;        // 1: asphalt grain bends the light (High graphics)
 
 const float PERIOD = 3600.0;
@@ -105,7 +106,7 @@ void fragment() {
 		}
 	}
 	ALBEDO = col;
-	EMISSION = vec3(1.0, 0.75, 0.3) * marker * 0.5;
+	EMISSION = vec3(1.0, 0.75, 0.3) * marker * stud_glow;
 	ROUGHNESS = 0.9 - 0.25 * track - 0.3 * max(edge, lanes);
 	SPECULAR = 0.35;
 }

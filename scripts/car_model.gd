@@ -146,6 +146,24 @@ const PROFILES := {
 		"dash_hw": 0.5,
 		"ws_base_hw": 0.47,
 		"mirror_d": 2.29},
+	"vanta": {
+		"mesh": "res://assets/models/car_vanta.mesh",
+		"mesh_lq": "res://assets/models/car_vanta_lq.mesh",
+		"body": [[0, 0.942, 0.781], [0.1, 0.99, 0.873], [0.3, 1.007, 0.926], [0.7, 1.111, 0.993], [1.2, 1.072, 1], [1.8, 1.072, 0.961], [2.4, 1.072, 0.951], [3, 1.119, 0.949], [3.5, 0.901, 0.985], [3.9, 0.843, 0.966], [4.2, 0.789, 0.96], [4.765, 0.61, 0.704]],
+		"gh": [0.75, 2.975, 1.35, 2.425, 1.032, 1.398, 0.914, 0.556],
+		"pillars": [[0, 0.28], [0.5, 0.54], [0.93, 1]],
+		"rim_frac": 0.7,
+		"tyre": [0.245, 0.245],
+		"wheel": [0.35, 1.035, 3.885],
+		"wheel_x": [0.815, 0.8],
+		"plate_y": 0.62,
+		"badge_y": 0.74,
+		"eye_back": 1.3,
+		"eye_y": 1.228,
+		"dash_drop": 0,
+		"dash_hw": 0.53,
+		"ws_base_hw": 0.5,
+		"mirror_d": 2.38},
 	"suv": {
 		"mesh": "res://assets/models/car_traffic_suv.mesh",
 		"mesh_lq": "res://assets/models/car_traffic_suv_lq.mesh",
@@ -2131,7 +2149,7 @@ func cockpit_eye() -> Vector3:
 		return Vector3(-0.42, 1.72, -3.95)
 	var g: Array = pr.gh
 	var y: float = float(pr.eye_y) if pr.has("eye_y") else minf(g[4] + 0.38, g[5] - 0.16)
-	return Vector3(-0.36 * shape.w / 1.84, y, -(g[1] - float(pr.get("eye_back", 1.45))))
+	return Vector3(-0.36 * shape.w / 1.84, y + 0.035, -(g[1] - float(pr.get("eye_back", 1.45))))
 
 
 ## Bonnet camera position in car space.
@@ -2161,7 +2179,7 @@ static func _strap(st: SurfaceTool, a: Vector3, b: Vector3, w: float, t: float) 
 ## extra gauges on the dash top; two_tone = lower dash in the leather colour;
 ## cage = a roll hoop behind the seats. dials = [speedo ring, rev ring, needle].
 ## Imported cars keep the cabin style of the generated body they replaced.
-const CABIN_ALIAS := {"kestrel": "hatch", "bruiser": "muscle", "copperhead": "fastback", "halcyon": "super", "static": "rcoupe", "marshal": "msedan", "lastexit": "hyper"}
+const CABIN_ALIAS := {"kestrel": "hatch", "bruiser": "muscle", "copperhead": "fastback", "halcyon": "super", "static": "rcoupe", "marshal": "msedan", "lastexit": "hyper", "vanta": "sedan"}
 const CABINS := {
 	"hot_hatch": {"leather": "#23262b", "insert": "#2f62b0", "stitch": "#5a9bff", "ambient": "#3d8bff", "strip": "#3b4047", "wheel": "flat", "screen": "tablet",
 		"dials": ["#5a9bff", "#e6e6e6", "#ff4a2a"], "accent": "#5a9bff"},
@@ -2348,8 +2366,8 @@ func build_interior() -> void:
 		for k in 3:
 			_box(S.trim, c + Vector3(0, -0.02 + k * 0.02, 0.008), Vector3(0.14, 0.006, 0.006))
 	# binnacle and instrument cluster backing
-	_box(S.dash, Vector3(ex, yd + 0.19, dzd + 0.5), Vector3(0.38, 0.06, 0.24))
-	_box(S.dash, Vector3(ex, yd + 0.07, dzd + 0.55), Vector3(0.36, 0.22, 0.1))
+	_box(S.dash, Vector3(ex, yd + 0.115, dzd + 0.5), Vector3(0.38, 0.03, 0.22))
+	_box(S.dash, Vector3(ex, yd + 0.035, dzd + 0.55), Vector3(0.36, 0.13, 0.1))
 	# centre stack with screen, climate knobs and hazard switch
 	_box(S.dash, Vector3(0, yd - 0.27, dzd + 0.54), Vector3(0.32, 0.44, 0.16))
 	_box(S.chrome, Vector3(0, sy, sz), Vector3(sw + 0.02, shh + 0.02, 0.004))
@@ -2561,7 +2579,7 @@ func build_interior() -> void:
 	# instrument cluster: speedometer and rev counter with ticks and needles
 	for k in 2:
 		var dial := Node3D.new()
-		dial.position = Vector3(ex + (0.085 if k == 0 else -0.085), yd + 0.09, dzd + 0.645)
+		dial.position = Vector3(ex + (0.085 if k == 0 else -0.085), yd + 0.045, dzd + 0.645)
 		dial.rotation.x = -0.35
 		_body.add_child(dial)
 		var face := MeshInstance3D.new()
@@ -2607,7 +2625,7 @@ func build_interior() -> void:
 	_display.pixel_size = 0.00055
 	_display.modulate = Color(String((cab.get("dials", ["#f5b52e", "#e6e6e6", "#ff4a2a"]) as Array)[0])).lightened(0.25)
 	_display.outline_size = 0
-	_display.position = Vector3(ex, yd + 0.09, dzd + 0.652)
+	_display.position = Vector3(ex, yd + 0.045, dzd + 0.652)
 	_display.rotation.x = -0.35
 	_body.add_child(_display)
 	_screen = Label3D.new()
@@ -2685,8 +2703,8 @@ func build_interior() -> void:
 	for sd in [-1.0, 1.0]:
 		var hand := MeshInstance3D.new()
 		var cap := CapsuleMesh.new()
-		cap.radius = 0.04
-		cap.height = 0.14
+		cap.radius = 0.028
+		cap.height = 0.11
 		cap.radial_segments = 10
 		cap.rings = 3
 		hand.mesh = cap
@@ -2695,7 +2713,7 @@ func build_interior() -> void:
 		hand.rotation = Vector3(PI / 2.0, 0, sd * 0.25)
 		_steer_node.add_child(hand)
 		var knuckles := MeshInstance3D.new()
-		knuckles.mesh = box_mesh(Vector3(0.05, 0.07, 0.1))
+		knuckles.mesh = box_mesh(Vector3(0.036, 0.05, 0.08))
 		knuckles.material_override = glove
 		knuckles.position = Vector3(sd * 0.15, 0.03, -0.04)
 		_steer_node.add_child(knuckles)
@@ -2704,8 +2722,8 @@ func build_interior() -> void:
 		for k in 2:
 			var seg := MeshInstance3D.new()
 			var cyl := CylinderMesh.new()
-			cyl.top_radius = 0.038 if k == 0 else 0.048
-			cyl.bottom_radius = 0.042 if k == 0 else 0.052
+			cyl.top_radius = 0.024 if k == 0 else 0.03
+			cyl.bottom_radius = 0.027 if k == 0 else 0.033
 			cyl.height = 1.0
 			cyl.radial_segments = 10
 			seg.mesh = cyl

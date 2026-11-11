@@ -13,7 +13,7 @@ ROOT = os.path.join(HERE, "..")
 MANIFEST = {
     "kestrel": "car_kestrel", "bruiser": "car_bruiser", "copperhead": "car_copperhead",
     "halcyon": "car_halcyon", "static": "car_static",
-    "marshal": "car_marshal", "lastexit": "car_lastexit",
+    "marshal": "car_marshal", "lastexit": "car_lastexit", "vanta": "car_vanta",
     "suv": "car_traffic_suv", "van": "car_traffic_van", "truck": "car_traffic_truck",
 }
 TRAFFIC = {"suv", "van", "truck"}

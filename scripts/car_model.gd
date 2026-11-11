@@ -25,14 +25,17 @@ const PROFILES := {
 	# above it; sharp = crisp crease; grille = "frame" (chrome-framed),
 	# "none" (mid-engine cars breathe through the bumper), "bar" (slim slot).
 	"hatch": {
+		"mesh": "res://assets/models/cars/hatch.mesh", "mesh_lq": "res://assets/models/cars/hatch_lq.mesh",
 		"body": [[0.0, 0.84, 0.88], [0.08, 0.92, 0.95], [0.35, 0.97, 0.99], [1.2, 0.98, 1.0], [2.4, 0.95, 1.0], [3.15, 0.89, 1.0], [3.62, 0.84, 0.98], [3.9, 0.76, 0.93], [4.0, 0.66, 0.88]],
 		"gh": [0.12, 3.12, 0.64, 2.22, 0.97, 1.43, 0.92, 0.74], "pillars": [[0.0, 0.24], [0.52, 0.57], [0.93, 1.0]],
 		"roof_drop": 0.08, "rim_frac": 0.62, "tyre": [0.215, 0.215], "head": [-0.17, -0.05, 0.32], "tail": [-0.27, -0.08, 0.55], "wheel": [0.33, 0.78, 3.28], "exhaust": 1, "corner": [0.18, 0.3], "flare": [0.02, 0.02], "crease_h": 0.66},
 	"sedan": {
+		"mesh": "res://assets/models/cars/sedan.mesh", "mesh_lq": "res://assets/models/cars/sedan_lq.mesh",
 		"body": [[0.0, 0.86, 0.9], [0.1, 0.93, 0.96], [0.5, 0.98, 1.0], [1.2, 0.99, 1.0], [3.0, 0.96, 1.0], [3.7, 0.9, 1.0], [4.3, 0.84, 0.97], [4.6, 0.75, 0.92], [4.7, 0.66, 0.88]],
 		"gh": [0.95, 3.56, 1.56, 2.76, 0.98, 1.41, 0.93, 0.78], "pillars": [[0.0, 0.14], [0.49, 0.53], [0.93, 1.0]],
 		"roof_drop": 0.03, "rim_frac": 0.66, "tyre": [0.235, 0.235], "head": [-0.16, -0.05, 0.3], "tail": [-0.22, -0.07, 0.48], "wheel": [0.335, 0.98, 3.8], "exhaust": 2, "corner": [0.2, 0.3], "flare": [0.025, 0.02], "crease_h": 0.68},
 	"suv": {
+		"mesh": "res://assets/models/cars/suv.mesh", "mesh_lq": "res://assets/models/cars/suv_lq.mesh",
 		"body": [[0.0, 1.0, 0.92], [0.12, 1.08, 0.98], [0.6, 1.12, 1.0], [3.6, 1.1, 1.0], [4.2, 1.04, 1.0], [4.62, 0.98, 0.96], [4.8, 0.88, 0.9]],
 		"gh": [0.22, 3.9, 0.4, 3.25, 1.11, 1.78, 0.95, 0.86], "pillars": [[0.0, 0.1], [0.36, 0.4], [0.66, 0.7], [0.94, 1.0]],
 		"roof_drop": 0.03, "rim_frac": 0.62, "tyre": [0.245, 0.245], "head": [-0.18, -0.05, 0.32], "tail": [-0.28, -0.08, 0.5], "wheel": [0.38, 0.92, 3.85], "exhaust": 1, "corner": [0.2, 0.28], "flare": [0.03, 0.03], "crease_h": 0.66, "tumble": 0.05},
@@ -40,24 +43,28 @@ const PROFILES := {
 	# 2.76 m wheelbase, short rear and front overhangs, long bonnet, high short
 	# boot, kinked C-pillar, flared wings, quad exhausts
 	"msedan": {
+		"mesh": "res://assets/models/cars/msedan.mesh", "mesh_lq": "res://assets/models/cars/msedan_lq.mesh",
 		"body": [[0.0, 0.8, 0.9], [0.08, 0.9, 0.96], [0.22, 0.96, 0.99], [0.85, 0.97, 1.0], [3.1, 0.94, 1.0], [3.6, 0.89, 1.0], [4.1, 0.85, 0.98], [4.44, 0.8, 0.94], [4.58, 0.7, 0.88]],
 		"gh": [0.88, 3.12, 1.44, 2.44, 0.96, 1.43, 0.93, 0.78], "pillars": [[0.0, 0.16], [0.47, 0.51], [0.92, 1.0]],
 		"kink": [0.16, 0.25, 0.34], "roof_drop": 0.03, "rim_frac": 0.7, "tyre": [0.265, 0.245], "head": [-0.17, -0.05, 0.3], "drl": "none", "wheel": [0.34, 0.98, 3.74], "exhaust": 4, "exhaust_pairs": true,
 		"corner": [0.2, 0.28], "flare": [0.04, 0.035], "crease_h": 0.7},
 	# muscle notchback: long flat bonnet, upright nose, short high glasshouse
 	"muscle": {
+		"mesh": "res://assets/models/cars/muscle.mesh", "mesh_lq": "res://assets/models/cars/muscle_lq.mesh",
 		"body": [[0.0, 0.86, 0.94], [0.12, 0.95, 0.98], [0.6, 0.98, 1.0], [1.4, 0.98, 1.0], [3.3, 0.96, 1.0], [4.4, 0.93, 0.99], [4.7, 0.87, 0.96], [4.8, 0.76, 0.93]],
 		"gh": [1.18, 3.32, 1.62, 2.78, 0.98, 1.33, 0.92, 0.75], "pillars": [[0.0, 0.22], [0.9, 1.0]],
 		"roof_drop": 0.02, "rim_frac": 0.68, "tyre": [0.275, 0.255], "head": [-0.2, -0.06, 0.5], "projectors": 2, "drl": "none", "tail": [-0.22, -0.05, 0.3], "wheel": [0.355, 0.95, 3.85], "exhaust": 2, "spoiler": "lip",
 		"corner": [0.14, 0.16], "flare": [0.04, 0.03], "crease_h": 0.6, "tumble": 0.04},
 	# muscle fastback: the roof runs in one long slope down to a short ducktail
 	"fastback": {
+		"mesh": "res://assets/models/cars/fastback.mesh", "mesh_lq": "res://assets/models/cars/fastback_lq.mesh",
 		"body": [[0.0, 0.84, 0.94], [0.12, 0.93, 0.98], [0.5, 0.96, 1.0], [1.6, 0.97, 1.0], [3.3, 0.95, 1.0], [4.3, 0.9, 0.99], [4.65, 0.82, 0.95], [4.75, 0.72, 0.92]],
 		"gh": [0.42, 3.3, 1.78, 2.8, 0.96, 1.31, 0.92, 0.74], "pillars": [[0.0, 0.42], [0.9, 1.0]],
 		"rim_frac": 0.69, "tyre": [0.285, 0.255], "head": [-0.16, -0.05, 0.42], "projectors": 2, "drl": "L", "tail": [-0.2, -0.06, 0.38], "wheel": [0.355, 0.95, 3.76], "exhaust": 2, "spoiler": "ducktail",
 		"corner": [0.16, 0.2], "flare": [0.045, 0.035], "fender": [0.02, 0.0], "crease_h": 0.62, "tumble": 0.05},
 	# mid-engine supercar: cab forward, short nose, long engine deck, wing peaks
 	"super": {
+		"mesh": "res://assets/models/cars/super.mesh", "mesh_lq": "res://assets/models/cars/super_lq.mesh",
 		"body": [[0.0, 0.8, 0.9], [0.12, 0.9, 0.96], [0.5, 0.93, 1.0], [1.45, 0.88, 1.0], [2.4, 0.84, 1.0], [3.5, 0.74, 1.0], [3.95, 0.66, 0.98], [4.35, 0.56, 0.93], [4.5, 0.48, 0.88]],
 		"gh": [1.45, 3.5, 2.05, 2.86, 0.84, 1.2, 0.86, 0.66], "pillars": [[0.0, 0.26], [0.9, 1.0]],
 		"roof_drop": 0.04, "rim_frac": 0.72, "tyre": [0.305, 0.255], "head": [-0.1, -0.035, 0.38], "tail": [-0.14, -0.05, 0.45], "wheel": [0.35, 0.86, 3.52], "exhaust": 2, "spoiler": "lip", "diffuser": true, "grille": "none",
@@ -65,12 +72,14 @@ const PROFILES := {
 	# rear-engine sports coupe: rounded nose with tall front wings, roof sloping
 	# smoothly to the tail, wide rear hips
 	"rcoupe": {
+		"mesh": "res://assets/models/cars/rcoupe.mesh", "mesh_lq": "res://assets/models/cars/rcoupe_lq.mesh",
 		"body": [[0.0, 0.8, 0.9], [0.12, 0.88, 0.96], [0.6, 0.9, 1.0], [1.2, 0.9, 1.0], [2.6, 0.88, 1.0], [3.3, 0.82, 1.0], [3.9, 0.72, 0.97], [4.35, 0.62, 0.92], [4.5, 0.55, 0.88]],
 		"gh": [0.45, 3.32, 1.72, 2.64, 0.9, 1.29, 0.9, 0.7], "pillars": [[0.0, 0.3], [0.9, 1.0]],
 		"roof_drop": 0.08, "rim_frac": 0.71, "tyre": [0.305, 0.245], "round_lamps": true, "tail": [-0.11, -0.06, 0.0], "wheel": [0.345, 1.0, 3.45], "exhaust": 2, "spoiler": "ducktail", "diffuser": true, "grille": "bar",
 		"corner": [0.32, 0.4], "flare": [0.085, 0.045], "fender": [0.04, 0.075], "crease_h": 0.6, "tumble": 0.08, "sharp": false},
 	# V12 hypercar: very long and low, canopy far forward, long tail and a big wing
 	"hyper": {
+		"mesh": "res://assets/models/cars/hyper.mesh", "mesh_lq": "res://assets/models/cars/hyper_lq.mesh",
 		"body": [[0.0, 0.78, 0.92], [0.12, 0.88, 0.97], [0.6, 0.9, 1.0], [1.65, 0.86, 1.0], [2.6, 0.8, 1.0], [3.7, 0.7, 1.0], [4.2, 0.6, 0.97], [4.6, 0.5, 0.92], [4.75, 0.42, 0.88]],
 		"gh": [1.65, 3.72, 2.3, 3.1, 0.78, 1.13, 0.84, 0.62], "pillars": [[0.0, 0.3], [0.9, 1.0]],
 		"roof_drop": 0.05, "rim_frac": 0.73, "tyre": [0.335, 0.275], "head": [-0.085, -0.03, 0.42], "projectors": 0, "tail": [-0.1, -0.045, 0.52], "wheel": [0.36, 0.95, 3.72], "exhaust": 4, "spoiler": "wing", "diffuser": true, "grille": "none",
@@ -606,7 +615,7 @@ static func _car_kit(id: String, style := {}, lq := false) -> Dictionary:
 	var sh: Dictionary = Data.SHAPES[id]
 	var pr: Dictionary = PROFILES[id]
 	if pr.has("mesh"):
-		return _mesh_kit(id, pr, sh, style)
+		return _mesh_kit(id, pr, sh, style, lq)
 	var w: float = sh.w
 	var l: float = sh.l
 	var S := {}
@@ -827,8 +836,8 @@ static func _car_kit(id: String, style := {}, lq := false) -> Dictionary:
 ## chrome, and the head and tail lamps. Tail lamps go to their own mesh so
 ## they brighten under braking; the outer ends of the lamps double as the
 ## indicators. The cabin, wheels and interior come from the profile as usual.
-static func _mesh_kit(id: String, pr: Dictionary, sh: Dictionary, style: Dictionary) -> Dictionary:
-	var f := FileAccess.open(pr.mesh, FileAccess.READ)
+static func _mesh_kit(id: String, pr: Dictionary, sh: Dictionary, style: Dictionary, lq := false) -> Dictionary:
+	var f := FileAccess.open(pr.mesh_lq if lq and pr.has("mesh_lq") else pr.mesh, FileAccess.READ)
 	var body := ArrayMesh.new()
 	var names: Array = []
 	var kit := {}
@@ -892,22 +901,25 @@ static func _mesh_kit(id: String, pr: Dictionary, sh: Dictionary, style: Diction
 		body.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
 		names.append(sname)
 	# number plate on the tail
+	var bbm := BodyBuilder.new(id, pr, sh, style)
+	var plate_y: float = pr.get("plate_y", bbm.floor_y + 0.29)
 	var plate := _new_st()
-	_box(plate, Vector3(0, 0.6, 0.006), Vector3(0.52, 0.12, 0.016))
+	_box(plate, Vector3(0, plate_y, 0.006), Vector3(0.52, 0.12, 0.016))
 	body.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, plate.commit_to_arrays())
 	names.append("plate")
-	var wx: Array = pr.wheel_x
 	var tyre: Array = pr.tyre
 	var wheels: Array = []
 	for k in 2:
 		var ax: float = pr.wheel[1 + k]
-		wheels.append([-float(wx[k]), -ax, tyre[k]])
-		wheels.append([float(wx[k]), -ax, tyre[k]])
+		# flush with the (flared) body side unless the model says where
+		var x: float = float(pr.wheel_x[k]) if pr.has("wheel_x") else bbm.hw(ax) - float(tyre[k]) / 2.0 - 0.012
+		wheels.append([-x, -ax, tyre[k]])
+		wheels.append([x, -ax, tyre[k]])
 	kit.merge({"sig_l": sig_l.commit(), "sig_r": sig_r.commit(), "wheels": wheels, "rim_frac": pr.get("rim_frac", 0.66),
-		"r": pr.wheel[0], "ww": tyre[0], "plate_y": 0.6, "plate_z": 0.02, "body": body, "surfaces": names})
+		"r": pr.wheel[0], "ww": tyre[0], "plate_y": plate_y, "plate_z": 0.02, "body": body, "surfaces": names, "lod_near": 22.0})
 	if not kit.has("tails"):
 		kit["tails"] = ArrayMesh.new()
-	kit["cabin"] = BodyBuilder.new(id, pr, sh, style).cabin_mesh()
+	kit["cabin"] = bbm.cabin_mesh()
 	return kit
 
 
@@ -1307,8 +1319,9 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a"), style 
 		var names_lq: Array = kit_lq.surfaces
 		for i in names_lq.size():
 			far.set_surface_override_material(i, M[names_lq[i]])
-		_lod(body, 0.0, LOD_NEAR)
-		_lod(far, LOD_NEAR, DRAW_DISTANCE)
+		var near: float = kit.get("lod_near", LOD_NEAR)  # detailed imported/forged bodies hand over sooner
+		_lod(body, 0.0, near)
+		_lod(far, near, DRAW_DISTANCE)
 		_body.add_child(far)
 	else:
 		var mats: Array[Material] = [mat(color, 0.0, 0.55, 0.1), paint(cab_color), _glass_solid(), mat(Color("#18191b"), 0.0, 0.7),

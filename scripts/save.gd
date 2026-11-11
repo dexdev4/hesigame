@@ -14,7 +14,7 @@ func _ready() -> void:
 func defaults() -> Dictionary:
 	return {
 		"cash": 0, "best": 0, "runs": 0,
-		"owned": ["comet"], "selected": "comet", "unlocked": [],
+		"owned": ["pulse"], "selected": "pulse", "unlocked": [],
 		"perm": {"accel": 0, "brake": 0, "handling": 0, "top": 0, "lives": 0},  # old shared upgrades (moved to perm_cars)
 		"perm_cars": {},  # car id -> {upgrade id: level}: each car is upgraded on its own
 		"sound": true, "assist": false, "free_steer": true, "looks": {},
@@ -97,9 +97,9 @@ func load_data() -> void:
 	if not parsed.has("free_steer"):
 		data.assist = false
 		data["free_steer"] = true
-	# the starter car is always in the garage (older saves started with the Kestrel)
-	if data.owned is Array and not data.owned.has("comet"):
-		data.owned.insert(0, "comet")
+	# the starter car is always in the garage (older saves started with another car, which they keep)
+	if data.owned is Array and not data.owned.has("pulse"):
+		data.owned.insert(0, "pulse")
 	if parsed.has("perm_cars") and parsed.perm_cars is Dictionary:
 		for cid in parsed.perm_cars:
 			var lv: Dictionary = {}

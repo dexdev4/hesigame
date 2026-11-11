@@ -91,6 +91,20 @@ const PROFILES := {
 		"body": [[0.0, 0.88, 0.84], [0.25, 0.93, 0.95], [0.6, 0.97, 1.0], [2.6, 0.94, 1.0], [3.0, 0.86, 0.98], [3.5, 0.8, 0.95], [4.0, 0.7, 0.9], [4.3, 0.6, 0.8]],
 		"gh": [0.62, 2.83, 1.45, 2.1, 0.93, 1.2, 0.74, 0.54], "pillars": [[0.0, 0.3], [0.9, 1.0]],
 		"rim_frac": 0.68, "tyre": [0.245, 0.245], "wheel": [0.345, 0.82, 3.44], "wheel_x": [0.778, 0.752], "badge_y": 0.7, "eye_back": 1.3, "dash_drop": 0.17, "dash_hw": 0.52, "ws_base_hw": 0.4, "mirror_d": 2.3},
+	# hot hatch, from an imported model (assets/models/hatchback.mesh)
+	"hot_hatch": {
+		"mesh": "res://assets/models/hatchback.mesh",
+		"body": [[0.0, 1.0, 0.86], [0.25, 1.03, 0.95], [0.6, 1.04, 1.0], [2.4, 0.97, 1.0], [2.75, 0.95, 1.0], [3.0, 0.9, 0.99], [3.5, 0.83, 0.97], [4.0, 0.71, 0.9], [4.25, 0.6, 0.75]],
+		"gh": [0.1, 2.72, 0.5, 2.15, 1.0, 1.36, 0.8, 0.66], "pillars": [[0.0, 0.3], [0.9, 1.0]],
+		"rim_frac": 0.7, "tyre": [0.246, 0.246], "wheel": [0.35, 0.75, 3.39], "wheel_x": [0.815, 0.8], "badge_y": 0.74, "plate_y": 0.62,
+		"dash_drop": 0.12, "dash_hw": 0.6, "ws_base_hw": 0.5, "mirror_d": 2.2},
+	# sports saloon, from an imported model (assets/models/sport_sedan.mesh)
+	"sport_sedan": {
+		"mesh": "res://assets/models/sport_sedan.mesh",
+		"body": [[0.0, 0.96, 0.84], [0.25, 1.0, 0.93], [0.6, 1.02, 0.98], [1.2, 1.0, 1.0], [3.0, 0.97, 1.0], [3.3, 0.95, 1.0], [3.6, 0.89, 0.99], [4.0, 0.82, 0.97], [4.5, 0.72, 0.92], [4.75, 0.6, 0.8]],
+		"gh": [0.72, 3.2, 1.3, 2.55, 0.99, 1.34, 0.8, 0.66], "pillars": [[0.0, 0.25], [0.9, 1.0]],
+		"rim_frac": 0.7, "tyre": [0.246, 0.246], "wheel": [0.35, 1.02, 3.87], "wheel_x": [0.815, 0.8], "badge_y": 0.74, "plate_y": 0.62,
+		"dash_drop": 0.13, "dash_hw": 0.55, "ws_base_hw": 0.42, "mirror_d": 2.45},
 	# compact hatchback coupe, also from an imported model (assets/models/compact_coupe.mesh)
 	"compact": {
 		"mesh": "res://assets/models/compact_coupe.mesh",

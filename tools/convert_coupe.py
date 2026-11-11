@@ -35,7 +35,11 @@ def classify(uv,pos):
     k[dark&(pos[:,1]>GLASS_Y)]='glass'
     k[dark&(pos[:,1]<=GLASS_Y)]='dark'
     k[(a[:,0]>0.6)&(a[:,1]>0.6)&(a[:,2]>0.6)]='headlens'
-    k[(a[:,0]>0.35)&(a[:,1]<0.2)&(a[:,2]<0.2)]='tail'
+    if not RED_PAINT:  # red lens areas count as tail lamp, unless the car itself is red
+        k[(a[:,0]>0.35)&(a[:,1]<0.2)&(a[:,2]<0.2)]='tail'
+    # number plates painted into the texture: white panels across the middle
+    # of the nose and tail (lamps sit further out)
+    k[(k=='headlens')&(np.abs(pos[:,0])<0.32)&(e.max(1)<0.2)]='plate'
     k[(e[:,0]>0.5)&(e[:,1]>0.5)]='head'
     k[(e[:,0]>0.3)&(e[:,1]<0.2)]='tail'
     return k
@@ -46,6 +50,12 @@ p=j['meshes'][0]['primitives'][0]
 REAR=-float(j['accessors'][p['attributes']['POSITION']]['min'][2])  # rear bumper to z = 0
 P=acc(p['attributes']['POSITION']); N=acc(p['attributes']['NORMAL']); UV=acc(p['attributes']['TEXCOORD_0']); T=acc(p['indices']).reshape(-1,3)
 tp=P[T]; tn=N[T]; tu=UV[T]
+# the body colour: the commonest albedo over the body
+_cols=(samp(A,tu.mean(1))*255).astype(int)//16
+_vals,_cnt=np.unique(_cols,axis=0,return_counts=True)
+_paint=_vals[np.argmax(_cnt)]*16/255.0
+RED_PAINT=bool(_paint[0]>0.3 and _paint[1]<0.2 and _paint[2]<0.2)
+print('paint colour',(_paint*255).astype(int),'red paint' if RED_PAINT else '')
 MAXD=3
 total=0
 for depth in range(MAXD+1):
@@ -80,8 +90,16 @@ for kind in set(c):
     sel=c==kind
     add(kind,tp[sel].reshape(-1,3),tn[sel].reshape(-1,3))
 # the other primitives: wheel wells, mirrors (paint), chrome trim
-for pi,kind in [(1,'under'),(2,'paint'),(3,'chrome')]:
-    q=j['meshes'][0]['primitives'][pi]
+# the other parts, by material: wheel wells, solid paint (mirrors, spoiler),
+# chrome, black trim, matte aero parts; calipers are left out (the game's
+# wheels bring their own)
+BY_MAT={'WheelWell':'under','PaintSolid':'paint','Chrome':'chrome','TrimBlack':'gloss','AeroBlack':'dark'}
+for q in j['meshes'][0]['primitives'][1:]:
+    mname=j['materials'][q['material']].get('name','')
+    kind=BY_MAT.get(mname)
+    if kind is None:
+        print('skipping part',mname)
+        continue
     P2=acc(q['attributes']['POSITION']); N2=acc(q['attributes']['NORMAL']); T2=acc(q['indices']).reshape(-1)
     add(kind,P2[T2],N2[T2])
 res={}
@@ -107,7 +125,7 @@ sel=(np.abs(allp[:,0])<0.15)&(np.abs(allp[:,1]-0.55)<0.05)
 print('rear face z at plate height',allp[sel,2].max())
 # binary: magic, surface count, then per surface: name, vertex count, positions,
 # normals, index count, indices (vertices shared where position and normal match)
-order=['paint','glass','dark','under','chrome','headlens','head','tail']
+order=['paint','glass','dark','under','chrome','gloss','plate','headlens','head','tail']
 with open(out,'wb') as f:
     f.write(b'CPE2'); names=[k for k in order if k in res]
     f.write(struct.pack('<I',len(names)))

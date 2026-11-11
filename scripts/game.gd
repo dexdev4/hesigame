@@ -227,6 +227,9 @@ func _ready() -> void:
 			Data.station_scale = float(a.substr(11)) / Data.STATION_EVERY_KM
 		if a.begins_with("--first-station="):  # the first fuel stop this many metres in (test aid)
 			_test_first_station = float(a.substr(16))
+		if a.begins_with("--route="):  # drive this highway (test aid; opens it if needed)
+			Save.data.route_sel = int(a.substr(8))
+			Save.data.routes = maxi(int(Save.data.get("routes", 1)), Save.data.route_sel + 1)
 		if a.begins_with("--dusk="):  # hold the light at this much dusk, 0..1 (test aid)
 			_test_dusk = float(a.substr(7))
 		if a.begins_with("--fuel="):  # start runs with this fraction of a tank (test aid)
@@ -281,6 +284,7 @@ func _ready() -> void:
 	var ms: Variant = load("res://assets/audio/cold_iron_street.mp3")
 	if ms is AudioStreamMP3:
 		(ms as AudioStreamMP3).loop = true
+		(ms as AudioStreamMP3).loop_offset = MUSIC_START  # loops back to the same point
 	_music.stream = ms
 	_music.volume_db = -60.0
 	add_child(_music)
@@ -1191,6 +1195,23 @@ func _boss_award(base: float, combo: int, label: String, flair: float) -> void:
 		boss.model.show_tag_pop("%s +%s" % [label, Fmt.num(pts)])
 
 
+## The highway's final boss is beaten: open the road on to the next city.
+func _route_cleared() -> void:
+	var r := Data.route
+	if r == Data.ROUTES.size() - 1:
+		if not Save.data.get("route_done", false):
+			Save.data["route_done"] = true
+			_notify("MAP CONQUERED · EVERY HIGHWAY CLEARED", "hot")
+	elif int(Save.data.get("routes", 1)) < r + 2:
+		Save.data.routes = r + 2
+		var nxt: String = Data.CITIES[r + 2].name
+		_notify("HIGHWAY TO %s OPEN" % nxt.to_upper(), "hot")
+		hud.banner("NEW HIGHWAY OPEN", "%s → %s ON THE WORLD MAP" % [String(Data.CITIES[r + 1].name).to_upper(), nxt.to_upper()])
+	Save.persist()
+	if autotest:
+		print("[autotest] route %d cleared, %d highways open" % [r, int(Save.data.get("routes", 1))])
+
+
 func _end_battle() -> void:
 	var bi := run.b_info
 	_remove_boss()
@@ -1201,6 +1222,8 @@ func _end_battle() -> void:
 		_bdbg = {}
 	if run.b_score > run.b_rival:
 		run.bosses += 1
+		if run.stage == Data.BOSSES.size():
+			_route_cleared()
 		run.cash_bonus += 200 * run.stage
 		var unlocked_new := false
 		if not Save.is_unlocked(bi.car):
@@ -1749,8 +1772,19 @@ func _collisions() -> void:
 
 # ---------------------------------------------------------------- run flow
 
+## Drive this highway: its landscape, sky and difficulty.
+func _set_route(i: int) -> void:
+	Data.route = clampi(i, 0, Data.ROUTES.size() - 1)
+	var land: Dictionary = Data.route_info(Data.route).land
+	_day = DAY.duplicate()
+	_day.top = land.sky
+	_day.hor = land.hor
+	scenery.set_biome(land)
+
+
 func _start_run() -> void:
 	_leave_garage()
+	_set_route(int(Save.data.get("route_sel", 0)))
 	_boss_music(false, 0.5)
 	_dusk = 0.0
 	_dusk_target = 0.0
@@ -1771,7 +1805,8 @@ func _start_run() -> void:
 	state = S.PLAY
 	hud.show_screen("")
 	hud.set_play_visible(true)
-	hud.banner("STAGE 1", String(Data.boss_info(1).full).to_upper() + " WAITS AHEAD")
+	var ri := Data.route_info(Data.route)
+	hud.banner("%s · %s → %s" % [ri.name, String(ri.from).to_upper(), String(ri.to).to_upper()], "STAGE 1 · " + String(Data.boss_info(1).full).to_upper() + " WAITS AHEAD")
 	hud.show_hint()
 	_calibrate_tilt()
 
@@ -1782,6 +1817,9 @@ func _end_run(reason: String) -> void:
 	_boss_mood_end(2.5)
 	var earned := maxi(0, _gross_earnings() - run.fuel_from_run)
 	Save.data.cash += earned
+	var rb: Dictionary = Save.data.get("route_best", {})
+	rb[str(Data.route)] = maxi(int(rb.get(str(Data.route), 0)), run.score)
+	Save.data["route_best"] = rb
 	var best: bool = run.score > Save.data.best
 	if best:
 		Save.data.best = run.score
@@ -1875,6 +1913,8 @@ var _yields := 0
 const COP_CHANCE := 0.3   # chance that a boss trigger is a police pursuit instead
 const COP_TIME := 40.0    # seconds to survive to escape
 const BOSS_WARN := 10.0   # seconds of warning before the boss or police arrives
+const MUSIC_START := 50.0  # seconds into the boss theme where it fades in
+const MUSIC_DB := 2.0       # boss theme volume
 const BOSS_EDGE := 1.25   # bosses score this much more than their driving alone earns (harder to beat)
 
 
@@ -2013,8 +2053,8 @@ func _boss_music(on: bool, fade := 6.0) -> void:
 			return
 		if not _music.playing:
 			_music.volume_db = -40.0
-			_music.play()
-		_music_tween.tween_property(_music, "volume_db", -5.0, 1.5)
+			_music.play(MUSIC_START)
+		_music_tween.tween_property(_music, "volume_db", MUSIC_DB, 2.5)
 	elif _music.playing:
 		_music_tween.tween_property(_music, "volume_db", -60.0, fade).set_trans(Tween.TRANS_SINE)
 		_music_tween.tween_callback(_music.stop)
@@ -2022,27 +2062,30 @@ func _boss_music(on: bool, fade := 6.0) -> void:
 
 ## Afternoon (0) to dusk (1): the sun sinks and reddens, the sky darkens to a
 ## glowing horizon, the haze cools, and every car's lights come on.
+var _day := {}  # DAY with the current highway's sky (set_route)
 const DAY := {"sun": Color("#fff0d8"), "sun_e": 1.4, "sun_x": -32.0, "top": Color("#2b5c96"), "hor": Color("#d9d2c2"),
 	"ghor": Color("#c4b69c"), "sky_e": 1.05, "amb": 0.75, "fog": Color("#cdc6b6"), "exp": 1.05}
-const DUSK := {"sun": Color("#ff7a3a"), "sun_e": 0.3, "sun_x": -6.0, "top": Color("#121836"), "hor": Color("#d8673e"),
-	"ghor": Color("#3e2c2a"), "sky_e": 0.42, "amb": 0.2, "fog": Color("#5e4552"), "exp": 0.9}
+const DUSK := {"sun": Color("#ff9a58"), "sun_e": 0.85, "sun_x": -15.0, "top": Color("#2c3768"), "hor": Color("#ea8a5c"),
+	"ghor": Color("#6a4c40"), "sky_e": 0.75, "amb": 0.55, "fog": Color("#94727a"), "exp": 1.05}
 
 
 func _apply_dusk(k: float) -> void:
+	if _day.is_empty():
+		_day = DAY.duplicate()
 	var e := smoothstep(0.0, 1.0, k)
-	_sun.light_color = (DAY.sun as Color).lerp(DUSK.sun, e)
-	_sun.light_energy = lerpf(DAY.sun_e, DUSK.sun_e, e)
-	_sun.rotation_degrees.x = lerpf(DAY.sun_x, DUSK.sun_x, e)
+	_sun.light_color = (_day.sun as Color).lerp(DUSK.sun, e)
+	_sun.light_energy = lerpf(_day.sun_e, DUSK.sun_e, e)
+	_sun.rotation_degrees.x = lerpf(_day.sun_x, DUSK.sun_x, e)
 	var sm := _sky.sky_material as ProceduralSkyMaterial
 	if sm:
-		sm.sky_top_color = (DAY.top as Color).lerp(DUSK.top, e)
-		sm.sky_horizon_color = (DAY.hor as Color).lerp(DUSK.hor, e)
-		sm.ground_horizon_color = (DAY.ghor as Color).lerp(DUSK.ghor, e)
-		sm.sky_energy_multiplier = lerpf(DAY.sky_e, DUSK.sky_e, e)
-	_env.ambient_light_energy = lerpf(DAY.amb, DUSK.amb, e)
-	_env.fog_light_color = (DAY.fog as Color).lerp(DUSK.fog, e)
-	_env.tonemap_exposure = lerpf(DAY.exp, DUSK.exp, e)
-	_env.adjustment_brightness = lerpf(1.0, 0.78, e)
+		sm.sky_top_color = (_day.top as Color).lerp(DUSK.top, e)
+		sm.sky_horizon_color = (_day.hor as Color).lerp(DUSK.hor, e)
+		sm.ground_horizon_color = (_day.ghor as Color).lerp(DUSK.ghor, e)
+		sm.sky_energy_multiplier = lerpf(_day.sky_e, DUSK.sky_e, e)
+	_env.ambient_light_energy = lerpf(_day.amb, DUSK.amb, e)
+	_env.fog_light_color = (_day.fog as Color).lerp(DUSK.fog, e)
+	_env.tonemap_exposure = lerpf(_day.exp, DUSK.exp, e)
+	_env.adjustment_brightness = lerpf(1.0, 0.95, e)
 	_env.adjustment_saturation = lerpf(1.12, 1.0, e)
 	_env.glow_intensity = lerpf(0.45, 0.9, e)  # lamps bloom more in the gloom
 	CarModel.set_night(e, _sun.global_transform.basis.z.normalized())
@@ -2072,11 +2115,12 @@ func _add_head_spots() -> void:
 	for sd in [-1.0, 1.0]:
 		var sp := SpotLight3D.new()
 		sp.position = Vector3(sd * sh.w * 0.32, 0.7, -sh.l + 0.2)
-		sp.rotation_degrees = Vector3(-4.0, 0.0, 0.0)  # aimed along the road (-z), dipped a little
+		sp.rotation_degrees = Vector3(-2.2, sd * -1.5, 0.0)  # along the road (-z), dipped a little, toed in
 		sp.light_color = Color("#fff1d6")
-		sp.spot_range = 55.0
-		sp.spot_angle = 24.0
-		sp.spot_attenuation = 0.6
+		sp.spot_range = 95.0
+		sp.spot_angle = 17.0
+		sp.spot_attenuation = 0.45
+		sp.spot_angle_attenuation = 1.6  # soft edge to the cone
 		sp.shadow_enabled = false
 		sp.light_cull_mask = sp.light_cull_mask & ~GarageScene.LAYER
 		sp.visible = _dusk > 0.02
@@ -2564,7 +2608,7 @@ func _update_hud() -> void:
 			sub = "REMATCH INCOMING"
 		elif not run.cop_due:
 			sub = "BOSS OR POLICE?"
-		d.merge({"title": "STAGE %d" % run.stage, "sub": sub, "l1": "DIST", "l2": "PTS",
+		d.merge({"title": "%s · STAGE %d" % [Data.ROUTES[Data.route].name, run.stage], "sub": sub, "l1": "DIST", "l2": "PTS",
 			"f1": run.stage_dist / r.d, "f2": run.stage_score / r.p,
 			"v1": "%.1f/%.1f km" % [minf(run.stage_dist, r.d) / 1000.0, r.d / 1000.0],
 			"v2": "%s/%s" % [Fmt.num(mini(run.stage_score, int(r.p))), Fmt.num(r.p)],
@@ -2866,6 +2910,23 @@ func _on_act(action: String, arg: String) -> void:
 			_enter_garage()
 		"help":
 			hud.show_screen("help")
+		"map":
+			state = S.MENU
+			hud.render_map()
+			hud.show_screen("map")
+			hud.call_deferred("_apply_safe_area")
+		"route":
+			var ri := int(arg)
+			if ri < int(Save.data.get("routes", 1)):
+				Save.data.route_sel = ri
+				Save.persist()
+				sound.play("ding", 1.4, -8.0)
+				hud.render_map()
+			else:
+				hud.render_map()
+				hud.map_note("Locked. Beat %s, the final boss on the highway before it, to open this one." % Data.BOSSES[3].name)
+		"drive":
+			_start_run()
 		"preview":
 			_enter_garage(arg)
 		"paint", "rim", "rim_color", "rim_reset":

@@ -152,6 +152,56 @@ const BOSS_RACE_LENGTH := 2000.0
 
 ## Multiplies stage and boss targets. Only changed by the --fast test flag.
 var target_scale := 1.0
+var route := 0  # the highway being driven (index into ROUTES); harder the further along
+
+
+# ---------------------------------------------------------------- world map
+
+## Fifteen cities joined end to end by fourteen highways. Each highway is its
+## own endless run; beating its final (fourth) boss opens the next one.
+## "pos" is the city's place on the map (0..1 across, 0..1 down).
+const CITIES := [
+	{"name": "Port Halden", "pos": Vector2(0.12, 0.88)}, {"name": "Ashford", "pos": Vector2(0.34, 0.92)},
+	{"name": "Millbrook", "pos": Vector2(0.58, 0.86)}, {"name": "Cedar Falls", "pos": Vector2(0.84, 0.82)},
+	{"name": "Red Mesa", "pos": Vector2(0.88, 0.66)}, {"name": "Dustwater", "pos": Vector2(0.66, 0.62)},
+	{"name": "Silver Lake", "pos": Vector2(0.42, 0.66)}, {"name": "Ironvale", "pos": Vector2(0.17, 0.6)},
+	{"name": "Northgate", "pos": Vector2(0.12, 0.42)}, {"name": "Granite Pass", "pos": Vector2(0.36, 0.38)},
+	{"name": "Copper Ridge", "pos": Vector2(0.6, 0.42)}, {"name": "Sunset Bay", "pos": Vector2(0.86, 0.36)},
+	{"name": "Lakeshore", "pos": Vector2(0.82, 0.16)}, {"name": "Neon Heights", "pos": Vector2(0.54, 0.12)},
+	{"name": "Summit City", "pos": Vector2(0.24, 0.14)},
+]
+
+## Landscape colours for each kind of country a highway runs through.
+const BIOMES := {
+	"meadow": {"title": "Green farmland", "grass_a": Color(0.32, 0.45, 0.17), "grass_b": Color(0.28, 0.4, 0.15), "field": Color(0.56, 0.5, 0.26), "dirt": Color(0.42, 0.37, 0.28), "sky": Color("#2b5c96"), "hor": Color("#d9d2c2")},
+	"autumn": {"title": "Autumn woods", "grass_a": Color(0.42, 0.4, 0.17), "grass_b": Color(0.38, 0.33, 0.14), "field": Color(0.62, 0.44, 0.2), "dirt": Color(0.45, 0.33, 0.22), "sky": Color("#3a6496"), "hor": Color("#e0d0b4")},
+	"desert": {"title": "Desert flats", "grass_a": Color(0.66, 0.52, 0.32), "grass_b": Color(0.6, 0.46, 0.28), "field": Color(0.74, 0.6, 0.38), "dirt": Color(0.62, 0.42, 0.26), "sky": Color("#2f6fb0"), "hor": Color("#ecd9b8")},
+	"pine": {"title": "Northern pines", "grass_a": Color(0.22, 0.36, 0.2), "grass_b": Color(0.19, 0.31, 0.18), "field": Color(0.38, 0.42, 0.26), "dirt": Color(0.34, 0.32, 0.27), "sky": Color("#3d6488"), "hor": Color("#cfd6d8")},
+	"coast": {"title": "Coast road", "grass_a": Color(0.4, 0.5, 0.24), "grass_b": Color(0.36, 0.46, 0.22), "field": Color(0.78, 0.7, 0.5), "dirt": Color(0.64, 0.58, 0.44), "sky": Color("#2a6ab4"), "hor": Color("#e4e4dc")},
+	"tundra": {"title": "Frosted plains", "grass_a": Color(0.78, 0.8, 0.82), "grass_b": Color(0.72, 0.75, 0.78), "field": Color(0.86, 0.87, 0.88), "dirt": Color(0.55, 0.55, 0.56), "sky": Color("#4a6c90"), "hor": Color("#dfe4ea")},
+}
+
+const ROUTES := [
+	{"name": "I-10", "biome": "meadow"}, {"name": "I-14", "biome": "meadow"}, {"name": "I-21", "biome": "autumn"},
+	{"name": "I-27", "biome": "desert"}, {"name": "I-30", "biome": "desert"}, {"name": "I-35", "biome": "coast"},
+	{"name": "I-40", "biome": "autumn"}, {"name": "I-44", "biome": "pine"}, {"name": "I-55", "biome": "pine"},
+	{"name": "I-60", "biome": "tundra"}, {"name": "I-64", "biome": "desert"}, {"name": "I-70", "biome": "coast"},
+	{"name": "I-77", "biome": "tundra"}, {"name": "I-80", "biome": "meadow"},
+]
+
+
+func route_info(i: int) -> Dictionary:
+	var r: Dictionary = ROUTES[clampi(i, 0, ROUTES.size() - 1)].duplicate()
+	r["from"] = CITIES[i].name
+	r["to"] = CITIES[i + 1].name
+	r["title"] = "%s · %s → %s" % [r.name, r.from, r.to]
+	r["land"] = BIOMES[r.biome]
+	return r
+
+
+## Each highway further along asks for more: score targets and boss skill rise.
+func route_scale() -> float:
+	return 1.0 + 0.14 * route
 
 
 func car_by_id(id: String) -> Dictionary:
@@ -164,12 +214,12 @@ func car_by_id(id: String) -> Dictionary:
 func stage_req(stage: int) -> Dictionary:
 	return {
 		"d": (2400.0 + 400.0 * stage) * target_scale,
-		"p": roundi(4000.0 * pow(1.55, stage - 1) / 100.0) * 100 * target_scale,
+		"p": roundi(4000.0 * pow(1.55, stage - 1) * route_scale() / 100.0) * 100 * target_scale,
 	}
 
 
 func boss_total(stage: int) -> int:
-	return int(roundi(5000.0 * pow(1.55, stage - 1) / 100.0) * 100 * target_scale)
+	return int(roundi(5000.0 * pow(1.55, stage - 1) * route_scale() / 100.0) * 100 * target_scale)
 
 
 ## How good a boss is at scoring, 0 (first boss) to about 1 (last boss).
@@ -177,7 +227,7 @@ func boss_total(stage: int) -> int:
 func boss_skill(stage: int) -> float:
 	var i := (stage - 1) % BOSSES.size()
 	var tier := (stage - 1) / BOSSES.size()
-	return minf(0.2 + 0.3 * i + 0.28 * tier, 1.7)
+	return minf(0.2 + 0.3 * i + 0.28 * tier + 0.05 * route, 1.9)
 
 
 const SKILL_NAMES := ["ROOKIE", "SKILLED", "EXPERT", "LEGEND", "UNTOUCHABLE"]

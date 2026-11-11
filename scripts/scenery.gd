@@ -496,6 +496,12 @@ func _build_trees() -> void:
 	holder.add_child(smi)
 
 
+## The landscape of the highway being driven (a Data.BIOMES entry).
+func set_biome(land: Dictionary) -> void:
+	for k in ["grass_a", "grass_b", "field", "dirt"]:
+		_grass_mat.set_shader_parameter(k, land[k])
+
+
 ## Dusk on the horizon: mountains and clouds take on the evening colours.
 func set_dusk(k: float) -> void:
 	var tint := Color(1, 1, 1).lerp(Color(0.62, 0.44, 0.46), k)

@@ -18,6 +18,7 @@ func defaults() -> Dictionary:
 		"perm": {"accel": 0, "brake": 0, "handling": 0, "top": 0, "lives": 0},  # old shared upgrades (moved to perm_cars)
 		"perm_cars": {},  # car id -> {upgrade id: level}: each car is upgraded on its own
 		"sound": true, "assist": false, "free_steer": true, "looks": {},
+		"routes": 1, "route_sel": 0, "route_best": {},  # world map: highways open, chosen, best score on each
 		"cam": _cam_defaults(),
 		"settings": SETTING_DEFAULTS.duplicate(true),
 	}
@@ -111,7 +112,7 @@ func load_data() -> void:
 		for cid in data.owned:
 			data.perm_cars[cid] = (data.perm as Dictionary).duplicate()
 	# JSON numbers load as floats; keep counters as ints.
-	for k in ["cash", "best", "runs"]:
+	for k in ["cash", "best", "runs", "routes", "route_sel"]:
 		data[k] = int(data[k])
 
 

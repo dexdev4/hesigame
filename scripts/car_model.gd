@@ -1415,8 +1415,8 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a"), style 
 	beam.mesh = _beam()
 	beam.material_override = _beam_mat
 	beam.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	beam.scale = Vector3(shape.w * 1.7, 1.0, 13.0)
-	beam.position = Vector3(0, 0.035, -shape.l - 6.2)
+	beam.scale = Vector3(shape.w * 4.2, 1.0, 30.0)
+	beam.position = Vector3(0, 0.035, -shape.l - 15.0)
 	beam.visible = night > 0.01
 	beam.add_to_group("car_beams")
 	add_child(beam)
@@ -1429,15 +1429,15 @@ static func _beam() -> PlaneMesh:
 		_beam_mesh.size = Vector2(1, 1)
 		# soft beam: fades out to both sides and towards the far end, brightest
 		# a few metres ahead of the bumper
-		var img := Image.create(64, 128, false, Image.FORMAT_RGBA8)
-		for y in 128:
-			var along := 1.0 - float(y) / 127.0  # 0 at the far end, 1 at the car
-			var fz := smoothstep(0.0, 0.55, along) * (1.0 - smoothstep(0.85, 1.0, along) * 0.6)
+		var img := Image.create(64, 256, false, Image.FORMAT_RGBA8)
+		for y in 256:
+			var along := float(y) / 255.0  # 0 at the car .. 1 at the far end (as the plane's v runs)
+			var fz := smoothstep(0.0, 0.08, along) * (1.0 - smoothstep(0.45, 1.0, along))
+			var half := lerpf(0.18, 1.0, pow(along, 0.7))  # a cone: narrow at the lamps, wide ahead
 			for x in 64:
 				var across := absf(float(x) / 63.0 - 0.5) * 2.0
-				var spread := lerpf(0.55, 1.0, 1.0 - along)  # the beam widens with distance
-				var fx := 1.0 - smoothstep(0.15, 1.0, across / spread)
-				img.set_pixel(x, y, Color(1.0, 0.92, 0.76, 0.6 * fx * fz))
+				var fx := 1.0 - smoothstep(half * 0.45, half, across)
+				img.set_pixel(x, y, Color(1.0, 0.92, 0.76, 0.42 * fx * fz))
 		var tex := ImageTexture.create_from_image(img)
 		_beam_mat = StandardMaterial3D.new()
 		_beam_mat.albedo_texture = tex

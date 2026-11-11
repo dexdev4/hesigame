@@ -105,6 +105,7 @@ func _ready() -> void:
 	_build_play()
 	_build_menu()
 	_build_garage()
+	_build_map()
 	_build_boss()
 	_build_pick()
 	_build_pause()
@@ -341,6 +342,23 @@ func _layout_sheet(scr: Control, vp: Vector2, top: float, bottom: float) -> void
 			panel.anchor_right = 0.5
 	if scr == screens.get("garage"):
 		(_garage.scroll as ScrollContainer).custom_minimum_size.y = clampf(vp.y * (0.27 if portrait else 0.42), 220.0, 620.0)
+	if _map.has("map") and scr == screens.get("map"):
+		# the map fills what the header and the panel leave free
+		var wm: Control = _map.map
+		var pnl: Control = scr.get_meta("panel")
+		var ph := pnl.size.y if pnl.size.y > 10.0 else 430.0
+		wm.offset_top = 120.0 + top
+		if portrait:
+			wm.offset_bottom = -(ph + 20.0 + bottom)
+			wm.offset_right = 0.0
+		else:
+			wm.offset_bottom = -bottom
+			wm.offset_right = -(pnl.custom_minimum_size.x + 30.0)
+	if _map.has("head") and scr == screens.get("map"):
+		var mh: MarginContainer = _map.head
+		mh.add_theme_constant_override("margin_top", int(20 + top))
+		mh.add_theme_constant_override("margin_left", 22)
+		mh.add_theme_constant_override("margin_right", 22)
 	if _menu.has("head") and scr == screens.get("menu"):
 		var head: MarginContainer = _menu.head
 		head.add_theme_constant_override("margin_top", int(20 + top))
@@ -929,7 +947,7 @@ func _build_menu() -> void:
 		grid.add_child(sv)
 		_menu["l_" + k] = lab
 		_menu["b_" + k] = bar
-	v.add_child(_button("START RUN  →", "amber", "start"))
+	v.add_child(_button("START RUN  →", "amber", "map"))
 	var btns := GridContainer.new()
 	btns.columns = 3
 	btns.add_theme_constant_override("h_separation", 10)
@@ -1000,6 +1018,90 @@ func render_menu() -> void:
 	for k in rows:
 		_menu["l_" + k].text = rows[k][0]
 		_menu["b_" + k].value = clampf(rows[k][1], 0.0, 1.0)
+
+
+var _map := {}
+
+
+## World map: the drawn map fills the screen, the chosen highway's details
+## and the Drive button sit in a panel at the bottom.
+func _build_map() -> void:
+	var scr := _sheet_screen("map")
+	var bg := ColorRect.new()
+	bg.color = WorldMap.WATER
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	scr.add_child(bg)
+	_solid.append(bg)
+	var wm := WorldMap.new()
+	wm.set_anchors_preset(Control.PRESET_FULL_RECT)
+	wm.picked.connect(func(i: int) -> void: act.emit("route", str(i)))
+	scr.add_child(wm)
+	_map["map"] = wm
+	var head := MarginContainer.new()
+	head.anchor_right = 1.0
+	head.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	scr.add_child(head)
+	_map["head"] = head
+	var hv := VBoxContainer.new()
+	hv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hv.add_theme_constant_override("separation", 0)
+	head.add_child(hv)
+	hv.add_child(_eyebrow("Interstate atlas · Tap a highway"))
+	var t := _label("WORLD MAP", 58, LINE, display_font)
+	t.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.6))
+	t.add_theme_constant_override("shadow_offset_y", 3)
+	hv.add_child(t)
+	_map["progress"] = _label("", 17, AMBER, mono_font)
+	hv.add_child(_map.progress)
+	var v := _bottom_panel(scr)
+	_map["route"] = _label("", 40, LINE, display_font)
+	_map.route.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	v.add_child(_map.route)
+	_map["info"] = _wrap("", 19, MUTED)
+	v.add_child(_map.info)
+	var row := _row(12)
+	v.add_child(row)
+	var a := _stat("", "Country")
+	var b := _stat("", "Best here")
+	var c := _stat("", "Boss skill")
+	for st in [a, b, c]:
+		row.add_child(st[0])
+	_map["land"] = a[1]
+	_map["best"] = b[1]
+	_map["skill"] = c[1]
+	_map["drive"] = _button("DRIVE  →", "amber", "drive")
+	v.add_child(_map.drive)
+	v.add_child(_button("BACK TO GARAGE", "ghost", "menu"))
+
+
+func render_map() -> void:
+	var wm: WorldMap = _map.map
+	wm.unlocked = int(Save.data.get("routes", 1))
+	wm.selected = int(Save.data.get("route_sel", 0))
+	wm.best = Save.data.get("route_best", {})
+	wm.queue_redraw()
+	var i: int = wm.selected
+	var r := Data.route_info(i)
+	_map.route.text = "%s  %s → %s" % [r.name, String(r.from).to_upper(), String(r.to).to_upper()]
+	var nxt: String = Data.CITIES[i + 2].name if i + 2 < Data.CITIES.size() else ""
+	var done: bool = wm.unlocked > i + 1 or (i == Data.ROUTES.size() - 1 and Save.data.get("route_done", false))
+	if done:
+		_map.info.text = "Cleared. Drive it again for a better score; it never ends."
+	elif nxt != "":
+		_map.info.text = "Beat the final boss, %s (boss 4), to open the highway on to %s." % [Data.BOSSES[3].name, nxt]
+	else:
+		_map.info.text = "The last highway. Beat %s here to conquer the map." % Data.BOSSES[3].name
+	_map.land.text = String(r.land.title)
+	_map.best.text = Fmt.num(int(wm.best.get(str(i), 0)))
+	var keep := Data.route
+	Data.route = i
+	_map.skill.text = "+%d%%" % roundi((Data.route_scale() - 1.0) * 100.0)
+	Data.route = keep
+	_map.progress.text = "%d OF %d HIGHWAYS OPEN" % [wm.unlocked, Data.ROUTES.size()]
+
+
+func map_note(text: String) -> void:
+	_map.info.text = text
 
 
 const GARAGE_TABS := [["cars", "CARS"], ["up", "UPGRADES"], ["paint", "PAINT"], ["wheels", "WHEELS"]]

@@ -1647,6 +1647,9 @@ static func _shell(id: String) -> Dictionary:
 	var side := PackedFloat32Array()
 	side.resize(nd * ny)
 	side.fill(99.0)
+	var back := PackedFloat32Array()  # per (x, height): where the tail panel or rear window is
+	back.resize(nx * ny)
+	back.fill(-99.0)
 	var body: ArrayMesh = kit.body
 	var names: Array = kit.surfaces
 	for si in body.get_surface_count():
@@ -1674,6 +1677,16 @@ static func _shell(id: String) -> Dictionary:
 					for xi in range(maxi(x0, 0), mini(x1, nx - 1) + 1):
 						var k := di * nx + xi
 						top[k] = minf(top[k], ymin)
+			if n.z > 0.4 and d1 * SHELL_STEP < 1.3:  # tail panel and rear window, seen from inside
+				var dmax := -minf(a.z, minf(b.z, c.z))
+				var bx0 := int(minf(absf(a.x), minf(absf(b.x), absf(c.x))) / SHELL_STEP)
+				var bx1 := int(maxf(absf(a.x), maxf(absf(b.x), absf(c.x))) / SHELL_STEP) + 1
+				var by0 := int(ymin / SHELL_STEP)
+				var by1 := int(ymax / SHELL_STEP) + 1
+				for xi in range(maxi(bx0, 0), mini(bx1, nx - 1) + 1):
+					for yi in range(maxi(by0, 0), mini(by1, ny - 1) + 1):
+						var k3 := xi * ny + yi
+						back[k3] = maxf(back[k3], dmax)
 			if absf(n.x) > 0.45:  # side walls and side glass
 				var ax := minf(absf(a.x), minf(absf(b.x), absf(c.x)))
 				var y0 := int(ymin / SHELL_STEP)
@@ -1682,7 +1695,7 @@ static func _shell(id: String) -> Dictionary:
 					for yi in range(maxi(y0, 0), mini(y1, ny - 1) + 1):
 						var k2 := di * ny + yi
 						side[k2] = minf(side[k2], ax)
-	var shell := {"top": top, "side": side, "nd": nd, "nx": nx, "ny": ny}
+	var shell := {"top": top, "side": side, "back": back, "nd": nd, "nx": nx, "ny": ny}
 	_shells[id] = shell
 	return shell
 
@@ -1701,6 +1714,11 @@ static func _inside_shell(v: Vector3, shell: Dictionary) -> Vector3:
 	var sd: float = (shell.side as PackedFloat32Array)[di * ny + yi]
 	if sd < 90.0 and absf(v.x) > sd - 0.025:
 		v.x = signf(v.x) * maxf(sd - 0.025, 0.0)
+	# and in front of the tail panel / rear window
+	var xi2 := clampi(int(absf(v.x) / SHELL_STEP), 0, nx - 1)
+	var bk: float = (shell.back as PackedFloat32Array)[xi2 * ny + yi]
+	if bk > -90.0 and -v.z < bk + 0.03 and -v.z < 1.3:
+		v.z = -(bk + 0.03)
 	return v
 
 
@@ -1930,6 +1948,79 @@ static func _strap(st: SurfaceTool, a: Vector3, b: Vector3, w: float, t: float) 
 	_box(st, (a + b) / 2.0, Vector3(w, (b - a).length(), t), Basis(x, y, z))
 
 
+## Each car's own cabin (by body type). Colours: leather, insert (seat
+## centres), stitch, ambient (light lines), trim (door cards and console),
+## dash, strip (the dash trim strip: aluminium, wood, carbon...), carpet,
+## liner (headliner), accent (cage, wheel marker). seats: "comfort" or
+## "bucket". wheel: "round", "flat" (flat-bottomed) or "yoke" (flat top and
+## bottom); spokes = spoke angles; hub = "box" or "round". screen: "wide",
+## "tablet" (a tall floating tablet) or "retro" (a small radio); pods = small
+## extra gauges on the dash top; two_tone = lower dash in the leather colour;
+## cage = a roll hoop behind the seats. dials = [speedo ring, rev ring, needle].
+const CABINS := {
+	"hot_hatch": {"leather": "#23262b", "insert": "#2f62b0", "stitch": "#5a9bff", "ambient": "#3d8bff", "strip": "#3b4047", "wheel": "flat", "screen": "tablet",
+		"dials": ["#5a9bff", "#e6e6e6", "#ff4a2a"], "accent": "#5a9bff"},
+	"sport_sedan": {"leather": "#1b1b1d", "insert": "#2a2a2d", "stitch": "#d0202a", "ambient": "#ff3b30", "strip": "#8d939a", "wheel": "round", "marker": "#d0202a", "screen": "wide",
+		"dials": ["#ff3b30", "#e6e6e6", "#ff3b30"], "seats": "bucket", "accent": "#d0202a"},
+	"compact": {"leather": "#1c1c1e", "insert": "#d9a21b", "stitch": "#f5c52e", "ambient": "#f5c52e", "strip": "#d9a21b", "wheel": "flat", "marker": "#f5c52e", "screen": "wide",
+		"dials": ["#f5c52e", "#f5c52e", "#ffffff"], "seats": "bucket", "accent": "#f5c52e"},
+	"coupe": {"leather": "#8a6038", "insert": "#a67848", "stitch": "#e8d8b8", "ambient": "#ffe2b0", "strip": "#b9bfc5", "trim": "#4a382a", "carpet": "#2a221c", "wheel": "round", "spokes": [0.0, 3.14159], "hub": "round",
+		"screen": "wide", "dials": ["#e8d8b8", "#e8d8b8", "#ff7a2a"], "two_tone": true, "liner": "#6a6258"},
+	"hatch": {"leather": "#4a4e55", "insert": "#6a7078", "stitch": "#2aa198", "ambient": "#2aa198", "strip": "#5a5f66", "trim": "#3a3d42", "dash": "#25272b", "wheel": "round", "spokes": [0.35, 2.79, 1.5708, 1.5708],
+		"screen": "retro", "dials": ["#e6e6e6", "#e6e6e6", "#ff4a2a"], "liner": "#7a7c80"},
+	"sedan": {"leather": "#b8a488", "insert": "#c8b69a", "stitch": "#8a7458", "ambient": "#fff2d8", "strip": "#6b4a2e", "trim": "#8a7860", "carpet": "#3a3228", "wheel": "round", "spokes": [0.3, 2.84, 1.2, 1.94], "hub": "round",
+		"screen": "wide", "dials": ["#fff2d8", "#fff2d8", "#ff4a2a"], "two_tone": true, "liner": "#a8a090"},
+	"muscle": {"leather": "#161616", "insert": "#1e1e1e", "stitch": "#e8e8e8", "ambient": "#ffb02e", "strip": "#c9ced3", "wheel": "round", "spokes": [0.0, 3.14159, 1.5708], "spoke_metal": true, "hub": "round", "thin_rim": true,
+		"screen": "retro", "pods": 3, "dials": ["#e8e8e8", "#e8e8e8", "#ff3b2a"], "accent": "#e8e8e8"},
+	"super": {"leather": "#d8dce2", "insert": "#aab8c8", "stitch": "#2ad0e8", "ambient": "#2ad0e8", "strip": "#1c1e22", "trim": "#2a2d32", "wheel": "flat", "marker": "#2ad0e8", "screen": "tablet",
+		"dials": ["#2ad0e8", "#e6e6e6", "#2ad0e8"], "seats": "bucket", "liner": "#3a3c40", "accent": "#2ad0e8"},
+	"fastback": {"leather": "#6a3a1e", "insert": "#7c4826", "stitch": "#f08a2a", "ambient": "#f08a2a", "strip": "#3a3d42", "trim": "#2c2420", "wheel": "round", "spokes": [0.0, 3.14159, 1.5708], "spoke_metal": true, "hub": "round",
+		"screen": "retro", "pods": 3, "dials": ["#f08a2a", "#e8e8e8", "#ff3b2a"], "accent": "#f08a2a"},
+	"msedan": {"leather": "#17181b", "insert": "#22252b", "stitch": "#2f7fe8", "ambient": "#2f7fe8", "strip": "#1c1e22", "wheel": "flat", "marker": "#2f7fe8", "screen": "wide",
+		"dials": ["#e6e6e6", "#e6e6e6", "#ff3b2a"], "seats": "bucket", "accent": "#2f7fe8"},
+	"rcoupe": {"leather": "#1a1b1e", "insert": "#1f8fe8", "stitch": "#1fa3ff", "ambient": "#1fa3ff", "strip": "#1fa3ff", "wheel": "flat", "marker": "#f3f5ef", "screen": "tablet", "pods": 1,
+		"dials": ["#1fa3ff", "#f3f5ef", "#f3f5ef"], "seats": "bucket", "liner": "#2a2c30", "accent": "#1fa3ff"},
+	"hyper": {"leather": "#8e1420", "insert": "#1a1a1c", "stitch": "#e8c84a", "ambient": "#ff2a2a", "strip": "#1c1e22", "trim": "#1e1f22", "wheel": "yoke", "marker": "#e8c84a", "screen": "tablet",
+		"dials": ["#ff2a2a", "#e8c84a", "#e8c84a"], "seats": "bucket", "cage": true, "liner": "#1e1f22", "accent": "#b0122a"},
+}
+
+
+## A swept tube along a closed loop in the wheel's plane: the steering-wheel
+## rim. "flat" squares off the bottom, "yoke" the top as well.
+static func _rim_mesh(kind: String, thin := false) -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var n := 40
+	var m := 8
+	var rr := 0.012 if thin else 0.0165
+	var path: Array[Vector3] = []
+	for i in n:
+		var th := TAU * i / n
+		var p := Vector3(cos(th), 0, sin(th)) * 0.172
+		if kind == "flat" or kind == "yoke":
+			p.z = minf(p.z, 0.118)
+		if kind == "yoke":
+			p.z = maxf(p.z, -0.105)
+		path.append(p)
+	for i in n:
+		var p0 := path[i]
+		var p1 := path[(i + 1) % n]
+		var t0 := (path[(i + 1) % n] - path[(i - 1 + n) % n]).normalized()
+		var t1 := (path[(i + 2) % n] - path[i]).normalized()
+		var b0 := t0.cross(Vector3.UP).normalized()
+		var b1 := t1.cross(Vector3.UP).normalized()
+		for j in m:
+			var a0 := TAU * j / m
+			var a1 := TAU * (j + 1) / m
+			var n00 := b0 * cos(a0) + Vector3.UP * sin(a0)
+			var n01 := b0 * cos(a1) + Vector3.UP * sin(a1)
+			var n10 := b1 * cos(a0) + Vector3.UP * sin(a0)
+			var n11 := b1 * cos(a1) + Vector3.UP * sin(a1)
+			_tri(st, p0 + n00 * rr, p0 + n01 * rr, p1 + n11 * rr, n00, n01, n11)
+			_tri(st, p0 + n00 * rr, p1 + n11 * rr, p1 + n10 * rr, n00, n11, n10)
+	return st.commit()
+
+
 ## A full cabin for the player's car: carpeted floor, dashboard with vents,
 ## trim and infotainment screen, live instrument cluster, steering wheel,
 ## centre console with gear lever and handbrake, seats with bolsters and
@@ -1957,7 +2048,10 @@ func build_interior() -> void:
 
 	var bbi := BodyBuilder.new(_shape_id, pr, shape, {})  # for the real roof line
 	var S := {}
-	var keys := ["carpet", "trim", "dash", "pad", "leather", "cloth", "chrome", "alu", "vent", "screen", "red", "stitch", "ambient", "map", "route"]
+	var cab: Dictionary = CABINS.get(_shape_id, {})
+	var bucket: bool = cab.get("seats", "comfort") == "bucket"
+	var scr: String = cab.get("screen", "wide")
+	var keys := ["carpet", "trim", "dash", "pad", "leather", "cloth", "insert", "chrome", "alu", "vent", "screen", "red", "stitch", "ambient", "map", "route", "accent"]
 	for k in keys:
 		S[k] = _new_st()
 
@@ -2005,17 +2099,39 @@ func build_interior() -> void:
 	_box(S.dash, Vector3(0, yd - 0.08, dzd + 0.3), Vector3(hd * 2.0, 0.26, 0.6))
 	_box(S.pad, Vector3(0, yd + 0.06, dzd + 0.27), Vector3(hd * 2.0 - 0.02, 0.03, 0.52))
 	_box(S.stitch, Vector3(0, yd + 0.076, dzd + 0.53), Vector3(hd * 2.0 - 0.06, 0.004, 0.006))
-	_box(S.dash, Vector3(0, yd - 0.3, dzd + 0.35), Vector3(hb * 2.0, 0.18, 0.4))               # lower dash
+	var lower: SurfaceTool = S.leather if cab.get("two_tone", false) else S.dash
+	_box(lower, Vector3(0, yd - 0.3, dzd + 0.35), Vector3(hb * 2.0, 0.18, 0.4))               # lower dash
 	_box(S.alu, Vector3(0, yd - 0.11, dzd + 0.605), Vector3(hb * 2.0 - 0.1, 0.025, 0.012))     # trim strip
 	_box(S.ambient, Vector3(0, yd - 0.126, dzd + 0.607), Vector3(hb * 2.0 - 0.12, 0.004, 0.006))  # ambient light line
 	for sd in [-1.0, 1.0]:
 		_box(S.ambient, Vector3(sd * (hb - 0.062), yd - 0.07, (zr + dz) / 2.0), Vector3(0.004, 0.004, absf(dz - zr) * 0.9))
-	# sat-nav map under the radio text
-	_box(S.map, Vector3(0, yd - 0.172, dzd + 0.6265), Vector3(0.23, 0.05, 0.002))
-	for rd in [[-0.06, 0.0, 0.11, 0.005], [0.03, -0.01, 0.005, 0.045], [0.07, 0.008, 0.07, 0.004]]:
-		_box(S.screen, Vector3(rd[0], yd - 0.172 + rd[1], dzd + 0.628), Vector3(rd[2], rd[3], 0.002))
-	_box(S.route, Vector3(0.0, yd - 0.172, dzd + 0.6285), Vector3(0.004, 0.04, 0.002))
-	_box(S.route, Vector3(-0.03, yd - 0.152, dzd + 0.6285), Vector3(0.06, 0.004, 0.002))
+	# infotainment: a wide screen in the dash, a tall floating tablet, or a small radio
+	var sw := 0.25
+	var shh := 0.145
+	var sy := yd - 0.13
+	var sz := dzd + 0.621
+	if scr == "tablet":
+		sw = 0.17
+		shh = 0.25
+		sy = yd - 0.085
+		sz = dzd + 0.632
+		_box(S.dash, Vector3(0, sy, sz - 0.008), Vector3(sw + 0.03, shh + 0.03, 0.014))  # the tablet's body, proud of the dash
+	elif scr == "retro":
+		sw = 0.17
+		shh = 0.06
+		sy = yd - 0.12
+		for sd in [-1.0, 1.0]:  # tuning and volume knobs
+			_cyl(S.chrome, Vector3(sd * 0.115, sy, sz + 0.012), 0.017, 0.024, Vector3.BACK, 12)
+		for k in 5:  # preset buttons
+			_box(S.chrome, Vector3(-0.064 + k * 0.032, sy - 0.05, sz + 0.004), Vector3(0.024, 0.014, 0.008))
+	if scr != "retro":
+		# sat-nav map in the lower half of the screen
+		var my := sy - shh * 0.29
+		_box(S.map, Vector3(0, my, sz + 0.0055), Vector3(sw - 0.02, shh * 0.36, 0.002))
+		for rd in [[-0.06, 0.0, 0.11, 0.005], [0.03, -0.01, 0.005, 0.045], [0.07, 0.008, 0.07, 0.004]]:
+			_box(S.screen, Vector3(rd[0] * sw / 0.25, my + rd[1], sz + 0.007), Vector3(rd[2] * sw / 0.25, rd[3], 0.002))
+		_box(S.route, Vector3(0.0, my, sz + 0.0075), Vector3(0.004, 0.04, 0.002))
+		_box(S.route, Vector3(-0.03 * sw / 0.25, my + 0.02, sz + 0.0075), Vector3(0.06 * sw / 0.25, 0.004, 0.002))
 	_box(S.trim, Vector3(-ex, yd - 0.3, dzd + 0.56), Vector3(0.46, 0.16, 0.02))               # glovebox lid
 	_box(S.chrome, Vector3(-ex + 0.17, yd - 0.25, dzd + 0.575), Vector3(0.06, 0.015, 0.015))  # glovebox latch
 	for sd in [-1.0, 1.0]:
@@ -2031,12 +2147,22 @@ func build_interior() -> void:
 	_box(S.dash, Vector3(ex, yd + 0.07, dzd + 0.55), Vector3(0.36, 0.22, 0.1))
 	# centre stack with screen, climate knobs and hazard switch
 	_box(S.dash, Vector3(0, yd - 0.27, dzd + 0.54), Vector3(0.32, 0.44, 0.16))
-	_box(S.chrome, Vector3(0, yd - 0.13, dzd + 0.621), Vector3(0.27, 0.165, 0.004))
-	_box(S.screen, Vector3(0, yd - 0.13, dzd + 0.624), Vector3(0.25, 0.145, 0.004))
+	_box(S.chrome, Vector3(0, sy, sz), Vector3(sw + 0.02, shh + 0.02, 0.004))
+	_box(S.screen, Vector3(0, sy, sz + 0.003), Vector3(sw, shh, 0.004))
+	var knob_y := yd - 0.33 if scr != "tablet" else yd - 0.36
 	for k in 3:
-		_cyl(S.chrome, Vector3(-0.08 + k * 0.08, yd - 0.33, dzd + 0.625), 0.026, 0.02, Vector3.BACK, 14)
-		_cyl(S.vent, Vector3(-0.08 + k * 0.08, yd - 0.33, dzd + 0.636), 0.02, 0.005, Vector3.BACK, 12)
-	_box(S.red, Vector3(0, yd - 0.24, dzd + 0.624), Vector3(0.04, 0.025, 0.01))
+		_cyl(S.chrome, Vector3(-0.08 + k * 0.08, knob_y, dzd + 0.625), 0.026, 0.02, Vector3.BACK, 14)
+		_cyl(S.vent, Vector3(-0.08 + k * 0.08, knob_y, dzd + 0.636), 0.02, 0.005, Vector3.BACK, 12)
+	_box(S.red, Vector3(0, knob_y + 0.075 if scr != "tablet" else knob_y + 0.05, dzd + 0.624), Vector3(0.04, 0.025, 0.01))
+	# extra gauges in pods on top of the dash (oil, volts, boost)
+	var pods: int = cab.get("pods", 0)
+	for k in pods:
+		var px := (k - (pods - 1) / 2.0) * 0.095
+		var pc := Vector3(px, yd + 0.105, dzd + 0.5)
+		_cyl(S.dash, pc, 0.042, 0.07, Vector3.BACK, 14)
+		_cyl(S.chrome, pc + Vector3(0, 0, 0.036), 0.04, 0.004, Vector3.BACK, 14)
+		_cyl(S.vent, pc + Vector3(0, 0, 0.038), 0.034, 0.004, Vector3.BACK, 14)
+		_box(S.red, pc + Vector3(0.008, 0.008, 0.042), Vector3(0.004, 0.03, 0.002), Basis(Vector3.BACK, -0.6 + k * 0.5))
 	# steering column, stalks and pedals
 	_box(S.dash, Vector3(ex, yd - 0.14, dzd + 0.69), Vector3(0.12, 0.1, 0.24))
 	for sd in [-1.0, 1.0]:
@@ -2064,11 +2190,12 @@ func build_interior() -> void:
 	for sx in [ex, -ex]:
 		_box(S.dash, Vector3(sx, floor_y + 0.06, ez + 0.05), Vector3(0.4, 0.06, 0.45))                      # rails and base
 		_box(S.leather, Vector3(sx, cushion_top - 0.07, ez + 0.03), Vector3(0.46, 0.14, 0.5))
-		_box(S.cloth, Vector3(sx, cushion_top + 0.005, ez + 0.03), Vector3(0.28, 0.01, 0.44))                # insert
+		_box(S.insert, Vector3(sx, cushion_top + 0.005, ez + 0.03), Vector3(0.28, 0.01, 0.44))               # insert
 		for q in 5:  # quilting
 			_box(S.stitch, Vector3(sx, cushion_top + 0.011, ez - 0.17 + q * 0.1), Vector3(0.28, 0.002, 0.006))
 		for sd in [-1.0, 1.0]:
-			_box(S.leather, Vector3(sx + sd * 0.21, cushion_top - 0.01, ez + 0.03), Vector3(0.07, 0.12, 0.48))  # cushion bolster
+			_box(S.leather, Vector3(sx + sd * 0.21, cushion_top - 0.01 + (0.025 if bucket else 0.0), ez + 0.03),
+				Vector3(0.07, 0.17 if bucket else 0.12, 0.48))  # cushion bolster (deeper on bucket seats)
 		var back := Basis(Vector3.RIGHT, 0.2)
 		# fit the seat under the roof or rear window: the backrest and headrest shrink on low cars
 		var room: float = minf(yr - 0.08, roof_line.call(-(ez + 0.46)) - 0.05) - cushion_top
@@ -2076,15 +2203,23 @@ func build_interior() -> void:
 		var bh: float = clampf(room - hh - 0.08, 0.3, 0.62)
 		var bc := Vector3(sx, cushion_top + bh / 2.0 - 0.01, ez + 0.3)
 		_box(S.leather, bc, Vector3(0.48, bh, 0.12), back)
-		_box(S.cloth, bc + back.z * -0.065, Vector3(0.28, bh - 0.12, 0.01), back)
+		_box(S.insert, bc + back.z * -0.065, Vector3(0.28, bh - 0.12, 0.01), back)
 		for q in 6:
 			_box(S.stitch, bc + back.z * -0.071 + back.y * (-bh / 2.0 + 0.08 + q * (bh - 0.16) / 5.0), Vector3(0.28, 0.006, 0.002), back)
 		for sd in [-1.0, 1.0]:
-			_box(S.leather, bc + back.x * sd * 0.22 + back.z * -0.05, Vector3(0.07, bh - 0.06, 0.1), back)  # back bolster
+			_box(S.leather, bc + back.x * sd * 0.22 + back.z * (-0.075 if bucket else -0.05), Vector3(0.07, bh - 0.06, 0.15 if bucket else 0.1), back)  # back bolster
 		var top: Vector3 = bc + back.y * (bh / 2.0)
-		for sd in [-1.0, 1.0]:
-			_box(S.chrome, top + back.y * 0.035 + Vector3(sd * 0.07, 0, 0), Vector3(0.012, 0.07, 0.012), back)
-		_box(S.leather, top + back.y * (0.06 + hh / 2.0), Vector3(0.26, hh, 0.1), back)                       # headrest
+		if bucket:
+			# one-piece shell: the headrest grows out of the backrest, with harness slots and shoulder wings
+			_box(S.leather, top + back.y * (hh / 2.0 + 0.01), Vector3(0.3, hh + 0.04, 0.11), back)
+			_box(S.insert, top + back.y * (hh / 2.0 + 0.01) + back.z * -0.058, Vector3(0.18, hh - 0.03, 0.006), back)
+			for sd in [-1.0, 1.0]:
+				_box(S.vent, top + back.y * -0.05 + back.x * sd * 0.085 + back.z * -0.068, Vector3(0.06, 0.03, 0.012), back)
+				_box(S.leather, top + back.y * -0.1 + back.x * sd * 0.25 + back.z * -0.06, Vector3(0.05, 0.16, 0.13), back)
+		else:
+			for sd in [-1.0, 1.0]:
+				_box(S.chrome, top + back.y * 0.035 + Vector3(sd * 0.07, 0, 0), Vector3(0.012, 0.07, 0.012), back)
+			_box(S.leather, top + back.y * (0.06 + hh / 2.0), Vector3(0.26, hh, 0.1), back)                       # headrest
 	# seat belt across the (empty) driver seat, from the B-pillar to the buckle
 	var belt_top := minf(yb + 0.32, bbi.roof_y(-(ez + 0.4)) - 0.1)  # anchored below the roof on low cars
 	_strap(S.dash, Vector3(signf(ex) * (hb - 0.08), belt_top, ez + 0.4), Vector3(ex - signf(ex) * 0.22, cushion_top + 0.05, ez + 0.1), 0.045, 0.006)
@@ -2098,7 +2233,7 @@ func build_interior() -> void:
 	var cush_z: float = back_z - 0.3
 	if cush_z - 0.2 > ez + 0.27:  # only if there is legroom behind the front seats
 		_box(S.leather, Vector3(0, cushion_top - 0.1, cush_z), Vector3(hb * 2.0 - 0.06, 0.14, 0.4))
-		_box(S.cloth, Vector3(0, cushion_top - 0.025, cush_z), Vector3(hb * 2.0 - 0.3, 0.01, 0.34))
+		_box(S.insert, Vector3(0, cushion_top - 0.025, cush_z), Vector3(hb * 2.0 - 0.3, 0.01, 0.34))
 		_box(S.leather, Vector3(0, cushion_top + 0.2, back_z), Vector3(hb * 2.0 - 0.06, 0.46, 0.12), rb)
 		for k in 3:
 			var hx: float = (k - 1) * hb * 0.62
@@ -2108,6 +2243,16 @@ func build_interior() -> void:
 		if shelf_len > 0.06:
 			_box(S.trim, Vector3(0, yb - 0.01, (zr + back_z) / 2.0 + 0.01), Vector3(hb * 2.0, 0.03, shelf_len))
 
+	if cab.get("cage", false):
+		# roll hoop behind the seats, braced back to the rear bulkhead
+		var hz: float = ez + 0.62
+		var hx: float = hb - 0.1
+		var htop: float = minf(yr - 0.06, bbi.roof_y(-hz) - 0.07)
+		for sd in [-1.0, 1.0]:
+			_strap(S.accent, Vector3(sd * hx, floor_y, hz), Vector3(sd * (hx - 0.06), htop, hz), 0.045, 0.045)
+			_strap(S.accent, Vector3(sd * (hx - 0.06), htop - 0.02, hz), Vector3(sd * (hx - 0.1), yb - 0.1, minf(zr - 0.06, hz + 0.5)), 0.04, 0.04)
+		_box(S.accent, Vector3(0, htop, hz), Vector3((hx - 0.06) * 2.0, 0.045, 0.045))
+		_strap(S.accent, Vector3(-(hx - 0.08), floor_y + 0.25, hz), Vector3(hx - 0.08, htop - 0.05, hz), 0.035, 0.035)
 	# --- headliner, visors, dome light, inner A-pillars
 	_quad(S.cloth, Vector3(-hr, yr - 0.02, -g[2]), Vector3(hr, yr - 0.02, -g[2]), Vector3(hr, yr - 0.02, -g[3]), Vector3(-hr, yr - 0.02, -g[3]), Vector3.DOWN)
 	_box(S.cloth, Vector3(0, yr - 0.05, -g[3] + 0.05), Vector3(hr * 2.0, 0.05, 0.12))
@@ -2120,16 +2265,21 @@ func build_interior() -> void:
 	_box(S.screen, Vector3(0, yr - 0.03, (-g[2] - g[3]) / 2.0), Vector3(0.14, 0.012, 0.08))  # dome light
 
 	var interior := ArrayMesh.new()
+	var cc := func(key: String, def: String) -> Color: return Color(String(cab.get(key, def)))
+	var strip_col: Color = cc.call("strip", "#8d939a")
 	var mats := {
-		"carpet": mat(Color("#232427"), 0.0, 1.0), "trim": mat(Color("#34363a"), 0.0, 0.8),
-		"dash": mat(Color("#17181b"), 0.0, 0.7), "pad": mat(Color("#1f2023"), 0.0, 0.9),
-		"leather": mat(Color("#2b2624"), 0.0, 0.55), "chrome": mat(Color("#c9ced3"), 0.0, 0.3, 0.35),
-		"alu": mat(Color("#8d939a"), 0.0, 0.45, 0.25), "vent": mat(Color("#0d0e10"), 0.0, 0.8),
-		"screen": mat(Color("#20425e"), 1.2, 0.2), "red": mat(Color("#d02a1a"), 1.0), "stitch": mat(Color("#b3462c"), 0.0, 0.6),
-		"ambient": mat(Color("#ff7a3a"), 1.4), "map": mat(Color("#0c1a26"), 0.6), "route": mat(Color("#f5b52e"), 2.5),
+		"carpet": mat(cc.call("carpet", "#232427"), 0.0, 1.0), "trim": mat(cc.call("trim", "#34363a"), 0.0, 0.8),
+		"dash": mat(cc.call("dash", "#17181b"), 0.0, 0.7), "pad": mat(cc.call("dash", "#17181b").lightened(0.04), 0.0, 0.9),
+		"leather": mat(cc.call("leather", "#2b2624"), 0.0, 0.55), "insert": mat(cc.call("insert", "#3a3a3d"), 0.0, 0.85),
+		"chrome": mat(Color("#c9ced3"), 0.0, 0.3, 0.35),
+		# the dash strip: bright metal, or dark gloss for wood and carbon
+		"alu": mat(strip_col, 0.0, 0.3 if strip_col.get_luminance() < 0.2 else 0.45, 0.25), "vent": mat(Color("#0d0e10"), 0.0, 0.8),
+		"screen": mat(Color("#20425e"), 1.2, 0.2), "red": mat(Color("#d02a1a"), 1.0), "stitch": mat(cc.call("stitch", "#b3462c"), 0.0, 0.6),
+		"ambient": mat(cc.call("ambient", "#ff7a3a"), 1.4), "map": mat(Color("#0c1a26"), 0.6), "route": mat(Color("#f5b52e"), 2.5),
+		"accent": mat(cc.call("accent", "#b5322a"), 0.0, 0.4, 0.2),
 	}
 	var cloth := StandardMaterial3D.new()  # unshaded: down-facing fabric would pick up the green ground light
-	cloth.albedo_color = Color("#4a4a4c")
+	cloth.albedo_color = cc.call("liner", "#4a4a4c")
 	cloth.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mats["cloth"] = cloth
 	var order: Array = []
@@ -2195,6 +2345,7 @@ func build_interior() -> void:
 	mirror.position = Vector3(0, yr - 0.12, -float(pr.get("mirror_d", g[3] - 0.08)))  # at the top of the windscreen
 	if not shell.is_empty():
 		mirror.position = _inside_shell(mirror.position + Vector3(0, 0.05, 0), shell) - Vector3(0, 0.05, 0)
+	stem.position = mirror.position + Vector3(0, 0.05, -0.012)  # the stem joins the mirror to the roof above it
 	_body.add_child(mirror)
 	var glassm := MeshInstance3D.new()
 	glassm.mesh = box_mesh(Vector3(0.22, 0.055, 0.005))
@@ -2226,7 +2377,7 @@ func build_interior() -> void:
 		tm.ring_segments = 4
 		ring.mesh = tm
 		ring.rotation.x = PI / 2.0
-		ring.material_override = mat(Color("#f5b52e") if k == 0 else Color("#e6e6e6"), 1.6)
+		ring.material_override = mat(Color(String((cab.get("dials", ["#f5b52e", "#e6e6e6", "#ff4a2a"]) as Array)[k])), 1.6)
 		dial.add_child(ring)
 		for t in 9:
 			var a := lerpf(2.2, -2.2, t / 8.0)
@@ -2242,14 +2393,14 @@ func build_interior() -> void:
 		var needle := MeshInstance3D.new()
 		needle.mesh = box_mesh(Vector3(0.005, 0.052, 0.003))
 		needle.position = Vector3(0, 0.024, 0)
-		needle.material_override = mat(Color("#ff4a2a"), 3.0)
+		needle.material_override = mat(Color(String((cab.get("dials", ["#f5b52e", "#e6e6e6", "#ff4a2a"]) as Array)[2])), 3.0)
 		pivot.add_child(needle)
 		_needles.append(pivot)
 	# digital readout between the dials, and the infotainment screen
 	_display = Label3D.new()
 	_display.font_size = 40
 	_display.pixel_size = 0.00055
-	_display.modulate = Color("#f5b52e")
+	_display.modulate = Color(String((cab.get("dials", ["#f5b52e", "#e6e6e6", "#ff4a2a"]) as Array)[0])).lightened(0.25)
 	_display.outline_size = 0
 	_display.position = Vector3(ex, yd + 0.09, dzd + 0.652)
 	_display.rotation.x = -0.35
@@ -2259,8 +2410,14 @@ func build_interior() -> void:
 	_screen.pixel_size = 0.0008
 	_screen.modulate = Color("#cfe8ff")
 	_screen.outline_size = 0
-	_screen.position = Vector3(0, yd - 0.105, dzd + 0.628)
+	_screen.position = Vector3(0, sy + shh * 0.17, sz + 0.008)
 	_screen.font_size = 26
+	if scr == "tablet":
+		_screen.pixel_size = 0.00062
+		_screen.position.y = sy + shh * 0.24
+	elif scr == "retro":
+		_screen.pixel_size = 0.0005
+		_screen.position.y = sy
 	_body.add_child(_screen)
 
 	# steering wheel: tilted column with a spinning rim, spokes, airbag hub and paddles
@@ -2270,24 +2427,33 @@ func build_interior() -> void:
 	_body.add_child(tilt)
 	_steer_node = Node3D.new()
 	tilt.add_child(_steer_node)
+	var wheel_kind: String = cab.get("wheel", "round")
 	var rim := MeshInstance3D.new()
-	var wt := TorusMesh.new()
-	wt.inner_radius = 0.155
-	wt.outer_radius = 0.188
-	wt.rings = 32
-	wt.ring_segments = 10
-	rim.mesh = wt
+	rim.mesh = _rim_mesh(wheel_kind, cab.get("thin_rim", false))
 	rim.material_override = mats.leather
 	_steer_node.add_child(rim)
-	for a in [0.0, PI, PI * 0.5]:  # left, right and bottom spokes
+	var spoke_mat: Material = mats.chrome if cab.get("spoke_metal", false) else mats.dash
+	for a in cab.get("spokes", [0.0, PI, PI * 0.5]):  # 0 = right, PI = left, PI/2 = bottom
+		var ang := float(a)
+		var reach := 0.172
+		if wheel_kind != "round" and sin(ang) > 0.7:
+			reach = 0.118  # down to the flat bottom
 		var spoke := MeshInstance3D.new()
-		spoke.mesh = box_mesh(Vector3(0.13, 0.025, 0.045))
-		spoke.position = Vector3(cos(a) * 0.1, 0, sin(a) * 0.1)
-		spoke.rotation.y = -a
-		spoke.material_override = mats.dash
+		spoke.mesh = box_mesh(Vector3(reach - 0.04, 0.012 if cab.get("spoke_metal", false) else 0.025, 0.03 if cab.get("spoke_metal", false) else 0.045))
+		spoke.position = Vector3(cos(ang), 0, sin(ang)) * (0.04 + (reach - 0.04) * 0.5)
+		spoke.rotation.y = -ang
+		spoke.material_override = spoke_mat
 		_steer_node.add_child(spoke)
 	var hub := MeshInstance3D.new()
-	hub.mesh = box_mesh(Vector3(0.12, 0.05, 0.1))
+	if cab.get("hub", "box") == "round":
+		var hm := CylinderMesh.new()
+		hm.top_radius = 0.058
+		hm.bottom_radius = 0.064
+		hm.height = 0.05
+		hm.radial_segments = 20
+		hub.mesh = hm
+	else:
+		hub.mesh = box_mesh(Vector3(0.12, 0.05, 0.1))
 	hub.material_override = mats.dash
 	_steer_node.add_child(hub)
 	var badge := MeshInstance3D.new()
@@ -2295,6 +2461,12 @@ func build_interior() -> void:
 	badge.position = Vector3(0, 0.028, 0)
 	badge.material_override = mat(Color("#f5b52e"), 1.5)
 	_steer_node.add_child(badge)
+	if cab.has("marker"):  # the straight-ahead mark at twelve o'clock
+		var mk := MeshInstance3D.new()
+		mk.mesh = box_mesh(Vector3(0.022, 0.037, 0.037))
+		mk.position = Vector3(0, 0, -0.105 if wheel_kind == "yoke" else -0.172)
+		mk.material_override = mat(Color(String(cab.marker)), 0.6)
+		_steer_node.add_child(mk)
 	for sd in [-1.0, 1.0]:
 		var paddle := MeshInstance3D.new()
 		paddle.mesh = box_mesh(Vector3(0.05, 0.008, 0.08))

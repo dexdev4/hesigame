@@ -49,6 +49,8 @@ def classify(uv,pos):
         # thin painted details: shut lines, handles, fuel flap (darker than the paint)
         ratio=lum/max(PAINT_LUM,1e-3)
         k[(k=='paint')&(ratio<0.72)&(~dark)]='gloss'
+        # faint heater lines printed on the rear window are still glass
+        k[(k=='gloss')&(lum<0.13)&(~dark)&(pos[:,1]>GLASS_Y)]='glass'
     k[(a[:,0]>0.6)&(a[:,1]>0.6)&(a[:,2]>0.6)]='headlens'
     if not RED_PAINT:  # red lens areas count as tail lamp, unless the car itself is red
         k[(a[:,0]>0.35)&(a[:,1]<0.2)&(a[:,2]<0.2)]='tail'

@@ -264,6 +264,15 @@ class Body:
             return rise * along * across * (1 - smoothstep(d1 - 0.36, d1 - 0.3, d))
         return 0.026 * along * (1 - smoothstep(0.1, 0.3, abs(x)))
 
+    def tail_lift(self, d):
+        sp = self.D.get("spoiler")
+        h, reach = {"ducktail": (0.075, 0.5), "lip": (0.03, 0.22)}.get(sp, (0.0, 0.0))
+        if h == 0.0 or d >= min(reach, self.g[0] - 0.02):
+            return 0.0
+        reach = min(reach, self.g[0] - 0.02)
+        t = 1.0 - d / reach
+        return h * t * t
+
     def section19(self, d):
         """The 19-point right half section of body_builder.gd."""
         g = self.g
@@ -295,6 +304,9 @@ class Body:
                 (hwd * 0.32, t + 0.027), (0.0, t + 0.028)]
         if d > g[1] + 0.1:
             flat = [(q[0], q[1] + self.hood_lift(d, q[0])) for q in flat]
+        tl = self.tail_lift(d)
+        if tl > 0.0:  # ducktail / lip: the boot lid sweeps up to its trailing edge
+            flat = [(q[0], q[1] + tl * (0.35 if k < 2 else (0.75 if k < 4 else 1.0))) for k, q in enumerate(flat)]
         roof = self.roof_y(d)
         gh_h = roof - t
         if gh_h <= 0.0005:
@@ -361,6 +373,7 @@ def end_recede(B, d, x, y):
     of the car (positive = towards the other end)."""
     E = 0.42
     bx, bt, bb = B.D.get("bow", [0.11, 0.16, 0.07])
+    bt_tail = {"ducktail": 0.02, "lip": 0.05}.get(B.D.get("spoiler"), bt)
     L = B.l
     u = min(abs(x) / (B.w / 2), 1.0)
     out = 0.0
@@ -370,15 +383,49 @@ def end_recede(B, d, x, y):
             top = B.top(min(max(d, 0.0), L))
             ym = B.floor_y + (top - B.floor_y) * 0.42  # bumper height
             v = (y - ym) / max(top - ym, 0.05) if y > ym else (ym - y) / max(ym - B.floor_y, 0.05)
-            g = (bt if y > ym else bb) * min(v, 1.4) ** 2
+            top_roll = bt_tail if sign > 0 else bt
+            g = (top_roll if y > ym else bb) * min(v, 1.0) ** 2
             out += sign * w * (bx * u * u + g)
     return out
 
 
+def end_d(B, x, front=True):
+    """Distance along the car where the plan outline reaches |x| at this end
+    (on the flat face, or round the corner)."""
+    x = abs(x)
+    L = B.l
+    if front:
+        if x <= B.hw(L):
+            return L
+        lo, hi = L - B.rc_f - 0.05, L
+        for _ in range(24):
+            mid = (lo + hi) / 2
+            if B.hw(mid) >= x:
+                lo = mid
+            else:
+                hi = mid
+        return lo
+    if x <= B.hw(0.0):
+        return 0.0
+    lo, hi = 0.0, B.rc_r + 0.05
+    for _ in range(24):
+        mid = (lo + hi) / 2
+        if B.hw(mid) >= x:
+            hi = mid
+        else:
+            lo = mid
+    return hi
+
+
 def end_z(B, x, y, front=True):
-    """z of the nose (front) or tail face at (x, y)."""
-    d = B.l if front else 0.0
+    """z of the nose (front) or tail surface at (x, y), round the corners too."""
+    d = end_d(B, x * 0.985, front)
     return -(d + end_recede(B, d, x, y))
+
+
+def face_hw(B, front=True):
+    """Half width of the part of the nose or tail that still faces the end."""
+    return B.hw(B.l - 0.05) * 0.95 if front else B.hw(0.05) * 0.95
 
 
 def sample_ds(B, lq):
@@ -489,7 +536,7 @@ class Styler:
         if y < y0 or y > y1:
             return None
         kind = G["kind"]
-        gw = G["w"] * self.hw_max
+        gw = min(G["w"] * self.hw_max, face_hw(self.B))
         if kind == "kidney":  # two rounded kidneys either side of the centre
             if ax < 0.025 or ax > gw:
                 return None
@@ -518,7 +565,7 @@ class Styler:
             return None
         ax = abs(x)
         y0, y1 = I["y"]
-        gw = I["w"] * self.hw_max
+        gw = min(I["w"] * self.hw_max, face_hw(self.B))
         if ax > gw or y < y0 or y > y1:
             return None
         p = 0.5 + ax / (2 * gw)
@@ -578,8 +625,9 @@ class Styler:
         rearward = nz > 0.25 or cap == 1
         # nose: lamps, grille, intake, splitter
         if d > L - 0.75 and (forward or (abs(nx) > 0.45 and d > L - 0.26)):
+            lamp_zone = d > L - D.get("lamp_wrap", 0.27)  # lamps wrap the corner, not the wing
             c = self.round_lamp(x, y) if D.get("round_head") else None
-            if c is None and D.get("head"):
+            if c is None and D.get("head") and lamp_zone:
                 c = self.lamp(D["head"], x, y, "head")
             if c is None:
                 c = self.grille(x, y)
@@ -591,7 +639,7 @@ class Styler:
                 return c
         # tail: lamps, diffuser
         if d < 0.62 and (rearward or (abs(nx) > 0.45 and d < 0.16)):
-            c = self.lamp(D["tail"], x, y, "tail") if D.get("tail") else None
+            c = self.lamp(D["tail"], x, y, "tail") if D.get("tail") and d < D.get("tail_wrap", 0.24) else None
             if c is None and D.get("tail") and D["tail"].get("bar") and rearward:
                 y0, y1 = D["tail"]["bar"]
                 if y0 < y < y1 and abs(x) < D["tail"]["u"][0] * self.hw_max + 0.02:
@@ -623,7 +671,7 @@ class Styler:
         # bonnet vents / gills
         if D.get("hood") == "vents" and s > 14.0 and g[1] + 0.25 < d < g[1] + 0.6 and 0.2 < abs(x) < 0.4:
             return "under"  # louvres added as geometry
-        if D.get("gills") and 7.5 < s < 9.0 and B.axles[1] + 0.32 < d < B.axles[1] + 0.58:
+        if D.get("gills") and 7.6 < s < 8.9 and B.axles[1] - B.R - 0.3 < d < B.axles[1] - B.R - 0.06:
             return "under"
         # black sills, cladding round the arches (SUV)
         if D.get("sill") and s < 4.55:
@@ -880,8 +928,8 @@ def surface_point(B, d, s):
             n = n / ln if ln > 0 else np.array([1.0, 0, 0])
             if n[0] < 0 and s < 10:
                 n = -n
-            return np.array([x, y, -d]), n
-    return np.array([sec[-1][0], sec[-1][1], -d]), np.array([0, 1.0, 0])
+            return np.array([x, y, -(d + end_recede(B, d, x, y))]), n
+    return np.array([sec[-1][0], sec[-1][1], -(d + end_recede(B, d, 0.0, sec[-1][1]))]), np.array([0, 1.0, 0])
 
 
 def side_s_at_height(B, d, y):
@@ -923,12 +971,19 @@ def top_y_at(B, d, x):
     return sec[-1][1]
 
 
+def top_pt(B, d, x, lift=0.0):
+    """A point on the top surface (bonnet, roof, boot) at (d, x), on the real
+    (rounded-end) body."""
+    y = top_y_at(B, d, abs(x))
+    return np.array([x, y + lift, -(d + end_recede(B, d, x, y))])
+
+
 def gap_line_top(B, mesh, d0, d1, x, steps=20):
     """A shut line running along the top (bonnet / boot sides) at |x|."""
     prev = None
     for k in range(steps + 1):
         d = lerp(d0, d1, k / steps)
-        p = np.array([abs(x), top_y_at(B, d, abs(x)) + 0.0016, -d])
+        p = top_pt(B, d, abs(x), 0.0016)
         if prev is not None:
             for side in (1.0, -1.0):
                 m = np.array([side, 1, 1])
@@ -941,7 +996,7 @@ def gap_line_across(B, mesh, d, x_max, steps=16):
     prev = None
     for k in range(steps + 1):
         x = lerp(-x_max, x_max, k / steps)
-        p = np.array([x, top_y_at(B, d, x) + 0.0016, -d])
+        p = top_pt(B, d, x, 0.0016)
         if prev is not None:
             hw = np.array([0, 0, 0.0028])
             mesh.quad("gloss", prev - hw, prev + hw, p + hw, p - hw, np.array([0, 1.0, 0]))
@@ -1032,24 +1087,27 @@ def add_details(B, mesh, lq):
         mesh.cyl("under", c + np.array([0, 0, 0.001]), 0.034, 0.101, [0, 0, 1], 18, caps=True)
     # spoilers and wings
     sp = D.get("spoiler")
-    if sp == "lip":
-        t0 = B.top(0.12)
-        hw0 = B.hw(0.12)
-        mesh.box("paint", [0, t0 + 0.012, -0.07], [hw0 * 1.6, 0.018, 0.06], rot_x(0.25))
-    elif sp == "ducktail":
-        t0 = B.top(0.1)
-        hw0 = B.hw(0.1)
-        mesh.box("paint", [0, t0 + 0.03, -0.1], [hw0 * 1.85, 0.04, 0.2], rot_x(0.35))
-        mesh.box("gloss", [0, t0 + 0.06, -0.01], [hw0 * 1.8, 0.012, 0.02])
+    if sp in ("lip", "ducktail"):
+        # a slim black gurney strip along the trailing edge of the kicked-up lid
+        prev = None
+        span = B.hw(0.03) * 0.8
+        for k in range(21):
+            x = lerp(-span, span, k / 20)
+            p = top_pt(B, 0.012, x, 0.004)
+            if prev is not None:
+                mid = (prev + p) / 2
+                mesh.box("gloss", mid, [abs(p[0] - prev[0]) + 0.002, 0.008, 0.014])
+            prev = p
     elif sp == "roof":  # over the top of the rear window, at the end of the roof
         dr = g[2] - 0.02
         ry = B.roof_y(g[2] + 0.04)
         mesh.box("paint", [0, ry + 0.012, -dr], [W * g[7] * 1.02, 0.026, 0.24], rot_x(-0.12))
         mesh.box("gloss", [0, ry - 0.006, -(dr - 0.1)], [W * g[7] * 0.98, 0.012, 0.04])
     elif sp == "wing":
-        ty = B.top(0.25) + 0.32
+        base = top_pt(B, 0.34, 0.45)
+        ty = base[1] + 0.3
         for sd in (1.0, -1.0):
-            mesh.box("gloss", [sd * 0.45, ty - 0.15, -0.3], [0.04, 0.3, 0.16], rot_x(0.2))
+            mesh.box("gloss", [sd * 0.45, (base[1] + ty) / 2 - 0.01, base[2] + 0.04], [0.04, ty - base[1] + 0.04, 0.16], rot_x(0.2))
         mesh.box("gloss", [0, ty, -0.2], [W * 0.92, 0.035, 0.32], rot_x(0.12))
         for sd in (1.0, -1.0):
             mesh.box("gloss", [sd * W * 0.46, ty - 0.05, -0.2], [0.02, 0.16, 0.36])
@@ -1109,7 +1167,7 @@ def add_openings(B, mesh):
     G = D.get("grille")
     if G:
         y0, y1 = G["y"]
-        gw = G["w"] * hw
+        gw = min(G["w"] * hw, face_hw(B))
         kind = G["kind"]
         if kind in ("bars", "slot", "kidney"):
             n = 2 if kind == "slot" else max(3, int((y1 - y0) / 0.032))
@@ -1140,7 +1198,7 @@ def add_openings(B, mesh):
     I = D.get("intake")
     if I:
         y0, y1 = I["y"]
-        gw = I["w"] * hw
+        gw = min(I["w"] * hw, face_hw(B))
         for k in range(3):
             y = lerp(y0, y1, (k + 1) / 4)
             mesh.box("gloss", [0, y, zf], [gw * 1.8, 0.01, 0.014])
@@ -1171,11 +1229,10 @@ def add_openings(B, mesh):
             for sd in (1.0, -1.0):
                 mesh.box("gloss", (p + n * 0.002) * np.array([sd, 1, 1]), [0.012, 0.01, (si[1] - si[0]) * 0.8])
     if D.get("gills"):
-        a = B.axles[1]
+        a = B.axles[1] - B.R - 0.3
         for k in range(4):
-            d = a + 0.35 + k * 0.06
-            s0 = 7.6
-            p, n = surface_point(B, d, 8.2)
+            d = a + 0.03 + k * 0.06
+            p, n = surface_point(B, d, 8.25)
             for sd in (1.0, -1.0):
                 mesh.box("chrome", (p + n * 0.004) * np.array([sd, 1, 1]), [0.008, 0.07, 0.012])
 
@@ -1193,7 +1250,7 @@ def add_stripes(B, mesh):
             prev = None
             for k in range(n + 1):
                 d = lerp(d0, d1, k / n)
-                row = [np.array([x, top_y_at(B, d, x) + 0.0022, -d]) for x in (x0, x1)]
+                row = [top_pt(B, d, x, 0.0022) for x in (x0, x1)]
                 if prev is not None:
                     for side in (1.0, -1.0):
                         m = np.array([side, 1, 1])

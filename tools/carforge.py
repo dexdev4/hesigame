@@ -178,11 +178,12 @@ class Body:
         g5 = self.g[5]
         self.floor_y = 0.28 if g5 > 1.6 else (0.17 if g5 < 1.2 else 0.2)
         self.st = smooth_stations(D["body"])
-        self.rc_r, self.rc_f = D.get("corner", [0.2, 0.26])
+        cr = D.get("corner", [0.2, 0.26])
+        self.rc_r, self.rc_f = cr[0] * 1.35, cr[1] * 1.3  # rounder plan corners
         self.flare = D.get("flare", [0.03, 0.03])
         self.fender = D.get("fender", [0.0, 0.0])
         self.crease = D.get("crease_h", 0.7)
-        self.tumble = D.get("tumble", 0.06)
+        self.tumble = D.get("tumble", 0.06) * 1.6 + 0.02  # sides lean in more above the shoulder
         self.pillars = [[lerp(self.g[0], self.g[1], a), lerp(self.g[0], self.g[1], b), "paint" if i == 0 else "gloss"]
                         for i, (a, b) in enumerate(D["pillars"])]
 
@@ -214,6 +215,10 @@ class Body:
 
     def hw(self, d):
         base = self.w / 2 * self.station(d, 2)
+        # sleeker plan: the body narrows smoothly towards the nose and tail
+        e = min(d, self.l - d)
+        taper = 0.07 * (1 - smoothstep(0.0, 1.5, e)) ** 1.5
+        base *= 1.0 - taper
         p = self.pull(d, self.rc_r) + self.pull(self.l - d, self.rc_f)
         return (base - p) * (1 + self.axle_amount(d, self.flare))
 
@@ -371,8 +376,8 @@ def refine_section(p19, subs):
 def end_recede(B, d, x, y):
     """How far a body point near either end is pulled back towards the middle
     of the car (positive = towards the other end)."""
-    E = 0.42
-    bx, bt, bb = B.D.get("bow", [0.11, 0.16, 0.07])
+    E = 0.55
+    bx, bt, bb = B.D.get("bow", [0.15, 0.2, 0.09])
     bt_tail = {"ducktail": 0.02, "lip": 0.05}.get(B.D.get("spoiler"), bt)
     L = B.l
     u = min(abs(x) / (B.w / 2), 1.0)

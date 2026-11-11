@@ -177,7 +177,7 @@ func boss_total(stage: int) -> int:
 func boss_skill(stage: int) -> float:
 	var i := (stage - 1) % BOSSES.size()
 	var tier := (stage - 1) / BOSSES.size()
-	return minf(0.12 + 0.28 * i + 0.25 * tier, 1.6)
+	return minf(0.2 + 0.3 * i + 0.28 * tier, 1.7)
 
 
 const SKILL_NAMES := ["ROOKIE", "SKILLED", "EXPERT", "LEGEND", "UNTOUCHABLE"]

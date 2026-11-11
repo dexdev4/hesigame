@@ -36,6 +36,7 @@ var _km_sign: Node3D
 var _km_label: Label3D
 var _gantry: Node3D
 var _clouds: Node3D
+var _far_mats: Array[ShaderMaterial] = []
 var _oncoming: Array = []   # {model, x, z, v}
 var _t := 0.0
 
@@ -495,6 +496,15 @@ func _build_trees() -> void:
 	holder.add_child(smi)
 
 
+## Dusk on the horizon: mountains and clouds take on the evening colours.
+func set_dusk(k: float) -> void:
+	var tint := Color(1, 1, 1).lerp(Color(0.62, 0.44, 0.46), k)
+	var haze := Color(0.85, 0.82, 0.76).lerp(Color(0.72, 0.42, 0.34), k)
+	for m in _far_mats:
+		m.set_shader_parameter("tint", tint)
+		m.set_shader_parameter("haze_col", haze)
+
+
 ## Mountains and clouds on the horizon. They stay at a fixed distance.
 func _build_far() -> void:
 	var far := Node3D.new()
@@ -538,6 +548,7 @@ func _build_far() -> void:
 		mi.material_override = m
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		far.add_child(mi)
+		_far_mats.append(m)
 
 	# clouds: soft radial puffs, a few quads each
 	_clouds = Node3D.new()
@@ -555,6 +566,7 @@ func _build_far() -> void:
 	cm.shader = shader
 	cm.set_shader_parameter("cloud", true)
 	cm.set_shader_parameter("puff", tex)
+	_far_mats.append(cm)
 	var q := QuadMesh.new()
 	q.size = Vector2(1, 1)
 	var rng2 := RandomNumberGenerator.new()

@@ -1224,7 +1224,7 @@ func render_garage() -> void:
 				r.color = AMBER if i < lv else Color(1, 1, 1, 0.18)
 				pips.add_child(r)
 			card[1].add_child(pips)
-		list.add_child(_wrap("Upgrades apply to every car you own.", 20, MUTED))
+		list.add_child(_wrap("Upgrades are fitted to your %s only. Every car is upgraded separately." % sel_car.name, 20, MUTED))
 
 
 func _build_boss() -> void:

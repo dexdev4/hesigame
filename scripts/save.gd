@@ -15,7 +15,8 @@ func defaults() -> Dictionary:
 	return {
 		"cash": 0, "best": 0, "runs": 0,
 		"owned": ["comet"], "selected": "comet", "unlocked": [],
-		"perm": {"accel": 0, "brake": 0, "handling": 0, "top": 0, "lives": 0},
+		"perm": {"accel": 0, "brake": 0, "handling": 0, "top": 0, "lives": 0},  # old shared upgrades (moved to perm_cars)
+		"perm_cars": {},  # car id -> {upgrade id: level}: each car is upgraded on its own
 		"sound": true, "assist": false, "free_steer": true, "looks": {},
 		"cam": _cam_defaults(),
 		"settings": SETTING_DEFAULTS.duplicate(true),
@@ -74,7 +75,7 @@ func load_data() -> void:
 	if not parsed is Dictionary:
 		return
 	for k in parsed:
-		if k != "perm" and k != "cam" and k != "settings":
+		if k != "perm" and k != "cam" and k != "settings" and k != "perm_cars":
 			data[k] = parsed[k]
 	if parsed.has("cam") and parsed.cam is Dictionary:
 		for k in parsed.cam:
@@ -98,6 +99,17 @@ func load_data() -> void:
 	# the starter car is always in the garage (older saves started with the Kestrel)
 	if data.owned is Array and not data.owned.has("comet"):
 		data.owned.insert(0, "comet")
+	if parsed.has("perm_cars") and parsed.perm_cars is Dictionary:
+		for cid in parsed.perm_cars:
+			var lv: Dictionary = {}
+			for k in parsed.perm_cars[cid]:
+				lv[k] = int(parsed.perm_cars[cid][k])
+			data.perm_cars[cid] = lv
+	else:
+		# upgrades used to be shared by every car: give each owned car the
+		# levels already paid for, so nothing is lost
+		for cid in data.owned:
+			data.perm_cars[cid] = (data.perm as Dictionary).duplicate()
 	# JSON numbers load as floats; keep counters as ints.
 	for k in ["cash", "best", "runs"]:
 		data[k] = int(data[k])
@@ -149,8 +161,9 @@ func unlock_all_cars() -> void:
 
 ## Developer tools: every permanent upgrade at its top level.
 func max_all_upgrades() -> void:
-	for p in Data.PERM:
-		data.perm[p.id] = int(p.max)
+	for c in Data.CARS:
+		for p in Data.PERM:
+			set_perm(p.id, int(p.max), c.id)
 	persist()
 
 
@@ -166,8 +179,17 @@ func reset_progress() -> void:
 	persist()
 
 
-func perm_level(id: String) -> int:
-	return int(data.perm.get(id, 0))
+## Level of an upgrade on a car (the selected car unless one is named).
+func perm_level(id: String, car := "") -> int:
+	var cid: String = car if car != "" else data.selected
+	return int(data.perm_cars.get(cid, {}).get(id, 0))
+
+
+func set_perm(id: String, level: int, car := "") -> void:
+	var cid: String = car if car != "" else data.selected
+	var lv: Dictionary = data.perm_cars.get(cid, {})
+	lv[id] = level
+	data.perm_cars[cid] = lv
 
 
 func owns(id: String) -> bool:

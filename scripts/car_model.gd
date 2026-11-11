@@ -11,6 +11,9 @@ static var _meshes := {}
 static var _kits := {}
 static var _shadow_mat: StandardMaterial3D
 static var _shadow_mesh: PlaneMesh
+static var night := 0.0  # 0 = day .. 1 = dusk with headlights on (set_night)
+static var _beam_mat: StandardMaterial3D
+static var _beam_mesh: PlaneMesh
 
 # Per-type body data. body stations: [distance from rear (m), top height, width scale].
 # gh (greenhouse): [base rear z, base front z, roof rear z, roof front z, base y, roof y, base width, roof width].
@@ -146,6 +149,8 @@ static func _car_shader_mat(key: String, params: Dictionary) -> ShaderMaterial:
 	m.shader = _paint_shader
 	for k in params:
 		m.set_shader_parameter(k, params[k])
+	if night > 0.0:
+		_dusk_params(m)  # a car built at dusk reflects the dusk sky
 	_mats[key] = m
 	return m
 
@@ -1405,7 +1410,82 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a"), style 
 	sh.position = Vector3(0, 0.02, -shape.l / 2.0)
 	add_child(sh)
 	_shadow_mi = sh
+	# headlight pool on the road ahead, shown at dusk (shared material, see set_night)
+	var beam := MeshInstance3D.new()
+	beam.mesh = _beam()
+	beam.material_override = _beam_mat
+	beam.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	beam.scale = Vector3(shape.w * 1.7, 1.0, 13.0)
+	beam.position = Vector3(0, 0.035, -shape.l - 6.2)
+	beam.visible = night > 0.01
+	beam.add_to_group("car_beams")
+	add_child(beam)
 	_set_draw_distance(self)
+
+
+static func _beam() -> PlaneMesh:
+	if _beam_mesh == null:
+		_beam_mesh = PlaneMesh.new()
+		_beam_mesh.size = Vector2(1, 1)
+		# soft beam: fades out to both sides and towards the far end, brightest
+		# a few metres ahead of the bumper
+		var img := Image.create(64, 128, false, Image.FORMAT_RGBA8)
+		for y in 128:
+			var along := 1.0 - float(y) / 127.0  # 0 at the far end, 1 at the car
+			var fz := smoothstep(0.0, 0.55, along) * (1.0 - smoothstep(0.85, 1.0, along) * 0.6)
+			for x in 64:
+				var across := absf(float(x) / 63.0 - 0.5) * 2.0
+				var spread := lerpf(0.55, 1.0, 1.0 - along)  # the beam widens with distance
+				var fx := 1.0 - smoothstep(0.15, 1.0, across / spread)
+				img.set_pixel(x, y, Color(1.0, 0.92, 0.76, 0.6 * fx * fz))
+		var tex := ImageTexture.create_from_image(img)
+		_beam_mat = StandardMaterial3D.new()
+		_beam_mat.albedo_texture = tex
+		_beam_mat.albedo_color = Color(1, 1, 1, night)
+		_beam_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		_beam_mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+		_beam_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		_beam_mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+	return _beam_mesh
+
+
+const DAY_ENV := {"env_zenith": Color(0.16, 0.33, 0.58), "env_horizon": Color(0.93, 0.9, 0.84)}
+const DUSK_ENV := {"env_zenith": Color(0.1, 0.11, 0.22), "env_horizon": Color(0.86, 0.48, 0.32)}
+
+
+## Dusk for every car at once: k = 0 (day) .. 1 (dusk). Headlights and tail
+## lights glow brighter, light pools appear on the road ahead of every car,
+## and the paint and glass reflect a dusk sky. sun_dir points at the sun.
+static var _sun_dir := Vector3(-0.545, 0.53, 0.65)
+
+
+static func _dusk_params(m: ShaderMaterial) -> void:
+	if m.shader != _paint_shader and m.shader != _glass_shader:
+		return
+	for p in DAY_ENV:
+		m.set_shader_parameter(p, (DAY_ENV[p] as Color).lerp(DUSK_ENV[p], night))
+	m.set_shader_parameter("env_sun_dir", _sun_dir)
+
+
+static func set_night(k: float, sun_dir: Vector3) -> void:
+	var was_on := night > 0.01
+	night = k
+	_sun_dir = sun_dir
+	_beam()
+	_beam_mat.albedo_color = Color(1, 1, 1, k)
+	lamp(Color("#fff6d8"), 2.0).emission_energy_multiplier = lerpf(2.0, 7.0, k)
+	_tail_mat(false).emission_energy_multiplier = lerpf(0.9, 2.6, k)
+	for halo in [false, true]:
+		_headlens_mat(halo).emission_energy_multiplier = lerpf(2.2, 6.0, k)
+	for key in _mats:
+		var m: Variant = _mats[key]
+		if m is ShaderMaterial:
+			_dusk_params(m as ShaderMaterial)
+	if was_on != (k > 0.01):
+		var tree := Engine.get_main_loop() as SceneTree
+		if tree:
+			for n in tree.get_nodes_in_group("car_beams"):
+				(n as Node3D).visible = k > 0.01
 
 
 ## Keep the full-detail body and wheels at any distance (the player's car:

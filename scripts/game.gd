@@ -166,6 +166,12 @@ var _retired := {}   # vehicle id -> replay clock when the car left the road
 var _next_id := 1
 var _fps_t := 0.0
 var _env: Environment
+var _dusk := 0.0         # 0 = afternoon .. 1 = dusk (during boss encounters)
+var _dusk_target := 0.0
+var _test_dusk := -1.0
+var _music: AudioStreamPlayer
+var _music_tween: Tween
+var _head_spots: Array[SpotLight3D] = []
 var _sky: Sky
 var _sun: DirectionalLight3D
 var garage: GarageScene
@@ -221,6 +227,8 @@ func _ready() -> void:
 			Data.station_scale = float(a.substr(11)) / Data.STATION_EVERY_KM
 		if a.begins_with("--first-station="):  # the first fuel stop this many metres in (test aid)
 			_test_first_station = float(a.substr(16))
+		if a.begins_with("--dusk="):  # hold the light at this much dusk, 0..1 (test aid)
+			_test_dusk = float(a.substr(7))
 		if a.begins_with("--fuel="):  # start runs with this fraction of a tank (test aid)
 			_test_fuel = float(a.substr(7))
 		if a.begins_with("--start-stage="):  # begin runs at this stage (test aid)
@@ -269,6 +277,13 @@ func _ready() -> void:
 	sound = EngineAudio.new()
 	add_child(sound)
 	sound.set_enabled(Save.data.sound)
+	_music = AudioStreamPlayer.new()
+	var ms: Variant = load("res://assets/audio/cold_iron_street.mp3")
+	if ms is AudioStreamMP3:
+		(ms as AudioStreamMP3).loop = true
+	_music.stream = ms
+	_music.volume_db = -60.0
+	add_child(_music)
 
 	hud = Hud.new()
 	add_child(hud)
@@ -600,6 +615,7 @@ func _set_player_car() -> void:
 	player.model.force_detail()
 	add_child(player.model)
 	player.model.build_interior()
+	_add_head_spots()
 	if sound:
 		sound.set_car(c)
 
@@ -1126,7 +1142,7 @@ func _boss_score(b: Vehicle, dt: float, sk: float) -> void:
 	var mult := _boss_mult(sk)
 	# style points; scaled so the harder-driving bosses keep the same targets
 	# (about 6k for the first boss up to about 20k for the last over 2 km)
-	var flair := (lerpf(0.85, 1.25, minf(sk, 1.0)) + maxf(0.0, sk - 1.0) * 0.4) * lerpf(0.8, 0.55, minf(sk, 1.0))
+	var flair := (lerpf(0.85, 1.25, minf(sk, 1.0)) + maxf(0.0, sk - 1.0) * 0.4) * lerpf(0.8, 0.55, minf(sk, 1.0)) * BOSS_EDGE
 	if b.v > 33.0:
 		run.b_speed_acc += (b.v - 33.0) * 1.3 * dt * mult * flair
 		if run.b_speed_acc >= 1.0:
@@ -1178,6 +1194,7 @@ func _boss_award(base: float, combo: int, label: String, flair: float) -> void:
 func _end_battle() -> void:
 	var bi := run.b_info
 	_remove_boss()
+	_boss_mood_end(6.0)
 	finish_z = -1.0
 	if autotest:
 		print("[autotest] boss race stage %d skill %.2f: you %d, %s %d %s" % [run.stage, run.b_skill, run.b_score, bi.full, run.b_rival, _bdbg])
@@ -1734,6 +1751,10 @@ func _collisions() -> void:
 
 func _start_run() -> void:
 	_leave_garage()
+	_boss_music(false, 0.5)
+	_dusk = 0.0
+	_dusk_target = 0.0
+	_apply_dusk(0.0)
 	_set_player_car()
 	run = Run.new()
 	run.lives = 3 + Save.perm_level("lives")
@@ -1758,6 +1779,7 @@ func _start_run() -> void:
 func _end_run(reason: String) -> void:
 	if run == null:
 		return
+	_boss_mood_end(2.5)
 	var earned := maxi(0, _gross_earnings() - run.fuel_from_run)
 	Save.data.cash += earned
 	var best: bool = run.score > Save.data.best
@@ -1853,6 +1875,7 @@ var _yields := 0
 const COP_CHANCE := 0.3   # chance that a boss trigger is a police pursuit instead
 const COP_TIME := 40.0    # seconds to survive to escape
 const BOSS_WARN := 10.0   # seconds of warning before the boss or police arrives
+const BOSS_EDGE := 1.25   # bosses score this much more than their driving alone earns (harder to beat)
 
 
 ## Police pursuit: a cop car comes up from behind and tries to ram you.
@@ -1903,6 +1926,7 @@ func _start_cop() -> void:
 ## and the next trigger is the real boss.
 func _end_cop() -> void:
 	_remove_boss()
+	_boss_mood_end(6.0)
 	run.phase = "cruise"
 	run.stage_dist = 0.0
 	run.stage_score = 0
@@ -1975,6 +1999,98 @@ func _update_cop(dt: float) -> void:
 	b.model.flash_lightbar(t)
 
 
+# ---------------------------------------------------------------- boss mood
+
+## Boss music in (a short fade) or out (over `fade` seconds).
+func _boss_music(on: bool, fade := 6.0) -> void:
+	if _music == null or _music.stream == null:
+		return
+	if _music_tween:
+		_music_tween.kill()
+	_music_tween = create_tween()
+	if on:
+		if not Save.data.sound:
+			return
+		if not _music.playing:
+			_music.volume_db = -40.0
+			_music.play()
+		_music_tween.tween_property(_music, "volume_db", -5.0, 1.5)
+	elif _music.playing:
+		_music_tween.tween_property(_music, "volume_db", -60.0, fade).set_trans(Tween.TRANS_SINE)
+		_music_tween.tween_callback(_music.stop)
+
+
+## Afternoon (0) to dusk (1): the sun sinks and reddens, the sky darkens to a
+## glowing horizon, the haze cools, and every car's lights come on.
+const DAY := {"sun": Color("#fff0d8"), "sun_e": 1.4, "sun_x": -32.0, "top": Color("#2b5c96"), "hor": Color("#d9d2c2"),
+	"ghor": Color("#c4b69c"), "sky_e": 1.05, "amb": 0.75, "fog": Color("#cdc6b6"), "exp": 1.05}
+const DUSK := {"sun": Color("#ff7a3a"), "sun_e": 0.3, "sun_x": -6.0, "top": Color("#121836"), "hor": Color("#d8673e"),
+	"ghor": Color("#3e2c2a"), "sky_e": 0.42, "amb": 0.2, "fog": Color("#5e4552"), "exp": 0.9}
+
+
+func _apply_dusk(k: float) -> void:
+	var e := smoothstep(0.0, 1.0, k)
+	_sun.light_color = (DAY.sun as Color).lerp(DUSK.sun, e)
+	_sun.light_energy = lerpf(DAY.sun_e, DUSK.sun_e, e)
+	_sun.rotation_degrees.x = lerpf(DAY.sun_x, DUSK.sun_x, e)
+	var sm := _sky.sky_material as ProceduralSkyMaterial
+	if sm:
+		sm.sky_top_color = (DAY.top as Color).lerp(DUSK.top, e)
+		sm.sky_horizon_color = (DAY.hor as Color).lerp(DUSK.hor, e)
+		sm.ground_horizon_color = (DAY.ghor as Color).lerp(DUSK.ghor, e)
+		sm.sky_energy_multiplier = lerpf(DAY.sky_e, DUSK.sky_e, e)
+	_env.ambient_light_energy = lerpf(DAY.amb, DUSK.amb, e)
+	_env.fog_light_color = (DAY.fog as Color).lerp(DUSK.fog, e)
+	_env.tonemap_exposure = lerpf(DAY.exp, DUSK.exp, e)
+	_env.adjustment_brightness = lerpf(1.0, 0.78, e)
+	_env.adjustment_saturation = lerpf(1.12, 1.0, e)
+	_env.glow_intensity = lerpf(0.45, 0.9, e)  # lamps bloom more in the gloom
+	CarModel.set_night(e, _sun.global_transform.basis.z.normalized())
+	if scenery:
+		scenery.set_dusk(e)
+	for sp in _head_spots:
+		if is_instance_valid(sp):
+			sp.visible = e > 0.02
+			sp.light_energy = 6.0 * e
+
+
+func _update_dusk(dt: float) -> void:
+	if _test_dusk >= 0.0:
+		_dusk_target = _test_dusk
+	if is_equal_approx(_dusk, _dusk_target):
+		return
+	_dusk = move_toward(_dusk, _dusk_target, dt / (8.0 if _dusk_target > _dusk else 10.0))
+	_apply_dusk(_dusk)
+	if autotest and (_dusk == 0.0 or _dusk == 1.0):
+		print("[autotest] light now %s (sun %.2f)" % ["dusk" if _dusk == 1.0 else "day", _sun.light_energy])
+
+
+## Real headlight beams on the player's car (the others get light pools).
+func _add_head_spots() -> void:
+	_head_spots.clear()
+	var sh: Dictionary = player.model.shape
+	for sd in [-1.0, 1.0]:
+		var sp := SpotLight3D.new()
+		sp.position = Vector3(sd * sh.w * 0.32, 0.7, -sh.l + 0.2)
+		sp.rotation_degrees = Vector3(-4.0, 0.0, 0.0)  # aimed along the road (-z), dipped a little
+		sp.light_color = Color("#fff1d6")
+		sp.spot_range = 55.0
+		sp.spot_angle = 24.0
+		sp.spot_attenuation = 0.6
+		sp.shadow_enabled = false
+		sp.light_cull_mask = sp.light_cull_mask & ~GarageScene.LAYER
+		sp.visible = _dusk > 0.02
+		sp.light_energy = 6.0 * smoothstep(0.0, 1.0, _dusk)
+		player.model.add_child(sp)
+		_head_spots.append(sp)
+
+
+## The boss encounter is over (won, lost or escaped): back to daylight.
+func _boss_mood_end(fade := 6.0) -> void:
+	_boss_music(false, fade)
+	_dusk_target = 0.0
+
+
 ## A stage is complete: warn that the boss (or a police car) is coming in
 ## BOSS_WARN seconds, without stopping the game. Fuel stops are moved out of
 ## the way of the countdown and the race.
@@ -1982,6 +2098,8 @@ func _begin_incoming(cop: bool) -> void:
 	run.phase = "incoming"
 	run.inc_t = BOSS_WARN
 	run.inc_cop = cop
+	_dusk_target = 1.0  # dusk falls over the countdown; headlights come on
+	_boss_music(true)
 	_clear_station_for(player.v * BOSS_WARN + run.b_len + 300.0)
 	var bi := Data.boss_info(run.stage)
 	if cop or not run.cop_due:
@@ -2038,6 +2156,8 @@ func _update_run(dt: float) -> void:
 					run.rematch_t = 0.5  # after the fuel stop
 				else:
 					_start_boss()
+					_dusk_target = 1.0
+					_boss_music(true)
 					hud.banner("REMATCH", "OUT-SCORE HIM IN %s" % Fmt.km(run.b_len))
 			return
 		var r := Data.stage_req(run.stage)
@@ -2141,6 +2261,8 @@ func _process(delta: float) -> void:
 	if state == S.REFUEL and run:
 		_pump_frame(delta)
 	_probe_gfx(delta)
+	if state != S.PAUSED:
+		_update_dusk(delta)
 	_post_speed()
 	var now := Time.get_ticks_msec() / 1000.0
 	if _test_crash > 0.0 and now > _test_crash and _live():
@@ -2642,6 +2764,7 @@ func _notification(what: int) -> void:
 # ---------------------------------------------------------------- screens
 
 func _go_menu() -> void:
+	_boss_music(false, 1.0)
 	_end_crash()
 	_free_retired()
 	state = S.MENU
@@ -2674,6 +2797,8 @@ func _pause() -> void:
 	if state != S.PLAY:
 		return
 	state = S.PAUSED
+	if _music:
+		_music.stream_paused = true
 	touches.clear()
 	key_gas = false
 	key_brake = false
@@ -2686,6 +2811,8 @@ func _resume() -> void:
 	if state != S.PAUSED:
 		return
 	state = S.PLAY
+	if _music:
+		_music.stream_paused = false
 	hud.show_screen("")
 	_calibrate_tilt()
 
@@ -2785,7 +2912,7 @@ func _on_act(action: String, arg: String) -> void:
 					var cost := Data.perm_cost(p, lv)
 					if lv < p.max and Save.data.cash >= cost:
 						Save.data.cash -= cost
-						Save.data.perm[arg] = lv + 1
+						Save.set_perm(arg, lv + 1)  # this car only
 						Save.persist()
 						_compute_stats()
 						sound.play("ding", 1.3 + lv * 0.08)
@@ -2815,6 +2942,8 @@ func _on_act(action: String, arg: String) -> void:
 				"sound":
 					Save.data.sound = not Save.data.sound
 					sound.set_enabled(Save.data.sound)
+					if not Save.data.sound and _music:
+						_music.stop()
 				"assist":
 					Save.data.assist = not Save.data.assist
 				"steer_mode":

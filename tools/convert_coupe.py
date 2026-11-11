@@ -67,7 +67,12 @@ surf={}
 def add(kind,P,N,UV=None):
     s=surf.setdefault(kind,{'p':[],'n':[]}); s['p'].append(P); s['n'].append(N)
 p=j['meshes'][0]['primitives'][0]
-REAR=-float(j['accessors'][p['attributes']['POSITION']]['min'][2])  # rear bumper to z = 0
+_prims=j['meshes'][0]['primitives']
+REAR=-min(float(j['accessors'][q['attributes']['POSITION']]['min'][2]) for q in _prims)  # rear of the whole vehicle to z = 0
+_ALLMIN=-REAR
+_ALLMAX=max(float(j['accessors'][q['attributes']['POSITION']]['max'][2]) for q in _prims)
+_P0MIN=float(j['accessors'][p['attributes']['POSITION']]['min'][2]); _P0MAX=float(j['accessors'][p['attributes']['POSITION']]['max'][2])
+PARTIAL=(_P0MAX-_P0MIN)<0.7*(_ALLMAX-_ALLMIN)   # a truck: the main texture covers only the cab
 P=acc(p['attributes']['POSITION']); N=acc(p['attributes']['NORMAL']); UV=acc(p['attributes']['TEXCOORD_0']); T=acc(p['indices']).reshape(-1,3)
 tp=P[T]; tn=N[T]; tu=UV[T]
 if BODYSIDE:
@@ -91,7 +96,7 @@ PAINT_LUM=float(_paint.mean())
 PAINT_LIGHT=bool(PAINT_LUM>0.6)
 print('paint colour',(_paint*255).astype(int),'red paint' if RED_PAINT else '')
 ORIG_CLS=None
-MAXD=1 if LQ else 3
+MAXD=0 if LQ else 3
 total=0
 if LINES:
     # texel categories (paint, dark, white, red, lit head, lit tail) and a
@@ -167,7 +172,7 @@ for kind in set(c):
 # the other parts, by material: wheel wells, solid paint (mirrors, spoiler),
 # chrome, black trim, matte aero parts; calipers are left out (the game's
 # wheels bring their own)
-BY_MAT={'WheelWell':'under','PaintSolid':'paint','Chrome':'chrome','TrimBlack':'gloss','AeroBlack':'dark','Cargo':'paint','LampRed':'tail'}
+BY_MAT={'WheelWell':'under','PaintSolid':'paint','Chrome':'chrome','TrimBlack':'gloss','AeroBlack':'dark','Cargo':'cargo','LampRed':'tail'}
 for q in j['meshes'][0]['primitives'][1:]:
     mname=j['materials'][q['material']].get('name','')
     kind=BY_MAT.get(mname)
@@ -182,31 +187,41 @@ def _measure():
     P0=to_game(P)                                   # every vertex of the main body
     cls0=classify(UV[T].mean(1),P[T].mean(1))       # class of each original triangle
     gtri=to_game(P[T[cls0=='glass']].reshape(-1,3)) if (cls0=='glass').any() else P0
-    L=float(-P0[:,2].min()); W=float(2*np.abs(P0[:,0]).max())
+    if PARTIAL:
+        PA=[]
+        for q in j['meshes'][0]['primitives']:
+            if j['materials'][q['material']].get('name','')=='PaintSolid': continue
+            PA.append(acc(q['attributes']['POSITION']))
+        PA=to_game(np.concatenate(PA))
+    else:
+        PA=P0
+    L=float(-PA[:,2].min()); W=float(2*np.abs(PA[:,0]).max())
     D=-P0[:,2]
-    roof=float(P0[:,1].max())
+    roof=float(PA[:,1].max()) if PARTIAL else float(P0[:,1].max())
     side=gtri[np.abs(gtri[:,0])>0.45]
     belt=float(np.percentile(side[:,1],8)) if len(side) else 0.9
     up=gtri[gtri[:,1]>belt+0.07]                       # real window glass, not dark rear-panel texture
     gd=-up[:,2] if len(up) else -gtri[:,2]
     g0=float(np.percentile(gd,0.5)); g1=float(np.percentile(gd,99.5))
-    hi=D[P0[:,1]>roof-0.045]
+    roof0=float(P0[:,1].max())
+    hi=D[P0[:,1]>roof0-0.045]
     g2=float(hi.min()); g3=float(hi.max())
     def width_at(mask): 
         return float(np.abs(P0[mask,0]).max()) if mask.any() else W/2
     wbase=float(np.abs(side[:,0]).max()) if len(side) else W/2*0.8
     wsel=up[(-up[:,2])>g1-0.25]
     ws_hw=float(np.abs(wsel[:,0]).max()) if len(wsel) else wbase*0.7
-    wroof=width_at(P0[:,1]>roof-0.08)
+    wroof=width_at(P0[:,1]>roof0-0.08)
     # shoulder height and body width along the car
     body=[]
     for d in [0.0,0.1,0.3,0.7,1.2,1.8,2.4,3.0,3.5,3.9,4.2,L]:
         if d>L: continue
-        sel=np.abs(D-d)<0.06
+        DA=-PA[:,2]
+        sel=np.abs(DA-d)<0.06
         if not sel.any(): continue
-        top=float(P0[sel,1].max())
+        top=float(PA[sel,1].max())
         if g0<d<g1: top=min(top,belt+0.04)
-        body.append([round(d,3),round(top,3),round(width_at(sel)/(W/2),3)])
+        body.append([round(d,3),round(top,3),round(float(np.abs(PA[sel,0]).max())/(W/2),3)])
     # wheels from the nodes
     wn=[n for n in j['nodes'] if n.get('name','').startswith('Wheel_')]
     rear=[n for n in wn if n['translation'][2]<0]; front=[n for n in wn if n['translation'][2]>0]
@@ -217,7 +232,7 @@ def _measure():
     tyre=float(wpos[:,0].max()-wpos[:,0].min())
     axles=sorted(rear_d_ for rear_d_ in [REAR+n['translation'][2] for n in wn])
     return {"L":round(L,3),"W":round(W,3),"roof":round(roof,3),"belt":round(belt,3),
-        "gh":[round(g0,3),round(g1,3),round(g2,3),round(g3,3),round(belt,3),round(roof,3),round(wbase/(W/2),3),round(wroof/(W/2),3)],
+        "gh":[round(g0,3),round(g1,3),round(g2,3),round(g3,3),round(belt,3),round(roof0,3),round(wbase/(W/2),3),round(wroof/(W/2),3)],
         "body":body,"wheel":[round(r,3),round(rear_d,3),round(front_d,3)],"wheel_x":[round(wx[0],3),round(wx[1],3)],"tyre":round(tyre,3),
         "ws_hw":round(ws_hw,3),"axles":[round(a,3) for a in sorted(set(round(a,2) for a in axles))]}
 res={}
@@ -248,16 +263,28 @@ if _prof: json.dump(_prof,open(os.path.join(os.path.dirname(os.path.abspath(__fi
 if _prof: print('profile',{k:_prof[k] for k in ('L','W','roof','belt','gh','wheel','wheel_x','tyre')})
 # binary: magic, surface count, then per surface: name, vertex count, positions,
 # normals, index count, indices (vertices shared where position and normal match)
-order=['paint','glass','dark','under','chrome','gloss','plate','headlens','head','tail']
+order=['paint','cargo','glass','dark','under','chrome','gloss','plate','headlens','head','tail']
 with open(out,'wb') as f:
     f.write(b'CPE2'); names=[k for k in order if k in res]
     f.write(struct.pack('<I',len(names)))
     for k in names:
         pp,nn=res[k]
-        key=np.round(np.concatenate([pp,nn],1)*20000).astype(np.int64)
-        uq,inv=np.unique(key,axis=0,return_inverse=True)
-        first=np.zeros(len(uq),np.int64); first[inv[::-1]]=np.arange(len(inv))[::-1]
-        vp=pp[first]; vn=nn[first]; idx=inv.reshape(-1).astype(np.uint32)
+        if LQ:
+            # distance version: merge vertices that fall in the same 6 cm cell, drop flattened triangles
+            key=np.round(pp/0.06).astype(np.int64)
+            uq,inv=np.unique(key,axis=0,return_inverse=True); inv=inv.reshape(-1)
+            cnt=np.bincount(inv,minlength=len(uq)).astype(np.float64)
+            vp=np.stack([np.bincount(inv,weights=pp[:,a_],minlength=len(uq)) for a_ in range(3)],1)/cnt[:,None]
+            vn=np.stack([np.bincount(inv,weights=nn[:,a_],minlength=len(uq)) for a_ in range(3)],1)
+            vn/=np.maximum(np.linalg.norm(vn,axis=1,keepdims=True),1e-9)
+            tri=inv.reshape(-1,3)
+            ok=(tri[:,0]!=tri[:,1])&(tri[:,1]!=tri[:,2])&(tri[:,0]!=tri[:,2])
+            idx=tri[ok].reshape(-1).astype(np.uint32)
+        else:
+            key=np.round(np.concatenate([pp,nn],1)*20000).astype(np.int64)
+            uq,inv=np.unique(key,axis=0,return_inverse=True)
+            first=np.zeros(len(uq),np.int64); first[inv[::-1]]=np.arange(len(inv))[::-1]
+            vp=pp[first]; vn=nn[first]; idx=inv.reshape(-1).astype(np.uint32)
         nb=k.encode(); f.write(struct.pack('<I',len(nb))); f.write(nb)
         f.write(struct.pack('<I',len(vp))); f.write(vp.astype(np.float32).tobytes()); f.write(vn.astype(np.float32).tobytes())
         f.write(struct.pack('<I',len(idx))); f.write(idx.tobytes())

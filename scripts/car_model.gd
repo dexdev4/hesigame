@@ -110,6 +110,104 @@ const PROFILES := {
 		"dash_hw": 0.5,
 		"ws_base_hw": 0.47,
 		"mirror_d": 2.28},
+	"marshal": {
+		"mesh": "res://assets/models/car_marshal.mesh",
+		"mesh_lq": "res://assets/models/car_marshal_lq.mesh",
+		"body": [[0, 0.942, 0.781], [0.1, 0.99, 0.873], [0.3, 1.007, 0.926], [0.7, 1.111, 0.993], [1.2, 1.071, 1], [1.8, 1.071, 0.961], [2.4, 1.071, 0.951], [3, 1.119, 0.949], [3.5, 0.901, 0.985], [3.9, 0.843, 0.966], [4.2, 0.789, 0.96], [4.765, 0.61, 0.704]],
+		"gh": [0.75, 2.975, 1.35, 2.425, 1.031, 1.398, 0.914, 0.556],
+		"pillars": [[0, 0.28], [0.5, 0.54], [0.93, 1]],
+		"rim_frac": 0.7,
+		"tyre": [0.245, 0.245],
+		"wheel": [0.35, 1.035, 3.885],
+		"wheel_x": [0.815, 0.8],
+		"plate_y": 0.62,
+		"badge_y": 0.74,
+		"eye_back": 1.3,
+		"eye_y": 1.228,
+		"dash_drop": 0,
+		"dash_hw": 0.53,
+		"ws_base_hw": 0.5,
+		"mirror_d": 2.38},
+	"lastexit": {
+		"mesh": "res://assets/models/car_lastexit.mesh",
+		"mesh_lq": "res://assets/models/car_lastexit_lq.mesh",
+		"body": [[0, 0.814, 0.813], [0.1, 0.856, 0.923], [0.3, 0.874, 0.965], [0.7, 0.917, 0.996], [1.2, 0.899, 1], [1.8, 0.899, 0.947], [2.4, 0.899, 0.92], [3, 0.813, 0.931], [3.5, 0.795, 0.888], [3.9, 0.735, 0.94], [4.2, 0.623, 0.875], [4.515, 0.473, 0.666]],
+		"gh": [0.85, 2.67, 1.57, 2.34, 0.859, 1.104, 0.744, 0.545],
+		"pillars": [[0, 0.28], [0.5, 0.54], [0.93, 1]],
+		"rim_frac": 0.7,
+		"tyre": [0.27, 0.27],
+		"wheel": [0.35, 0.885, 3.535],
+		"wheel_x": [0.87, 0.835],
+		"plate_y": 0.62,
+		"badge_y": 0.74,
+		"eye_back": 1.49,
+		"eye_y": 0.828,
+		"dash_drop": 0.17,
+		"dash_hw": 0.5,
+		"ws_base_hw": 0.47,
+		"mirror_d": 2.29},
+	"suv": {
+		"mesh": "res://assets/models/car_traffic_suv.mesh",
+		"mesh_lq": "res://assets/models/car_traffic_suv_lq.mesh",
+		"body": [[0, 1.208, 0.811], [0.1, 1.308, 0.917], [0.3, 1.308, 0.954], [0.7, 1.308, 0.997], [1.2, 1.308, 1], [1.8, 1.308, 0.972], [2.4, 1.308, 0.965], [3, 1.33, 0.967], [3.5, 1.083, 0.991], [3.9, 1.037, 0.979], [4.2, 0.992, 0.971], [4.765, 0.826, 0.726]],
+		"gh": [0.085, 2.9, 0.365, 2.185, 1.268, 1.77, 0.931, 0.67],
+		"pillars": [[0, 0.28], [0.5, 0.54], [0.93, 1]],
+		"rim_frac": 0.7,
+		"tyre": [0.255, 0.255],
+		"wheel": [0.392, 0.965, 3.815],
+		"wheel_x": [0.84, 0.83],
+		"plate_y": 0.7,
+		"badge_y": 0.95,
+		"eye_back": 1.3,
+		"eye_y": 1.6,
+		"dash_drop": 0,
+		"dash_hw": 0.62,
+		"ws_base_hw": 0.59,
+		"mirror_d": 2.14,
+		"lod_near": 18,
+		"no_cabin": false},
+	"van": {
+		"mesh": "res://assets/models/car_traffic_van.mesh",
+		"mesh_lq": "res://assets/models/car_traffic_van_lq.mesh",
+		"body": [[0, 2.15, 0.922], [0.1, 1.39, 0.961], [0.3, 1.39, 0.978], [0.7, 1.39, 0.999], [1.2, 1.39, 0.998], [1.8, 1.39, 0.978], [2.4, 1.39, 0.978], [3, 1.39, 0.978], [3.5, 1.39, 0.977], [3.9, 1.39, 0.991], [4.2, 1.269, 0.992], [5.215, 0.867, 0.769]],
+		"gh": [0.033, 4.04, 0.075, 3.17, 1.35, 2.25, 0.948, 0.849],
+		"pillars": [[0, 0.28], [0.5, 0.54], [0.93, 1]],
+		"rim_frac": 0.7,
+		"tyre": [0.235, 0.235],
+		"wheel": [0.385, 1.165, 4.415],
+		"wheel_x": [0.845, 0.845],
+		"plate_y": 0.7,
+		"badge_y": 0.95,
+		"eye_back": 1.3,
+		"eye_y": 1.71,
+		"dash_drop": 0,
+		"dash_hw": 0.7,
+		"ws_base_hw": 0.7,
+		"mirror_d": 3.12,
+		"lod_near": 18,
+		"no_cabin": false},
+	"truck": {
+		"mesh": "res://assets/models/car_traffic_truck.mesh",
+		"mesh_lq": "res://assets/models/car_traffic_truck_lq.mesh",
+		"body": [[0, 3.91, 1], [0.1, 3.91, 1], [0.7, 0.9, 0.951], [2.4, 0.49, 0.843], [10.955, 1.595, 0.825]],
+		"gh": [9.165, 10.881, 8.725, 10.105, 1.591, 3, 0.901, 0.805],
+		"pillars": [[0, 0.28], [0.5, 0.54], [0.93, 1]],
+		"rim_frac": 0.7,
+		"tyre": [0.3, 0.3],
+		"wheel": [0.51, 1.31, 9.86],
+		"wheel_x": [0.98, 0.98],
+		"plate_y": 0.82,
+		"badge_y": 0.95,
+		"eye_back": 1.3,
+		"eye_y": 1.951,
+		"dash_drop": 0,
+		"dash_hw": 0.7,
+		"ws_base_hw": 0.7,
+		"mirror_d": 10.05,
+		"lod_near": 18,
+		"no_cabin": true,
+		"extra_axles": [2.66],
+		"truck": true},
 	# END IMPORTED PROFILES
 	# Optional shape keys read by BodyBuilder: corner = plan-view corner radii
 	# [tail, nose]; flare / fender = arch flares and wing peaks [rear, front];
@@ -126,11 +224,6 @@ const PROFILES := {
 		"body": [[0.0, 0.86, 0.9], [0.1, 0.93, 0.96], [0.5, 0.98, 1.0], [1.2, 0.99, 1.0], [3.0, 0.96, 1.0], [3.7, 0.9, 1.0], [4.3, 0.84, 0.97], [4.6, 0.75, 0.92], [4.7, 0.66, 0.88]],
 		"gh": [0.95, 3.56, 1.56, 2.76, 0.98, 1.41, 0.93, 0.78], "pillars": [[0.0, 0.14], [0.49, 0.53], [0.93, 1.0]],
 		"roof_drop": 0.03, "rim_frac": 0.66, "tyre": [0.235, 0.235], "head": [-0.16, -0.05, 0.3], "tail": [-0.22, -0.07, 0.48], "wheel": [0.335, 0.98, 3.8], "exhaust": 2, "corner": [0.2, 0.3], "flare": [0.025, 0.02], "crease_h": 0.68},
-	"suv": {
-		"mesh": "res://assets/models/cars/suv.mesh", "mesh_lq": "res://assets/models/cars/suv_lq.mesh",
-		"body": [[0.0, 1.0, 0.92], [0.12, 1.08, 0.98], [0.6, 1.12, 1.0], [3.6, 1.1, 1.0], [4.2, 1.04, 1.0], [4.62, 0.98, 0.96], [4.8, 0.88, 0.9]],
-		"gh": [0.22, 3.9, 0.4, 3.25, 1.11, 1.78, 0.95, 0.86], "pillars": [[0.0, 0.1], [0.36, 0.4], [0.66, 0.7], [0.94, 1.0]],
-		"roof_drop": 0.03, "rim_frac": 0.62, "tyre": [0.245, 0.245], "head": [-0.18, -0.05, 0.32], "tail": [-0.28, -0.08, 0.5], "wheel": [0.38, 0.92, 3.85], "exhaust": 1, "corner": [0.2, 0.28], "flare": [0.03, 0.03], "crease_h": 0.66, "tumble": 0.05},
 	# compact performance saloon after the 2007 E90 M3: 4.58 m long, 1.82 m wide,
 	# 2.76 m wheelbase, short rear and front overhangs, long bonnet, high short
 	# boot, kinked C-pillar, flared wings, quad exhausts
@@ -203,13 +296,6 @@ const PROFILES := {
 		"body": [[0.0, 0.96, 0.88], [0.25, 1.05, 0.97], [0.5, 1.0, 1.0], [2.4, 0.95, 1.0], [2.75, 0.87, 0.98], [3.25, 0.8, 0.96], [3.75, 0.7, 0.92], [4.05, 0.6, 0.82]],
 		"gh": [0.35, 2.66, 0.9, 1.85, 0.97, 1.26, 0.74, 0.54], "pillars": [[0.0, 0.3], [0.9, 1.0]],
 		"rim_frac": 0.68, "tyre": [0.234, 0.234], "wheel": [0.335, 0.71, 3.21], "wheel_x": [0.768, 0.752], "badge_y": 0.75, "eye_back": 1.2, "dash_drop": 0.17, "dash_hw": 0.52, "ws_base_hw": 0.4, "mirror_d": 2.05},
-	# panel van: short sloping bonnet, steep windscreen, tall slab-sided cargo
-	# box with solid panels behind the cab, twin rear doors, tall tail lamps
-	"van": {
-		"body": [[0.0, 1.2, 0.96], [0.08, 1.24, 0.99], [3.55, 1.25, 1.0], [4.2, 1.16, 1.0], [4.7, 1.05, 0.98], [5.1, 0.92, 0.94], [5.2, 0.82, 0.9]],
-		"gh": [0.01, 4.16, 0.03, 3.68, 1.24, 2.2, 0.97, 0.94], "slab": true, "grille": "van", "pillars": [[0.0, 0.79], [0.79, 0.83], [0.95, 1.0]],
-		"rim_frac": 0.6, "tyre": [0.235, 0.235], "head": [-0.2, -0.05, 0.4], "tail": [-0.55, -0.12, 0.8], "drl": "none",
-		"wheel": [0.36, 0.98, 4.38], "exhaust": 1, "corner": [0.1, 0.3], "flare": [0.015, 0.015], "crease_h": 0.62, "tumble": 0.02},
 }
 
 
@@ -697,7 +783,9 @@ static func _kit(id: String, style := {}, lq := false) -> Dictionary:
 	if _kits.has(key):
 		return _kits[key]
 	var kit := {}
-	if id == "truck":
+	if PROFILES.get(id, {}).has("mesh"):
+		kit = _mesh_kit(id, PROFILES[id], Data.SHAPES[id], style, lq)
+	elif id == "truck":
 		kit = _truck_kit()
 	else:
 		kit = _car_kit(id, style, lq)
@@ -1015,17 +1103,23 @@ static func _mesh_kit(id: String, pr: Dictionary, sh: Dictionary, style: Diction
 	names.append("plate")
 	var tyre: Array = pr.tyre
 	var wheels: Array = []
-	for k in 2:
-		var ax: float = pr.wheel[1 + k]
+	var axle_ds: Array = [pr.wheel[1], pr.wheel[2]]
+	axle_ds.append_array(pr.get("extra_axles", []))
+	for k in axle_ds.size():
+		var ax: float = axle_ds[k]
 		# flush with the (flared) body side unless the model says where
-		var x: float = float(pr.wheel_x[k]) if pr.has("wheel_x") else bbm.hw(ax) - float(tyre[k]) / 2.0 - 0.012
-		wheels.append([-x, -ax, tyre[k]])
-		wheels.append([x, -ax, tyre[k]])
+		var x: float = float(pr.wheel_x[mini(k, 1)]) if pr.has("wheel_x") else bbm.hw(ax) - float(tyre[mini(k, 1)]) / 2.0 - 0.012
+		wheels.append([-x, -ax, tyre[mini(k, 1)]])
+		wheels.append([x, -ax, tyre[mini(k, 1)]])
 	kit.merge({"sig_l": sig_l.commit(), "sig_r": sig_r.commit(), "wheels": wheels, "rim_frac": pr.get("rim_frac", 0.66),
-		"r": pr.wheel[0], "ww": tyre[0], "plate_y": plate_y, "plate_z": 0.02, "body": body, "surfaces": names, "lod_near": 22.0})
+		"r": pr.wheel[0], "ww": tyre[0], "plate_y": plate_y, "plate_z": 0.02, "body": body, "surfaces": names, "lod_near": float(pr.get("lod_near", 22.0))})
+	if pr.get("truck", false):
+		kit["truck"] = true
 	if not kit.has("tails"):
 		kit["tails"] = ArrayMesh.new()
-	kit["cabin"] = bbm.cabin_mesh()
+	if not pr.get("no_cabin", false):
+		# the simple seats and dash seen through the glass, kept inside the real body
+		kit["cabin"] = _clamp_mesh(bbm.cabin_mesh(), _shell_of(body, names, sh))
 	return kit
 
 
@@ -1415,6 +1509,9 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a"), style 
 			"head": lamp(Color("#fff6d8"), 2.0), "headlens": _headlens_mat(style.get("halo", false)), "grille": _grille_mat(),
 			"accent": paint(Color(style.get("accent", "#f3f5ef"))),
 		}
+		M["cargo"] = M.paint
+		if kit.get("truck", false):
+			M["paint"] = paint(cab_color)  # tractor unit; the box keeps the main colour
 		var names: Array = kit.surfaces
 		for i in names.size():
 			body.set_surface_override_material(i, M[names[i]])
@@ -1727,7 +1824,25 @@ static func _shell(id: String) -> Dictionary:
 	if _shells.has(id):
 		return _shells[id]
 	var kit := _kit(id, {})
-	var sh: Dictionary = Data.SHAPES[id]
+	var shell := _shell_of(kit.body, kit.surfaces, Data.SHAPES[id])
+	_shells[id] = shell
+	return shell
+
+
+## Every vertex of a mesh moved inside a measured shell.
+static func _clamp_mesh(m: ArrayMesh, shell: Dictionary) -> ArrayMesh:
+	var out := ArrayMesh.new()
+	for si in m.get_surface_count():
+		var arr := m.surface_get_arrays(si)
+		var vs: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+		for vi in vs.size():
+			vs[vi] = _inside_shell(vs[vi], shell)
+		arr[Mesh.ARRAY_VERTEX] = vs
+		out.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+	return out
+
+
+static func _shell_of(body: ArrayMesh, names: Array, sh: Dictionary) -> Dictionary:
 	var L: float = sh.l
 	var hw: float = sh.w / 2.0
 	var nd := int(L / SHELL_STEP) + 2
@@ -1742,10 +1857,8 @@ static func _shell(id: String) -> Dictionary:
 	var back := PackedFloat32Array()  # per (x, height): where the tail panel or rear window is
 	back.resize(nx * ny)
 	back.fill(-99.0)
-	var body: ArrayMesh = kit.body
-	var names: Array = kit.surfaces
 	for si in body.get_surface_count():
-		if not names[si] in ["paint", "glass", "gloss", "dark"]:
+		if not names[si] in ["paint", "cargo", "glass", "gloss", "dark"]:
 			continue  # wheel wells, lamps and plates are not cabin walls
 		var arr := body.surface_get_arrays(si)
 		var V: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
@@ -1787,9 +1900,7 @@ static func _shell(id: String) -> Dictionary:
 					for yi in range(maxi(y0, 0), mini(y1, ny - 1) + 1):
 						var k2 := di * ny + yi
 						side[k2] = minf(side[k2], ax)
-	var shell := {"top": top, "side": side, "back": back, "nd": nd, "nx": nx, "ny": ny}
-	_shells[id] = shell
-	return shell
+	return {"top": top, "side": side, "back": back, "nd": nd, "nx": nx, "ny": ny}
 
 
 ## A cockpit point moved inside the measured shell (with a little clearance).
@@ -2050,7 +2161,7 @@ static func _strap(st: SurfaceTool, a: Vector3, b: Vector3, w: float, t: float) 
 ## extra gauges on the dash top; two_tone = lower dash in the leather colour;
 ## cage = a roll hoop behind the seats. dials = [speedo ring, rev ring, needle].
 ## Imported cars keep the cabin style of the generated body they replaced.
-const CABIN_ALIAS := {"kestrel": "hatch", "bruiser": "muscle", "copperhead": "fastback", "halcyon": "super", "static": "rcoupe"}
+const CABIN_ALIAS := {"kestrel": "hatch", "bruiser": "muscle", "copperhead": "fastback", "halcyon": "super", "static": "rcoupe", "marshal": "msedan", "lastexit": "hyper"}
 const CABINS := {
 	"hot_hatch": {"leather": "#23262b", "insert": "#2f62b0", "stitch": "#5a9bff", "ambient": "#3d8bff", "strip": "#3b4047", "wheel": "flat", "screen": "tablet",
 		"dials": ["#5a9bff", "#e6e6e6", "#ff4a2a"], "accent": "#5a9bff"},

@@ -13,7 +13,11 @@ ROOT = os.path.join(HERE, "..")
 MANIFEST = {
     "kestrel": "car_kestrel", "bruiser": "car_bruiser", "copperhead": "car_copperhead",
     "halcyon": "car_halcyon", "static": "car_static",
+    "marshal": "car_marshal", "lastexit": "car_lastexit",
+    "suv": "car_traffic_suv", "van": "car_traffic_van", "truck": "car_traffic_truck",
 }
+TRAFFIC = {"suv", "van", "truck"}
+FLAGS = {"van": {"van": True}, "truck": {"truck": True}}
 
 
 def fmt(v):
@@ -47,13 +51,24 @@ def entry(sid, name):
         "dash_hw": round(min(d["ws_hw"] * 0.85, 0.7), 2), "ws_base_hw": round(min(d["ws_hw"] * 0.8, 0.7), 2),
         "mirror_d": round(gh[3] - 0.05, 2),
     }
+    if sid in TRAFFIC:
+        pr["lod_near"] = 18.0
+        pr["no_cabin"] = sid == "truck"
+        pr["plate_y"] = 0.82 if sid == "truck" else 0.7
+        pr["badge_y"] = 0.95
+        if sid == "truck":
+            ax = d["axles"]
+            pr["wheel"] = [d["wheel"][0], ax[0], ax[-1]]
+            pr["extra_axles"] = ax[1:-1]
+            pr["truck"] = True
     lines = ['\t"%s": {' % sid]
     keys = list(pr.keys())
     chunk = []
     for k in keys:
         chunk.append('"%s": %s' % (k, fmt(pr[k])))
     lines.append("\t\t" + ",\n\t\t".join(chunk) + "},")
-    shape = '\t"%s": {"w": %.2f, "l": %.2f, "b": 0.8, "t": %.2f, "c0": 0.15, "c1": 0.66, "ins": 0.15},' % (sid, d["W"], d["L"], d["roof"])
+    extra = "".join(', "%s": true' % k for k in FLAGS.get(sid, {}))
+    shape = '\t"%s": {"w": %.2f, "l": %.2f, "b": 0.8, "t": %.2f, "c0": 0.15, "c1": 0.66, "ins": 0.15%s},' % (sid, d["W"], d["L"], d["roof"], extra)
     return "\n".join(lines), shape
 
 

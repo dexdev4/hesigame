@@ -15,12 +15,16 @@ const SHAPES := {
 	"copperhead": {"w": 1.96, "l": 4.80, "b": 0.8, "t": 1.29, "c0": 0.15, "c1": 0.66, "ins": 0.15},
 	"halcyon": {"w": 2.02, "l": 4.50, "b": 0.8, "t": 1.10, "c0": 0.15, "c1": 0.66, "ins": 0.15},
 	"static": {"w": 2.02, "l": 4.50, "b": 0.8, "t": 1.10, "c0": 0.15, "c1": 0.66, "ins": 0.15},
+	"marshal": {"w": 1.91, "l": 4.76, "b": 0.8, "t": 1.40, "c0": 0.15, "c1": 0.66, "ins": 0.15},
+	"lastexit": {"w": 2.02, "l": 4.51, "b": 0.8, "t": 1.10, "c0": 0.15, "c1": 0.66, "ins": 0.15},
+	"suv": {"w": 1.98, "l": 4.76, "b": 0.8, "t": 1.77, "c0": 0.15, "c1": 0.66, "ins": 0.15},
+	"van": {"w": 2.02, "l": 5.21, "b": 0.8, "t": 2.25, "c0": 0.15, "c1": 0.66, "ins": 0.15, "van": true},
+	"truck": {"w": 2.52, "l": 10.96, "b": 0.8, "t": 3.91, "c0": 0.15, "c1": 0.66, "ins": 0.15, "truck": true},
 	# END IMPORTED SHAPES
 	"hatch":  {"w": 1.76, "l": 4.0, "b": 0.84, "t": 1.44, "c0": 0.10, "c1": 0.64, "ins": 0.12},
 	"sedan":  {"w": 1.84, "l": 4.7, "b": 0.80, "t": 1.41, "c0": 0.27, "c1": 0.70, "ins": 0.14},
 	# compact performance saloon (proportions after the 2007 E90 M3)
 	"msedan": {"w": 1.82, "l": 4.58, "b": 0.80, "t": 1.43, "c0": 0.19, "c1": 0.68, "ins": 0.13},
-	"suv":    {"w": 1.96, "l": 4.8, "b": 1.02, "t": 1.78, "c0": 0.06, "c1": 0.72, "ins": 0.10},
 	"muscle": {"w": 1.94, "l": 4.8, "b": 0.82, "t": 1.33, "c0": 0.32, "c1": 0.64, "ins": 0.18, "spoiler": true},
 	"super":  {"w": 2.00, "l": 4.5, "b": 0.70, "t": 1.2, "c0": 0.30, "c1": 0.62, "ins": 0.22, "spoiler": true},
 	"fastback": {"w": 1.92, "l": 4.75, "b": 0.82, "t": 1.31, "c0": 0.32, "c1": 0.64, "ins": 0.18, "spoiler": true},
@@ -30,8 +34,6 @@ const SHAPES := {
 	"hot_hatch": {"w": 1.9, "l": 4.25, "b": 0.8, "t": 1.42, "c0": 0.1, "c1": 0.64, "ins": 0.14},
 	"sport_sedan": {"w": 1.91, "l": 4.75, "b": 0.8, "t": 1.4, "c0": 0.2, "c1": 0.66, "ins": 0.14},
 	"compact": {"w": 1.82, "l": 4.05, "b": 0.8, "t": 1.33, "c0": 0.1, "c1": 0.64, "ins": 0.14},
-	"van":    {"w": 2.00, "l": 5.2, "b": 2.25, "t": 2.25, "c0": 0.0, "c1": 0.0, "ins": 0.0, "van": true},
-	"truck":  {"w": 2.50, "l": 11.0, "b": 3.9, "t": 3.9, "c0": 0.0, "c1": 0.0, "ins": 0.0, "truck": true},
 }
 
 # engine: cylinder count, idle/redline rpm, and synth character (res = exhaust
@@ -78,7 +80,7 @@ const CARS := [
 		"blurb": "Stage 1 boss car. Grippier than any muscle car should be."},
 	{"id": "marshal", "fuel": "mid", "tank": 50, "style": {"rim": "double", "rim_color": "#c3c8ce", "dome": true, "gills": true, "split_grille": true, "ltail": true, "halo": true, "lip": true, "crease": true, "m_bumper": true, "quad_diffuser": true, "caliper": "#1fa3ff", "badge": "MARSHAL", "plate": "BOSS 02"},
 		"engine": {"cyl": 8, "idle": 850, "redline": 8400, "res": 2.0, "decay": 2.4, "var": 0.12, "uneven": 0.1, "rasp": 0.42, "pops": 0.8, "turbo": false},
-		"name": "Night Marshal", "shape": "msedan", "color": "#26437c", "accel": 8.6, "brake": 11.5, "grip": 11.5, "lat": 5.2, "top": 66.0, "price": 9000, "boss": 1,
+		"name": "Night Marshal", "shape": "marshal", "color": "#26437c", "accel": 8.6, "brake": 11.5, "grip": 11.5, "lat": 5.2, "top": 66.0, "price": 9000, "boss": 1,
 		"blurb": "Stage 2 boss car. A four-door that hunts supercars: high-revving V8, quad exhausts, power-dome bonnet."},
 	{"id": "static", "fuel": "premium", "tank": 48, "style": {"rim": "mesh", "rim_color": "#f3f5ef", "stripes": true, "accent": "#f3f5ef", "intakes": true, "vents": true, "splitter": true, "caliper": "#1fa3ff", "badge": "BLUE STATIC", "plate": "BOSS 03"},
 		"engine": {"cyl": 6, "idle": 900, "redline": 8200, "res": 2.5, "decay": 2.2, "var": 0.05, "uneven": 0.02, "rasp": 0.3, "pops": 0.5, "turbo": true},
@@ -86,7 +88,7 @@ const CARS := [
 		"blurb": "Stage 3 boss car. Twitchy and very fast."},
 	{"id": "lastexit", "fuel": "premium", "tank": 58, "style": {"rim": "turbine", "rim_color": "#c9a227", "stripes": true, "accent": "#1b1e23", "intakes": true, "vents": true, "splitter": true, "lightbar": true, "caliper": "#c62828", "badge": "LAST EXIT", "plate": "BOSS 04"},
 		"engine": {"cyl": 12, "idle": 1000, "redline": 9200, "res": 2.8, "decay": 1.9, "var": 0.05, "uneven": 0.02, "rasp": 0.25, "pops": 0.5, "turbo": false},
-		"name": "Last Exit", "shape": "hyper", "color": "#b0122a", "accel": 11.0, "brake": 13.0, "grip": 14.0, "lat": 6.0, "top": 81.0, "price": 30000, "boss": 3,
+		"name": "Last Exit", "shape": "lastexit", "color": "#b0122a", "accel": 11.0, "brake": 13.0, "grip": 14.0, "lat": 6.0, "top": 81.0, "price": 30000, "boss": 3,
 		"blurb": "Stage 4 boss car. The fastest thing on the interstate."},
 ]
 

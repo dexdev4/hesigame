@@ -35,11 +35,11 @@ const SHAPES := {
 const CARS := [
 	{"id": "pulse", "fuel": "regular", "tank": 45, "style": {"rim": "5spoke", "rim_color": "#9aa0a6", "caliper": "#2a2c30", "badge": "PULSE", "plate": "PLS 100"},
 		"engine": {"cyl": 4, "idle": 850, "redline": 6900, "res": 2.4, "decay": 2.3, "var": 0.05, "uneven": 0.03, "rasp": 0.42, "pops": 0.25, "turbo": true},
-		"name": "Pulse Hatch", "shape": "hot_hatch", "color": "#33435a", "accel": 5.4, "brake": 9.0, "grip": 9.2, "lat": 4.3, "top": 50.0, "price": 0, "boss": -1,
+		"name": "Pulse Hatch", "shape": "hot_hatch", "color": "#2f62b0", "accel": 5.4, "brake": 9.0, "grip": 9.2, "lat": 4.3, "top": 50.0, "price": 0, "boss": -1,
 		"blurb": "Your starter car. A sharp little hot hatch with a roof spoiler."},
 	{"id": "vector", "fuel": "regular", "tank": 52, "style": {"rim": "multi", "rim_color": "#2a2c30", "caliper": "#d9a21b", "badge": "VECTOR GS", "plate": "VGS 220"},
 		"engine": {"cyl": 4, "idle": 820, "redline": 7000, "res": 2.2, "decay": 2.5, "var": 0.06, "uneven": 0.04, "rasp": 0.38, "pops": 0.4, "turbo": true},
-		"name": "Vector GS", "shape": "sport_sedan", "color": "#8e0f17", "accel": 5.45, "brake": 9.1, "grip": 9.3, "lat": 4.35, "top": 51.0, "price": 600, "boss": -1,
+		"name": "Vector GS", "shape": "sport_sedan", "color": "#c11a22", "accel": 5.45, "brake": 9.1, "grip": 9.3, "lat": 4.35, "top": 51.0, "price": 600, "boss": -1,
 		"blurb": "A turbocharged sports saloon with a boot spoiler. Room for four, pace for one."},
 	{"id": "hornet", "fuel": "regular", "tank": 40, "style": {"rim": "5spoke", "rim_color": "#2a2c30", "caliper": "#c62828", "badge": "HORNET", "plate": "HRN 115"},
 		"engine": {"cyl": 4, "idle": 880, "redline": 7200, "res": 2.5, "decay": 2.2, "var": 0.05, "uneven": 0.03, "rasp": 0.5, "pops": 0.5, "turbo": true},

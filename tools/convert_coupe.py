@@ -3,11 +3,17 @@
 import json,struct,sys
 import numpy as np
 from PIL import Image
-# usage: python3 tools/convert_coupe.py MODEL.glb OUT.mesh [GLASS_MIN_Y]
+# usage: python3 tools/convert_coupe.py MODEL.glb OUT.mesh [GLASS_MIN_Y] [lines] [gloss]
 #   dark texture above GLASS_MIN_Y (default 0.84 m) is window glass, below it black trim
 import io
 src,out=sys.argv[1:3]
 GLASS_Y=float(sys.argv[3]) if len(sys.argv)>3 else 0.84
+FLAGS=sys.argv[4:]
+LINES='lines' in FLAGS          # carve the texture's shut lines and handles
+GLOSS_TRIM='gloss' in FLAGS     # black lower panels as gloss black
+BODYSIDE='bodyside' in FLAGS    # paint the broad black lower bodyside band
+RED_PAINT=False
+PAINT_LUM=0.3
 d=open(src,'rb').read()
 ln=struct.unpack('<I',d[12:16])[0]; j=json.loads(d[20:20+ln])
 off=20+ln; bl=struct.unpack('<I',d[off:off+4])[0]; B=d[off+8:off+8+bl]
@@ -33,7 +39,16 @@ def classify(uv,pos):
     k=np.full(len(uv),'paint',dtype=object)
     dark=lum<0.07
     k[dark&(pos[:,1]>GLASS_Y)]='glass'
-    k[dark&(pos[:,1]<=GLASS_Y)]='dark'
+    k[dark&(pos[:,1]<=GLASS_Y)]='gloss' if GLOSS_TRIM else 'dark'
+    if BODYSIDE:
+        # the broad black band low on the sides becomes body colour above a
+        # black sill strip (thin lines are not 'big' dark areas and stay)
+        big=samp(BIG_DARK,uv)[:,0]>0.5
+        k[dark&big&(pos[:,1]>0.34)&(pos[:,1]<=GLASS_Y)&(np.abs(pos[:,0])>0.8)]='paint'
+    if LINES:
+        # thin painted details: shut lines, handles, fuel flap (darker than the paint)
+        ratio=lum/max(PAINT_LUM,1e-3)
+        k[(k=='paint')&(ratio<0.72)&(~dark)]='gloss'
     k[(a[:,0]>0.6)&(a[:,1]>0.6)&(a[:,2]>0.6)]='headlens'
     if not RED_PAINT:  # red lens areas count as tail lamp, unless the car itself is red
         k[(a[:,0]>0.35)&(a[:,1]<0.2)&(a[:,2]<0.2)]='tail'
@@ -50,23 +65,74 @@ p=j['meshes'][0]['primitives'][0]
 REAR=-float(j['accessors'][p['attributes']['POSITION']]['min'][2])  # rear bumper to z = 0
 P=acc(p['attributes']['POSITION']); N=acc(p['attributes']['NORMAL']); UV=acc(p['attributes']['TEXCOORD_0']); T=acc(p['indices']).reshape(-1,3)
 tp=P[T]; tn=N[T]; tu=UV[T]
+if BODYSIDE:
+    # dark areas wider than a few texels (opening = erode then dilate)
+    _dk=(A.mean(2)<0.07)
+    def _shift_all(m,r,op):
+        out=m.copy()
+        for dy in range(-r,r+1):
+            for dx in range(-r,r+1):
+                sh=np.roll(np.roll(m,dy,0),dx,1)
+                out=op(out,sh)
+        return out
+    _er=_shift_all(_dk,4,np.logical_and)
+    BIG_DARK=_shift_all(_er,5,np.logical_or).astype(np.float32)[...,None].repeat(3,2)
 # the body colour: the commonest albedo over the body
 _cols=(samp(A,tu.mean(1))*255).astype(int)//16
 _vals,_cnt=np.unique(_cols,axis=0,return_counts=True)
 _paint=_vals[np.argmax(_cnt)]*16/255.0
 RED_PAINT=bool(_paint[0]>0.3 and _paint[1]<0.2 and _paint[2]<0.2)
+PAINT_LUM=float(_paint.mean())
 print('paint colour',(_paint*255).astype(int),'red paint' if RED_PAINT else '')
 MAXD=3
 total=0
+if LINES:
+    # texel categories (paint, dark, white, red, lit head, lit tail) and a
+    # summed-area table for each, so a triangle can ask "does more than one
+    # kind of thing lie under me?" however thin it is (shut lines are ~2 texels)
+    _lum=A.mean(2)
+    _cat=np.zeros(_lum.shape,np.int8)
+    _cat[_lum<0.07]=1
+    _cat[(A[...,0]>0.6)&(A[...,1]>0.6)&(A[...,2]>0.6)]=2
+    if not RED_PAINT:
+        _cat[(A[...,0]>0.35)&(A[...,1]<0.2)&(A[...,2]<0.2)]=3
+    _Eb=np.asarray(Image.fromarray((E*255).astype(np.uint8)).resize((A.shape[1],A.shape[0])),dtype=np.float32)/255
+    _cat[(_Eb[...,0]>0.5)&(_Eb[...,1]>0.5)]=4
+    _cat[(_Eb[...,0]>0.3)&(_Eb[...,1]<0.2)]=5
+    _sat=[]
+    for ci in range(6):
+        m=(_cat==ci).astype(np.int32)
+        st=np.zeros((m.shape[0]+1,m.shape[1]+1),np.int32)
+        st[1:,1:]=m.cumsum(0).cumsum(1)
+        _sat.append(st)
+    _H,_W=_lum.shape
+def mixed(uv):
+    """True where a triangle (UVs (n,3,2)) covers more than one kind of texel."""
+    c=uv.mean(1,keepdims=True)
+    uv=c+(uv-c)*0.62  # the middle of the triangle: slanted ones barely overlap a line's box
+    u=uv[...,0]*_W; v=uv[...,1]*_H
+    x0=np.clip(np.floor(u.min(1)).astype(int),0,_W-1); x1=np.clip(np.ceil(u.max(1)).astype(int),1,_W)
+    y0=np.clip(np.floor(v.min(1)).astype(int),0,_H-1); y1=np.clip(np.ceil(v.max(1)).astype(int),1,_H)
+    kinds=np.zeros(len(uv),int)
+    for st in _sat:
+        cnt=st[y1,x1]-st[y0,x1]-st[y1,x0]+st[y0,x0]
+        kinds+=(cnt>0)
+    big=((x1-x0)*(y1-y0))>2  # nothing left to resolve below a couple of texels
+    return (kinds>1)&big
 for depth in range(MAXD+1):
     c=classify(tu.mean(1),tp.mean(1))
     if depth==MAXD:
         final=(tp,tn,tu,c); break
-    # does any corner (pulled slightly in) disagree with the centroid?
     m=tp.mean(1,keepdims=True); mu=tu.mean(1,keepdims=True)
     dis=np.zeros(len(tp),bool)
+    if LINES:
+        dis|=mixed(tu)
     for v in range(3):
+        # does any corner (pulled slightly in) disagree with the centroid?
         cv=classify((tu[:,v]*0.9+mu[:,0]*0.1),(tp[:,v]*0.9+m[:,0]*0.1))
+        if LINES:
+            dis|=cv!=c
+            continue
         # refine along glass and lamp edges, and the big black lower panels
         # (the thin panel lines higher up are left alone: too many triangles)
         low=(tp[:,v,1]<0.55)

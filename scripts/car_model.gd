@@ -95,14 +95,14 @@ const PROFILES := {
 	"hot_hatch": {
 		"mesh": "res://assets/models/hatchback.mesh",
 		"body": [[0.0, 1.0, 0.86], [0.25, 1.03, 0.95], [0.6, 1.04, 1.0], [2.4, 0.97, 1.0], [2.75, 0.95, 1.0], [3.0, 0.9, 0.99], [3.5, 0.83, 0.97], [4.0, 0.71, 0.9], [4.25, 0.6, 0.75]],
-		"gh": [0.1, 2.72, 0.5, 2.15, 1.0, 1.36, 0.8, 0.66], "pillars": [[0.0, 0.3], [0.9, 1.0]],
+		"gh": [0.1, 2.72, 0.5, 2.15, 1.0, 1.33, 0.78, 0.56], "pillars": [[0.0, 0.3], [0.9, 1.0]],
 		"rim_frac": 0.7, "tyre": [0.246, 0.246], "wheel": [0.35, 0.75, 3.39], "wheel_x": [0.815, 0.8], "badge_y": 0.74, "plate_y": 0.62,
 		"dash_drop": 0.12, "dash_hw": 0.6, "ws_base_hw": 0.5, "mirror_d": 2.2},
 	# sports saloon, from an imported model (assets/models/sport_sedan.mesh)
 	"sport_sedan": {
 		"mesh": "res://assets/models/sport_sedan.mesh",
 		"body": [[0.0, 0.96, 0.84], [0.25, 1.0, 0.93], [0.6, 1.02, 0.98], [1.2, 1.0, 1.0], [3.0, 0.97, 1.0], [3.3, 0.95, 1.0], [3.6, 0.89, 0.99], [4.0, 0.82, 0.97], [4.5, 0.72, 0.92], [4.75, 0.6, 0.8]],
-		"gh": [0.72, 3.2, 1.3, 2.55, 0.99, 1.34, 0.8, 0.66], "pillars": [[0.0, 0.25], [0.9, 1.0]],
+		"gh": [0.72, 3.2, 1.35, 2.5, 0.99, 1.32, 0.78, 0.56], "pillars": [[0.0, 0.25], [0.9, 1.0]],
 		"rim_frac": 0.7, "tyre": [0.246, 0.246], "wheel": [0.35, 1.02, 3.87], "wheel_x": [0.815, 0.8], "badge_y": 0.74, "plate_y": 0.62,
 		"dash_drop": 0.13, "dash_hw": 0.55, "ws_base_hw": 0.42, "mirror_d": 2.45},
 	# compact hatchback coupe, also from an imported model (assets/models/compact_coupe.mesh)
@@ -1623,6 +1623,87 @@ static func _glass_solid() -> Material:
 		"reflect_amount": 1.25, "reflect_f0": 0.07})
 
 
+static var _shells := {}
+const SHELL_STEP := 0.04
+
+
+## The inside of an imported body, measured from its mesh: for each spot on
+## the floor plan the lowest roof (or glass) overhead, and for each height
+## along the car how far out the side walls are. Used to keep the cockpit
+## inside bodywork it was not built for.
+static func _shell(id: String) -> Dictionary:
+	if _shells.has(id):
+		return _shells[id]
+	var kit := _kit(id, {})
+	var sh: Dictionary = Data.SHAPES[id]
+	var L: float = sh.l
+	var hw: float = sh.w / 2.0
+	var nd := int(L / SHELL_STEP) + 2
+	var nx := int(hw / SHELL_STEP) + 2
+	var ny := int(2.4 / SHELL_STEP) + 2
+	var top := PackedFloat32Array()
+	top.resize(nd * nx)
+	top.fill(99.0)
+	var side := PackedFloat32Array()
+	side.resize(nd * ny)
+	side.fill(99.0)
+	var body: ArrayMesh = kit.body
+	var names: Array = kit.surfaces
+	for si in body.get_surface_count():
+		if not names[si] in ["paint", "glass", "gloss", "dark"]:
+			continue  # wheel wells, lamps and plates are not cabin walls
+		var arr := body.surface_get_arrays(si)
+		var V: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+		var Nn: PackedVector3Array = arr[Mesh.ARRAY_NORMAL]
+		var I: PackedInt32Array = arr[Mesh.ARRAY_INDEX]
+		for t in range(0, I.size(), 3):
+			var a := V[I[t]]
+			var b := V[I[t + 1]]
+			var c := V[I[t + 2]]
+			var n := (Nn[I[t]] + Nn[I[t + 1]] + Nn[I[t + 2]]).normalized()
+			var ymin := minf(a.y, minf(b.y, c.y))
+			var ymax := maxf(a.y, maxf(b.y, c.y))
+			if ymax < 0.7:
+				continue
+			var d0 := int(-maxf(a.z, maxf(b.z, c.z)) / SHELL_STEP)
+			var d1 := int(-minf(a.z, minf(b.z, c.z)) / SHELL_STEP) + 1
+			if n.y > 0.55:  # roof, windscreen and bonnet seen from inside (side glass is a wall)
+				var x0 := int(minf(absf(a.x), minf(absf(b.x), absf(c.x))) / SHELL_STEP)
+				var x1 := int(maxf(absf(a.x), maxf(absf(b.x), absf(c.x))) / SHELL_STEP) + 1
+				for di in range(maxi(d0, 0), mini(d1, nd - 1) + 1):
+					for xi in range(maxi(x0, 0), mini(x1, nx - 1) + 1):
+						var k := di * nx + xi
+						top[k] = minf(top[k], ymin)
+			if absf(n.x) > 0.45:  # side walls and side glass
+				var ax := minf(absf(a.x), minf(absf(b.x), absf(c.x)))
+				var y0 := int(ymin / SHELL_STEP)
+				var y1 := int(ymax / SHELL_STEP) + 1
+				for di in range(maxi(d0, 0), mini(d1, nd - 1) + 1):
+					for yi in range(maxi(y0, 0), mini(y1, ny - 1) + 1):
+						var k2 := di * ny + yi
+						side[k2] = minf(side[k2], ax)
+	var shell := {"top": top, "side": side, "nd": nd, "nx": nx, "ny": ny}
+	_shells[id] = shell
+	return shell
+
+
+## A cockpit point moved inside the measured shell (with a little clearance).
+static func _inside_shell(v: Vector3, shell: Dictionary) -> Vector3:
+	var nd: int = shell.nd
+	var nx: int = shell.nx
+	var ny: int = shell.ny
+	var di := clampi(int(-v.z / SHELL_STEP), 0, nd - 1)
+	var xi := clampi(int(absf(v.x) / SHELL_STEP), 0, nx - 1)
+	var t: float = (shell.top as PackedFloat32Array)[di * nx + xi]
+	if t < 90.0 and v.y > t - 0.025:
+		v.y = t - 0.025
+	var yi := clampi(int(v.y / SHELL_STEP), 0, ny - 1)
+	var sd: float = (shell.side as PackedFloat32Array)[di * ny + yi]
+	if sd < 90.0 and absf(v.x) > sd - 0.025:
+		v.x = signf(v.x) * maxf(sd - 0.025, 0.0)
+	return v
+
+
 ## Gloss-black trim: window surrounds, B-pillars, mirror arms.
 static func _gloss() -> Material:
 	return _car_shader_mat("gloss", {"base_color": Color("#0b0c0e"), "metallic": 0.0, "roughness": 0.18, "coat": 0.8,
@@ -2052,10 +2133,17 @@ func build_interior() -> void:
 	cloth.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mats["cloth"] = cloth
 	var order: Array = []
+	var shell := _shell(_shape_id) if pr.has("mesh") else {}
 	for k in keys:
 		var arrays: Array = (S[k] as SurfaceTool).commit_to_arrays()
 		if arrays[Mesh.ARRAY_VERTEX] == null or (arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array).is_empty():
 			continue
+		if not shell.is_empty():
+			# imported bodies: squash anything that would cross the real roof or sides
+			var vs: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+			for vi in vs.size():
+				vs[vi] = _inside_shell(vs[vi], shell)
+			arrays[Mesh.ARRAY_VERTEX] = vs
 		interior.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 		order.append(k)
 	var mi := MeshInstance3D.new()
@@ -2105,6 +2193,8 @@ func build_interior() -> void:
 	mirror.mesh = box_mesh(Vector3(0.24, 0.07, 0.03))
 	mirror.material_override = mats.dash
 	mirror.position = Vector3(0, yr - 0.12, -float(pr.get("mirror_d", g[3] - 0.08)))  # at the top of the windscreen
+	if not shell.is_empty():
+		mirror.position = _inside_shell(mirror.position + Vector3(0, 0.05, 0), shell) - Vector3(0, 0.05, 0)
 	_body.add_child(mirror)
 	var glassm := MeshInstance3D.new()
 	glassm.mesh = box_mesh(Vector3(0.22, 0.055, 0.005))

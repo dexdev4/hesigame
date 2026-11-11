@@ -180,6 +180,9 @@ var _sky: Sky
 var _sun: DirectionalLight3D
 var garage: GarageScene
 var _orbit_i := -1
+var _kick := Vector2.ZERO      # suspension kick after an impact: x = roll, y = pitch
+var _kick_v := Vector2.ZERO
+var _hitstop := 0.0            # a brief slow-down on a hard impact
 var _post: ColorRect
 var _post_mat: ShaderMaterial
 var _vig_mat: ShaderMaterial
@@ -1392,6 +1395,11 @@ func _hit(reason: String, other: Vehicle = null) -> void:
 		jolt = 0.8
 	shake = jolt
 	_flash.color.a = 0.25 + 0.2 * jolt
+	# the body rocks on its springs away from the blow, and a hard one stops time for a beat
+	var kside := signf(other.x - player.x) if other else side
+	_kick_v += Vector2(-kside * 2.4 * jolt, -2.0 * jolt)
+	if jolt > 0.85:
+		_hitstop = 0.1
 	if jolt > 0.7:
 		_debris_at(Vector3(player.x, 0.6, -player.l * 0.7), Save.car_color(Data.car_by_id(Save.data.selected)), 16)
 	sparks.position = Vector3(player.x, 0.6, -player.l * 0.5)
@@ -1694,6 +1702,8 @@ func _crash_collide(o: Vehicle) -> void:
 		print("[autotest] crash contact j=%.1f side=%.2f %s" % [j, n.dot(r), "truck" if o.truck else ""])
 	o.spin_rate += signf(n.x) * minf(j / mo * 0.25, 2.5)  # the struck car spins out
 	o.slide += n.x * minf(j / mo * 0.4, 5.0)
+	if j > 3.0:
+		_hitstop = maxf(_hitstop, 0.06)
 	if j > 4.0:
 		_debris_at(Vector3(contact.x, 0.6, -(contact.y - player.z)), Save.car_color(Data.car_by_id(Save.data.selected)), 20)
 	if j > 2.0:
@@ -2300,10 +2310,10 @@ func _add_head_spots() -> void:
 	for sd in [-1.0, 1.0]:
 		var sp := SpotLight3D.new()
 		sp.position = Vector3(sd * sh.w * 0.32, 0.7, -sh.l + 0.2)
-		sp.rotation_degrees = Vector3(-2.2, sd * -1.5, 0.0)  # along the road (-z), dipped a little, toed in
+		sp.rotation_degrees = Vector3(-2.5, sd * -2.5, 0.0)  # along the road, dipped, each lamp angled slightly outwards
 		sp.light_color = Color("#fff1d6")
-		sp.spot_range = 95.0
-		sp.spot_angle = 17.0
+		sp.spot_range = 110.0
+		sp.spot_angle = 30.0
 		sp.spot_attenuation = 0.45
 		sp.spot_angle_attenuation = 1.6  # soft edge to the cone
 		sp.shadow_enabled = false
@@ -2467,6 +2477,9 @@ func _process(delta: float) -> void:
 		_check_shots()
 		return
 	var dt := minf(delta, 0.05)
+	if _hitstop > 0.0:
+		_hitstop -= delta
+		dt *= 0.2
 	if _sim_running():
 		if crash and state == S.PLAY:
 			# slow motion as the car lets go, easing back to real time
@@ -2597,8 +2610,11 @@ func _sync_visuals(delta: float) -> void:
 		player.model.set_crash_pose(player.x, crash.yaw, crash.roll, crash.air)
 		_crash_marks()
 	else:
-		player.model.set_roll(clampf(-player.v * player.yaw_rate * 0.0035, -0.035, 0.035))  # leans out of the turn
-		player.model.set_pitch(clampf(-player_accel * 0.0018, -0.014, 0.02))
+		# the kick is a damped spring (about 3 Hz, settling in half a second)
+		_kick_v += (-_kick * 150.0 - _kick_v * 9.0) * delta
+		_kick += _kick_v * delta
+		player.model.set_roll(clampf(-player.v * player.yaw_rate * 0.0035, -0.035, 0.035) + _kick.x * 0.05)
+		player.model.set_pitch(clampf(-player_accel * 0.0018, -0.014, 0.02) + _kick.y * 0.05)
 		smoke.emitting = false
 	skids.update_view(player.z)
 	var cam_mode: String = Save.data.cam.mode
@@ -2900,7 +2916,38 @@ func _refresh_inputs() -> void:
 	hud.set_pedals(in_gas and state == S.PLAY, in_brake and state == S.PLAY)
 
 
+const EDGE := 36.0        # a swipe that starts this close to a screen edge goes back
+const EDGE_PULL := 110.0  # and has to travel this far inwards
+
+
+## Swipe in from the left or right edge of the screen to go back.
+func _edge_swipe(event: InputEvent) -> bool:
+	if event is InputEventScreenTouch:
+		var e := event as InputEventScreenTouch
+		var w := get_viewport().get_visible_rect().size.x
+		if e.pressed and (e.position.x < EDGE or e.position.x > w - EDGE):
+			_edge = {"i": e.index, "x0": e.position.x, "dir": 1.0 if e.position.x < EDGE else -1.0}
+		elif not e.pressed and not _edge.is_empty() and e.index == _edge.i:
+			_edge = {}
+	elif event is InputEventScreenDrag and not _edge.is_empty() and (event as InputEventScreenDrag).index == _edge.i:
+		var d := ((event as InputEventScreenDrag).position.x - float(_edge.x0)) * float(_edge.dir)
+		if d > EDGE_PULL:
+			_edge = {}
+			touches.clear()
+			_refresh_inputs()
+			if state != S.PLAY:  # mid-drive it must not pause by accident
+				_go_back()
+				get_viewport().set_input_as_handled()
+			return true
+	return not _edge.is_empty()
+
+
+var _edge := {}
+
+
 func _input(event: InputEvent) -> void:
+	if _edge_swipe(event) and state != S.PLAY:
+		return  # an edge swipe is not a tap on whatever is underneath
 	if state == S.REPLAY:
 		_replay_input(event)
 		return
@@ -2975,20 +3022,27 @@ func _notification(what: int) -> void:
 			if state == S.PLAY and not autotest:
 				_pause()
 		NOTIFICATION_WM_GO_BACK_REQUEST:
-			if state == S.REPLAY:
-				_close_replay()
-			elif state == S.REFUEL:
-				_pay_and_go()
-			elif hud.screens.pedals.visible:
-				_on_act("pedal_done", "")
-			elif hud.screens.settings.visible:
-				_on_act("settings_back", "")
-			elif state == S.PLAY:
-				_pause()
-			elif state == S.PAUSED:
-				_resume()
-			elif state == S.GARAGE or state == S.OVER:
-				_go_menu()
+			_go_back()
+
+
+## The back button, or a swipe in from the edge of the screen.
+func _go_back() -> void:
+	if state == S.REPLAY:
+		_close_replay()
+	elif state == S.REFUEL:
+		_pay_and_go()
+	elif hud.screens.pedals.visible:
+		_on_act("pedal_done", "")
+	elif hud.screens.settings.visible:
+		_on_act("settings_back", "")
+	elif hud.screens.help.visible or hud.screens.map.visible:
+		_on_act("menu", "")
+	elif state == S.PLAY:
+		_pause()
+	elif state == S.PAUSED:
+		_resume()
+	elif state == S.GARAGE or state == S.OVER:
+		_go_menu()
 
 
 # ---------------------------------------------------------------- screens
@@ -3101,6 +3155,7 @@ func _on_act(action: String, arg: String) -> void:
 			hud.render_map()
 			hud.show_screen("map")
 			hud.call_deferred("_apply_safe_area")
+			get_tree().create_timer(0.15).timeout.connect(hud._apply_safe_area)  # again once the panel has its real size
 		"route":
 			var ri := int(arg)
 			if ri < int(Save.data.get("routes", 1)):

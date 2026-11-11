@@ -40,6 +40,7 @@ var _far_mats: Array[ShaderMaterial] = []
 var _pool_mat: StandardMaterial3D
 var _pools: MeshInstance3D
 var _hill_mat: StandardMaterial3D
+var _rock_mat: StandardMaterial3D
 var _oncoming: Array = []   # {model, x, z, v}
 var _t := 0.0
 
@@ -120,6 +121,7 @@ func _ready() -> void:
 	_build_loops()
 	_build_trees()
 	_build_hills()
+	_build_rocks()
 	_build_far()
 	_build_km_sign()
 	_build_gantry()
@@ -541,6 +543,8 @@ func _build_trees() -> void:
 func set_biome(land: Dictionary) -> void:
 	for k in ["grass_a", "grass_b", "field", "dirt"]:
 		_grass_mat.set_shader_parameter(k, land[k])
+	if _rock_mat:
+		_rock_mat.albedo_color = (land.dirt as Color).lerp(Color("#8d8a82"), 0.55)
 	if _hill_mat:
 		_hill_mat.albedo_color = (land.grass_b as Color).lerp(land.field, 0.2).darkened(0.08)
 
@@ -600,6 +604,67 @@ func _build_hills() -> void:
 	_hill_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	mi.material_override = _hill_mat
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	holder.add_child(mi)
+
+
+## Boulders and rock outcrops along the verges and out on the hills: lumpy
+## faceted stones in clusters (a big one with a few small ones beside it),
+## one TREE_PERIOD strip repeated. Colour follows the highway's country.
+func _build_rocks() -> void:
+	var holder := _loop(TREE_PERIOD)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 53
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var pattern: Array = []
+	for k in 150:
+		var z := rng.randf() * TREE_PERIOD
+		var right := rng.randf() < 0.5
+		var x: float = (Data.RAIL + rng.randf_range(5.0, 95.0)) if right else (OPP_X - Data.RAIL - rng.randf_range(5.0, 95.0))
+		if site_clear(z, x):
+			continue
+		var big := rng.randf_range(0.7, 2.6) * (1.0 + 2.0 * float(rng.randf() < 0.12))
+		pattern.append([Vector3(x, 0, z), big, rng.randf() * TAU])
+		for q in rng.randi_range(1, 4):
+			pattern.append([Vector3(x + rng.randf_range(-2.2, 2.2) * big, 0, z + rng.randf_range(-2.2, 2.2) * big), big * rng.randf_range(0.25, 0.6), rng.randf() * TAU])
+	for rep in 3:
+		for it in pattern:
+			var c: Vector3 = it[0]
+			var r: float = it[1]
+			var pos := Vector3(c.x, 0.0, -(c.z + rep * TREE_PERIOD) + VIEW_BEHIND)
+			# a squashed, faceted blob: an icosphere-ish ellipsoid with jittered radii per ring
+			var seg := 7
+			var rings := 4
+			var verts: Array = []
+			for i in rings + 1:
+				var th := PI * i / rings
+				var row: Array = []
+				for j in seg:
+					var ph := TAU * j / seg + float(it[2])
+					var jit := 0.78 + 0.4 * fposmod(sin(float(i * 17 + j * 31) + float(it[2]) * 5.0) * 43758.5, 1.0)
+					row.append(pos + Vector3(sin(th) * cos(ph) * 1.25, cos(th) * 0.8 + 0.25, sin(th) * sin(ph)) * r * jit - Vector3(0, r * 0.2, 0))
+				verts.append(row)
+			for i in rings:
+				for j in seg:
+					var a: Vector3 = verts[i][j]
+					var b: Vector3 = verts[i][(j + 1) % seg]
+					var c2: Vector3 = verts[i + 1][(j + 1) % seg]
+					var d: Vector3 = verts[i + 1][j]
+					for tri in [[a, b, c2], [a, c2, d]]:
+						var n: Vector3 = ((tri[1] as Vector3) - (tri[0] as Vector3)).cross((tri[2] as Vector3) - (tri[0] as Vector3)).normalized()
+						if n.dot((tri[0] as Vector3) - (pos + Vector3(0, r * 0.3, 0))) < 0.0:
+							n = -n
+						for v in tri:
+							st.set_normal(n)  # flat shading: faceted stone
+							st.add_vertex(v)
+	var mi := MeshInstance3D.new()
+	mi.mesh = st.commit()
+	_rock_mat = StandardMaterial3D.new()
+	_rock_mat.albedo_color = Color("#8a8478")
+	_rock_mat.roughness = 0.95
+	_rock_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mi.material_override = _rock_mat
+	mi.visibility_range_end = 260.0
 	holder.add_child(mi)
 
 

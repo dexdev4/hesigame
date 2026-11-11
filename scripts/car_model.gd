@@ -1441,7 +1441,7 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a"), style 
 	beam.mesh = _beam()
 	beam.material_override = _beam_mat
 	beam.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	beam.scale = Vector3(shape.w * 4.2, 1.0, 30.0)
+	beam.scale = Vector3(shape.w * 6.5, 1.0, 36.0)
 	beam.position = Vector3(0, 0.035, -shape.l + 0.1)  # starts at the lamps, reaches forward
 	beam.visible = night > 0.01
 	beam.add_to_group("car_beams")
@@ -1469,7 +1469,7 @@ static func _beam() -> ArrayMesh:
 		for y in 256:
 			var along := float(y) / 255.0  # image row = v: 0 at the lamps .. 1 at the far end
 			var fz := smoothstep(0.0, 0.06, along) * (1.0 - smoothstep(0.55, 1.0, along))
-			var half := lerpf(0.22, 1.0, pow(along, 0.5))  # a cone: narrow at the lamps, wide ahead
+			var half := lerpf(0.1, 1.0, pow(along, 0.6))  # a cone: narrow at the lamps, fanning out ahead
 			for x in 64:
 				var across := absf(float(x) / 63.0 - 0.5) * 2.0
 				var fx := 1.0 - smoothstep(half * 0.45, half, across)

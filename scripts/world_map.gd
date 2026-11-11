@@ -34,21 +34,14 @@ func _ready() -> void:
 	nh.frequency = 0.006
 	nh.fractal_octaves = 5
 	nh.fractal_gain = 0.5
-	var th := NoiseTexture2D.new()
-	th.width = 512
-	th.height = 512
-	th.normalize = true
-	th.noise = nh
+	# built right now (a NoiseTexture2D fills itself in the background, so the
+	# first frame could be drawn without terrain)
 	var nd := FastNoiseLite.new()
 	nd.seed = 21
 	nd.frequency = 0.012
 	nd.fractal_octaves = 4
-	var td := NoiseTexture2D.new()
-	td.width = 512
-	td.height = 512
-	td.seamless = true
-	td.normalize = true
-	td.noise = nd
+	var th := ImageTexture.create_from_image(nh.get_image(512, 512))
+	var td := ImageTexture.create_from_image(nd.get_seamless_image(512, 512))
 	m.set_shader_parameter("height_tex", th)
 	m.set_shader_parameter("detail_tex", td)
 	var pts := PackedVector2Array()

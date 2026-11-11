@@ -1841,7 +1841,7 @@ func _drive_manual(dt: float, brk: bool, vr: float, cmd: float) -> void:
 	var at_limit := atan(grip * wb / maxf(v * v, 0.01))
 	var span := minf(lock, at_limit * 0.95)
 	var c := clampf(cmd * float(Save.setting("steer_sens")), -1.0, 1.0)
-	c = signf(c) * pow(absf(c), 1.2)  # a little softer round the centre for fine corrections
+	c = signf(c) * pow(absf(c), 1.1)
 	var want := c * span
 	if absf(cmd) < 0.001 and Save.data.assist and v > 3.0:
 		# steering assist: ease the nose back parallel to the road
@@ -1849,16 +1849,16 @@ func _drive_manual(dt: float, brk: bool, vr: float, cmd: float) -> void:
 	if v < 0.2:
 		want = player.steer if absf(cmd) < 0.001 else c * lock  # parked: wheels turn but the car does not
 	# the wheels turn in a touch slower than they self-centre
-	player.steer = move_toward(player.steer, want, maxf(span, 0.05) * (12.0 if absf(want) > absf(player.steer) else 14.0) * dt)
+	player.steer = move_toward(player.steer, want, maxf(span, 0.05) * (26.0 if absf(want) > absf(player.steer) else 30.0) * dt)
 	# the nose: turn rate from the wheel angle, reached with a little lag (the car's weight)
 	var r_want := v * tan(player.steer) / wb
-	player.yaw_rate = lerpf(player.yaw_rate, r_want, minf(1.0, dt * 22.0))
+	player.yaw_rate = lerpf(player.yaw_rate, r_want, minf(1.0, dt * 45.0))
 	player.yaw = clampf(player.yaw + player.yaw_rate * dt, -0.7, 0.7)
 	# the direction of travel follows the nose as fast as the tyres can push
 	# it round (sideways force = speed x turn rate); past that the car slides
 	var slip := player.yaw - player.course
 	var max_turn := grip / maxf(v, 1.0)
-	player.course += clampf(slip * 16.0, -max_turn * 1.15, max_turn * 1.15) * dt
+	player.course += clampf(slip * 32.0, -max_turn * 1.2, max_turn * 1.2) * dt
 	player.course = clampf(player.course, -0.7, 0.7)
 	player.vx = v * sin(player.course)
 	player.x += player.vx * dt
@@ -2841,16 +2841,16 @@ func _analog_steer(dt: float) -> void:
 		want = 0.0 if absf(raw) < 0.04 else raw
 		_steer_val = want
 	elif mode == "tilt":
-		_steer_val = lerpf(_steer_val, _tilt_value(), minf(1.0, dt * 18.0))
+		_steer_val = lerpf(_steer_val, _tilt_value(), minf(1.0, dt * 30.0))
 	elif mode == "stick":
 		want = hud.stick.value()
-		_steer_val = move_toward(_steer_val, want, (18.0 if want != 0.0 else 12.0) * dt)
+		_steer_val = want  # the stick is already analog: no extra smoothing between finger and wheels
 	elif mode == "buttons":
 		want = (1.0 if right else 0.0) - (1.0 if left else 0.0)
 		_steer_val = move_toward(_steer_val, want, (5.0 if want != 0.0 else 10.0) * dt)  # eases in, lets go quickly
 	else:  # swipe
 		want = swipe if swiping else 0.0
-		_steer_val = move_toward(_steer_val, want, 20.0 * dt)
+		_steer_val = move_toward(_steer_val, want, 40.0 * dt)
 	# the arrow keys steer in every mode (desktop testing)
 	if mode != "buttons" and (key_left or key_right):
 		_steer_val = move_toward(_steer_val, (1.0 if key_right else 0.0) - (1.0 if key_left else 0.0), 3.0 * dt)

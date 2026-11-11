@@ -42,8 +42,8 @@ func release() -> void:
 func value() -> float:
 	if not active:
 		return 0.0
-	var v := knob.x / radius()
-	return 0.0 if absf(v) < 0.06 else clampf(v, -1.0, 1.0)
+	var v := knob.x / (radius() * 0.8)  # full lock at four-fifths of the way out
+	return 0.0 if absf(v) < 0.03 else clampf(v, -1.0, 1.0)
 
 
 func _draw() -> void:

@@ -1983,7 +1983,7 @@ func _build_settings() -> void:
 	_group(pd, "Screen")
 	_option_row(pd, "orientation", "Orientation", "Portrait or landscape.")
 	_option_row(pd, "gfx", "Graphics", "Lower it if the game stutters.")
-	_option_row(pd, "fps_cap", "Frame rate", "Screen is as smooth as the display goes. On a 90 or 120 Hz screen 60 or 30 runs the phone much cooler.")
+	_option_row(pd, "fps_cap", "Frame rate", "60 FPS is smooth and keeps the phone cool. Screen draws every refresh of a 90 or 120 Hz display: smoother, and the phone runs a lot hotter. 30 FPS is the coolest.")
 	_option_row(pd, "units", "Speed units", "")
 	_group(pd, "Rear-view mirror")
 	_option_row(pd, "mirror", "Mirror", "Move it with Edit on-screen layout (Controls).")

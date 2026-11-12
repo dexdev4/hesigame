@@ -125,7 +125,8 @@ class Run:
 	var fuel_from_run := 0   # ...of which came out of this run's earnings
 	var dry_t := 0.0         # seconds stood still with an empty tank
 	var pit := {}            # pulling in to the pumps, refuelling, pulling out
-	var pit_skip := -1.0     # a fuel stop passed too fast to pull in
+	var pit_skip := -1.0     # a fuel stop the player has chosen to pass
+	var pit_hint := -1.0     # the fuel stop already told 'slow down to pull in'
 	var heads_up := -1.0     # the fuel stop already announced
 
 
@@ -216,6 +217,10 @@ var _test_dent := ""      # --dent=KIND:STRENGTH[,...]: knock the garage car abo
 var _test_boss_sk := -99.0  # --boss-sk=X: the skill every boss races at (below -50: not set)
 var _test_fuel := 1.0
 var _test_first_station := -1.0
+var _pit_test: Array = []   # --pit-test=SPEED:REL:X: start a run at the first fuel stop, SPEED m/s, REL metres from the pumps, x across the road (test aid)
+var _pit_test_done := false
+var _test_atlas := 0        # --shadow-atlas=N: the sun's shadow map size, whatever the graphics level (test aid)
+var _test_noglow := false   # --noglow: no bloom, whatever the graphics level (test aid)
 var station := {}       # the next fuel stop: {z, name, color, prices: {regular, mid, premium}}
 var last_station := {}  # the one before (still shown in replays)
 var pump := {}          # the refuel screen: {litres, bill, on, auto, t}
@@ -270,6 +275,12 @@ func _ready() -> void:
 			Data.station_scale = float(a.substr(11)) / Data.STATION_EVERY_KM
 		if a.begins_with("--first-station="):  # the first fuel stop this many metres in (test aid)
 			_test_first_station = float(a.substr(16))
+		if a.begins_with("--shadow-atlas="):
+			_test_atlas = int(a.substr(15))
+		if a == "--noglow":
+			_test_noglow = true
+		if a.begins_with("--pit-test="):  # SPEED:REL:X: put the car there at the first fuel stop and hold its speed (test aid)
+			_pit_test = Array(a.substr(11).split(":"))
 		if a.begins_with("--route="):  # drive this highway (test aid; opens it if needed)
 			Save.data.route_sel = int(a.substr(8))
 			Save.data.routes = maxi(int(Save.data.get("routes", 1)), Save.data.route_sel + 1)
@@ -573,8 +584,8 @@ func _apply_gfx() -> void:
 	_sun.shadow_enabled = not low
 	_sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS if high else DirectionalLight3D.SHADOW_ORTHOGONAL
 	_sun.directional_shadow_max_distance = 90.0 if high else 55.0
-	RenderingServer.directional_shadow_atlas_set_size(4096 if high else 2048, true)
-	_env.glow_enabled = not low
+	RenderingServer.directional_shadow_atlas_set_size(_test_atlas if _test_atlas > 0 else (4096 if high else 2048), true)
+	_env.glow_enabled = not low and not _test_noglow
 	_env.glow_bloom = 0.03 if high else 0.0
 	_sky.radiance_size = Sky.RADIANCE_SIZE_256 if high else Sky.RADIANCE_SIZE_128
 	_post.visible = not low
@@ -1717,6 +1728,11 @@ func _autopilot(dt: float) -> void:
 		ap_gas = true
 		ap_brake = false
 		return
+	if _pit_test.size() == 3:  # hold the speed and the place across the road
+		ap_gas = player.v < float(_pit_test[0])
+		ap_brake = false
+		target_x = float(_pit_test[2])
+		return
 	ap_t -= dt
 	if ap_t > 0.0:
 		return
@@ -2290,6 +2306,13 @@ func _update_player(dt: float) -> void:
 	if run and not run.pit.is_empty():
 		_update_pit(dt)
 		return
+	if _pit_test.size() == 3 and not _pit_test_done and run and state == S.PLAY and not station.is_empty() and run.phase == "cruise":
+		_pit_test_done = true  # --pit-test: the car is put at that speed and place, and left to find its own way in
+		player.z = float(station.z) + float(_pit_test[1])
+		player.v = float(_pit_test[0])
+		player.x = float(_pit_test[2])
+		target_x = player.x
+		print("[autotest] pit test: %.1f m/s, %.0f m from the pumps, x %.2f" % [player.v, -float(_pit_test[1]), player.x])
 	var live := _live()
 	if not live or autotest:
 		_autopilot(dt)
@@ -3098,6 +3121,10 @@ var _cap_now := -1
 ## which looks the same), at full rate again the moment a finger goes down.
 func _update_frame_cap() -> void:
 	var want := int(Save.setting("fps_cap"))
+	if autotest:
+		if _cap_now == -1:
+			print("[autotest] frame rate setting %d (0 = the screen's own); test runs are not limited" % want)
+		want = 0  # (the tests run as fast as they can)
 	if (state == S.MENU or state == S.GARAGE or state == S.PAUSED) and Time.get_ticks_msec() - maxi(_last_touch_ms, hud.last_input_ms) > IDLE_AFTER_MS:
 		want = IDLE_FPS
 	if want != _cap_now:
@@ -4881,34 +4908,70 @@ func _update_fuel(dt: float) -> void:
 			_end_run("Ran out of fuel")
 
 
-## In the exit lane, early enough to stop at the pumps: pull in.
+## How hard the car brakes when it pulls in without any rush (m/s²), the hardest it will brake to reach a pump it
+## would otherwise miss, and the speed a car that comes in slower than that picks up to, so a crawl does not take
+## a minute to reach the pumps.
+const PIT_BRAKE := 13.0
+const PIT_BRAKE_MAX := 24.0
+const PIT_SPEED_IN := 14.0
+
+
+## Can the car still stop at a pump? It parks with its middle level with the nearer pump, or the one beyond it,
+## braking evenly from where it is, and it must have the room to swing across to the bay before the pump islands
+## begin. That works at any speed and from anywhere along the exit lane: the car brakes as hard as it has to (up to
+## PIT_BRAKE_MAX), and only a car that really cannot stop in time is left to drive on. Returns the plan: the car's
+## rear when it stops, the braking, the speed it starts from and where it is lined up with the bay (or {}).
+func _pit_plan() -> Dictionary:
+	var zs: float = station.z
+	var l: float = player.l
+	var v := maxf(player.v, PIT_SPEED_IN)
+	var swing := absf(GasStation.PUMP_X - player.x)
+	for pump_rel in GasStation.PUMPS:
+		var stop: float = zs + float(pump_rel) - l * 0.5
+		var total := stop - player.z
+		var align := minf(stop - 4.0, zs - 6.5 - l - 0.5)  # in line with the bay before the islands begin
+		var room := align - player.z
+		if total < 2.0 or room < 8.0:
+			continue
+		var a := v * v / (2.0 * total)
+		if a > PIT_BRAKE_MAX:
+			continue
+		# the swing across takes as long as the car needs to cover the room it has, and that must not be a dart
+		var t_room := (v - sqrt(maxf(v * v - 2.0 * a * room, 0.0))) / maxf(a, 0.001)
+		if t_room < clampf(swing / 5.5, 0.9, 3.0):
+			continue
+		return {"stop": stop, "a": a, "v0": v, "align": align}
+	return {}
+
+
+## The car is in the exit lane (over the road's edge line, anywhere from where the lane begins to peel off) and can
+## still stop at a pump: pull in.
 func _pit_ready() -> bool:
 	if station.is_empty() or run.phase != "cruise" or run.pit_skip == float(station.z):
 		return false
 	var rel := _station_rel()
-	return rel > -GasStation.EXIT_FULL + 5.0 and rel < -GasStation.FORE + 6.0 and player.x > Data.ROAD_HALF + 1.0
+	if rel < -GasStation.EXIT_START + 5.0 or rel > -GasStation.FORE + 20.0 or player.x <= Data.ROAD_HALF + 0.6:
+		return false
+	if _pit_plan().is_empty():
+		if run.pit_hint != float(station.z) and rel < -50.0:  # too fast for now: brake and it will take you in
+			run.pit_hint = float(station.z)
+			hud.pop("SLOW DOWN TO PULL IN", "small")
+		return false
+	return true
 
 
 func _start_pit() -> void:
-	var zs: float = station.z
-	var need := player.v * player.v / (2.0 * 13.0)  # the hardest the car will brake
-	# park with the car's middle level with a pump: the nearer pump if the car
-	# can stop for it, otherwise the one further on
-	var stop := -1.0
-	for pump_rel in GasStation.PUMPS:
-		var rear: float = zs + float(pump_rel) - player.l * 0.5
-		if rear - player.z >= need:
-			stop = rear
-			break
-	if stop < 0.0:
-		run.pit_skip = zs
-		_notify("TOO FAST TO PULL IN", "bad")
+	var plan := _pit_plan()
+	if plan.is_empty():
 		return
-	run.pit = {"step": "in", "z0": player.z, "x0": player.x, "v0": maxf(player.v, 3.0), "stop": stop}
+	run.pit = {"step": "in", "z0": player.z, "x0": player.x, "stop": plan.stop, "a": plan.a, "align": plan.align}
 	run.combo = 0
 	touches.clear()
 	_refresh_inputs()
 	_notify("PULLING IN", "small")
+	if autotest:
+		print("[autotest] pit start: %.1f m/s, %.1f m before the pumps, x %.2f; stops %.1f m past them, braking %.1f m/s²" % [
+			player.v, -_station_rel(), player.x, float(plan.stop) - float(station.z), float(plan.a)])
 
 
 ## The car drives itself into the station, stops at a pump, and afterwards
@@ -4919,14 +4982,19 @@ func _update_pit(dt: float) -> void:
 	var nx := player.x
 	match pt.step:
 		"in":
-			var total: float = maxf(float(pt.stop) - float(pt.z0), 0.5)
 			var left: float = float(pt.stop) - player.z
-			var a: float = float(pt.v0) * float(pt.v0) / (2.0 * total)
-			player.v = maxf(sqrt(maxf(0.0, 2.0 * a * left)), 1.0 if left > 0.3 else 0.0)
+			# braking evenly to the stop: the speed the car can still have with `left` to go (a car that came in slower
+			# than the profile speeds up to it, a few m/s² at a time)
+			var v_prof := sqrt(maxf(0.0, 2.0 * float(pt.a) * left))
+			var v_was: float = player.v
+			player.v = maxf(minf(v_prof, v_was + 4.0 * dt), 1.0 if left > 0.3 else 0.0)
 			player.z = minf(player.z + player.v * dt, float(pt.stop))
+			# across to the exit lane, then to the bay: from where the car is now (not from fixed places, so a car
+			# that comes in late does not jump), and never over the rail before the forecourt opens
+			var swing_from: float = maxf(zs - GasStation.FORE - 6.0, float(pt.z0))
 			var lane_x := lerpf(float(pt.x0), GasStation.LANE_X, smoothstep(float(pt.z0), float(pt.z0) + 30.0, player.z))
-			nx = lerpf(lane_x, GasStation.PUMP_X, smoothstep(zs - GasStation.FORE - 6.0, float(pt.stop) - 4.0, player.z))
-			player.braking = true
+			nx = lerpf(lane_x, GasStation.PUMP_X, smoothstep(swing_from, float(pt.align), player.z))
+			player.braking = player.v <= v_was
 			if player.z >= float(pt.stop) - 0.01:
 				player.v = 0.0
 				nx = GasStation.PUMP_X

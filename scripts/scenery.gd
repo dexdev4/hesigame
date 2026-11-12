@@ -12,6 +12,7 @@ extends Node3D
 const VIEW_AHEAD := 700.0
 const VIEW_BEHIND := 60.0
 const TREE_PERIOD := 600.0
+const CHUNK := 150.0                    # long strips of trees and rocks are cut into pieces this long, so the renderer can skip the pieces nobody can see
 const SCROLL_PERIOD := 3600.0
 const OPP_X := -22.0                     # centre of the westbound carriageway
 const MEDIAN_X := -11.0                  # halfway between the two inner guardrails
@@ -484,6 +485,7 @@ func _build_trees() -> void:
 	trunk_mesh.bottom_radius = 0.26
 	trunk_mesh.height = 1.0
 	trunk_mesh.radial_segments = 6
+	trunk_mesh.rings = 1  # (a straight taper: more rings only add triangles)
 	var crown_mesh := SphereMesh.new()
 	crown_mesh.radius = 1.0
 	crown_mesh.height = 1.8
@@ -494,6 +496,7 @@ func _build_trees() -> void:
 	pine_mesh.bottom_radius = 1.0
 	pine_mesh.height = 1.0
 	pine_mesh.radial_segments = 8
+	pine_mesh.rings = 1   # (a cone's side is the same shape however many rings it is cut into)
 	var leaf := StandardMaterial3D.new()
 	leaf.vertex_color_use_as_albedo = true
 	leaf.roughness = 1.0
@@ -508,35 +511,55 @@ func _build_trees() -> void:
 	rock_mesh.height = 2.0
 	rock_mesh.radial_segments = 7
 	rock_mesh.rings = 4
+	# A multimesh is drawn whole or not at all, and the trees run the length of three TREE_PERIODs (1800 m, far more than
+	# can be seen at once, and the shadow maps reach 90 m). So each kind is cut into pieces CHUNK metres long: the
+	# renderer then skips the pieces behind the car, beyond the far plane or out of the shadows' reach. Nothing
+	# visible changes.
 	for pair in [[trunks, trunk_mesh], [crowns, crown_mesh], [pines, pine_mesh], [bushes, crown_mesh], [tufts, tuft_mesh], [rocks, rock_mesh]]:
 		var list: Array = pair[0]
-		var mm := MultiMesh.new()
-		mm.transform_format = MultiMesh.TRANSFORM_3D
-		mm.use_colors = true
-		mm.mesh = pair[1]
-		mm.instance_count = list.size()
-		for i in list.size():
-			mm.set_instance_transform(i, list[i][0])
-			mm.set_instance_color(i, list[i][1])
-		var mmi := MultiMeshInstance3D.new()
-		mmi.multimesh = mm
-		mmi.material_override = leaf
-		if pair[1] == tuft_mesh or pair[1] == rock_mesh:
-			mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		holder.add_child(mmi)
+		var groups := {}
+		for item in list:
+			var k := int(floor((item[0] as Transform3D).origin.z / CHUNK))
+			if not groups.has(k):
+				groups[k] = []
+			(groups[k] as Array).append(item)
+		for k in groups:
+			var piece: Array = groups[k]
+			var mm := MultiMesh.new()
+			mm.transform_format = MultiMesh.TRANSFORM_3D
+			mm.use_colors = true
+			mm.mesh = pair[1]
+			mm.instance_count = piece.size()
+			for i in piece.size():
+				mm.set_instance_transform(i, piece[i][0])
+				mm.set_instance_color(i, piece[i][1])
+			var mmi := MultiMeshInstance3D.new()
+			mmi.multimesh = mm
+			mmi.material_override = leaf
+			if pair[1] == tuft_mesh or pair[1] == rock_mesh:
+				mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			holder.add_child(mmi)
 	# soft contact shadows under the trees, so they sit on the ground beyond the shadow distance
 	CarModel._shadow()
-	var smm := MultiMesh.new()
-	smm.transform_format = MultiMesh.TRANSFORM_3D
-	smm.mesh = CarModel._shadow_mesh
-	smm.instance_count = shadows.size()
-	for i in shadows.size():
-		smm.set_instance_transform(i, shadows[i])
-	var smi := MultiMeshInstance3D.new()
-	smi.multimesh = smm
-	smi.material_override = CarModel._shadow_mat
-	smi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	holder.add_child(smi)
+	var sgroups := {}
+	for t in shadows:
+		var sk := int(floor((t as Transform3D).origin.z / CHUNK))
+		if not sgroups.has(sk):
+			sgroups[sk] = []
+		(sgroups[sk] as Array).append(t)
+	for sk in sgroups:
+		var sitems: Array = sgroups[sk]
+		var smm := MultiMesh.new()
+		smm.transform_format = MultiMesh.TRANSFORM_3D
+		smm.mesh = CarModel._shadow_mesh
+		smm.instance_count = sitems.size()
+		for i in sitems.size():
+			smm.set_instance_transform(i, sitems[i])
+		var smi := MultiMeshInstance3D.new()
+		smi.multimesh = smm
+		smi.material_override = CarModel._shadow_mat
+		smi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		holder.add_child(smi)
 
 
 ## The landscape of the highway being driven (a Data.BIOMES entry).

@@ -77,6 +77,30 @@ func _walk(n: Node, out: Dictionary) -> void:
 		_walk(c, out)
 
 
+## The heaviest meshes below a node: [triangles, instances, what it is].
+func _casters(n: Node, out: Array) -> void:
+	if n is Node3D and not (n as Node3D).visible:
+		return
+	if n is MeshInstance3D and (n as MeshInstance3D).mesh:
+		out.append([_mesh_tris((n as MeshInstance3D).mesh), 1, "%s%s %s, %d surfaces, at z=%.0f" % ["[shadow] " if (n as MeshInstance3D).cast_shadow != GeometryInstance3D.SHADOW_CASTING_SETTING_OFF else "", str(n.get_path()).right(60), (n as MeshInstance3D).mesh.get_class(), (n as MeshInstance3D).mesh.get_surface_count(), (n as Node3D).global_position.z]])
+	elif n is MultiMeshInstance3D and (n as MultiMeshInstance3D).multimesh and (n as MultiMeshInstance3D).multimesh.mesh:
+		var mm := (n as MultiMeshInstance3D).multimesh
+		var count := mm.visible_instance_count if mm.visible_instance_count >= 0 else mm.instance_count
+		out.append([_mesh_tris(mm.mesh) * count, count, "%s%s multimesh of %s" % ["[shadow] " if (n as MultiMeshInstance3D).cast_shadow != GeometryInstance3D.SHADOW_CASTING_SETTING_OFF else "", n.name, mm.mesh.get_class()]])
+	for c in n.get_children():
+		_casters(c, out)
+
+
+func _caster_line(label: String, root: Node) -> void:
+	var list: Array = []
+	_casters(root, list)
+	list.sort_custom(func(a: Array, b: Array) -> bool: return a[0] > b[0])
+	var parts := []
+	for i in mini(14, list.size()):
+		parts.append("%d tri x%d %s" % [list[i][0], list[i][1], list[i][2]])
+	print("[perf] heaviest meshes in %s (those that cast shadows are marked): %s" % [label, "; ".join(parts)])
+
+
 func _scene_line(label: String, roots: Array) -> void:
 	var g := {"inst": 0, "tris": 0, "sh_inst": 0, "sh_tris": 0}
 	for r: Node in roots:
@@ -97,6 +121,10 @@ func report(game: Node, player_model: Node, traffic_models: Array, scenery: Node
 	_scene_line("player", [player_model])
 	_scene_line("traffic(%d)" % traffic_models.size(), traffic_models)
 	_scene_line("scenery", [scenery])
+	_caster_line("the scenery", scenery)
+	if not traffic_models.is_empty():
+		_caster_line("the first traffic car", traffic_models[0])
+	_caster_line("the player's car", player_model)
 	var rs := RenderingServer
 	var vp := game.get_viewport().get_viewport_rid()
 	print("[perf] drawn, main view: %d objects, %d triangles, %d draw calls | its shadow pass: %d objects, %d triangles, %d draw calls" % [

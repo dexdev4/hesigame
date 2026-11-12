@@ -40,7 +40,8 @@ const SETTING_DEFAULTS := {
 	"mirror_scale": 1.0,
 	"mirror_pos": [],
 	"gfx": "",                    # high, medium or low; empty until the first launch picks one
-	"fps_cap": 0,                 # most frames a second to draw: 0 = as often as the screen refreshes, or 60, or 30
+	"fps_cap": 60,                # most frames a second to draw: 60 or 30, or 0 = as often as the screen refreshes (hot on a 90 or 120 Hz phone)
+	"fps_cap_ver": 1,             # (internal) 1 once a save from before the default became 60 has been moved to it
 	# developer tools
 	"dev_lives": false,           # infinite lives
 	"dev_fps": false,             # frame-rate counter
@@ -95,6 +96,13 @@ func load_data() -> void:
 		for k in parsed.settings:
 			if SETTING_DEFAULTS.has(k):
 				data.settings[k] = parsed.settings[k]
+	# the frame-rate limit used to default to the screen's own rate, which on a 90 or 120 Hz phone is a lot of heat
+	# for no gameplay gain: it is 60 now, and a save from before moves to it once (Settings > Frame rate: Screen puts it back)
+	var saved: Dictionary = parsed.settings if parsed.has("settings") and parsed.settings is Dictionary else {}
+	if int(saved.get("fps_cap_ver", 0)) < 1:
+		if int(saved.get("fps_cap", 0)) == 0:
+			data.settings["fps_cap"] = 60
+		data.settings["fps_cap_ver"] = 1
 	if parsed.has("perm") and parsed.perm is Dictionary:
 		for k in parsed.perm:
 			data.perm[k] = int(parsed.perm[k])

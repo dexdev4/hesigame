@@ -176,7 +176,9 @@ var auto_speed := 46.0  # --autospeed=M/S: how fast the test driver goes
 var idcolor := false   # --idcolor: flat unique colour per traffic car, no fog or scenery (flicker test)
 var _id_next := 1
 var _id_log: FileAccess
-var demo_pops := false  # --demo-pops: show a sample score message every second (test aid)
+var _save_sfx_dir := ""
+var demo_pops := false  # --demo-pops: show sample score messages, small to big (test aid)
+var _demo_i := 0
 var _demo_t := 0.0  # [[seconds, path], ...] from --shot=SEC:PATH
 var _log_t := 0.0
 var crash: Crash = null
@@ -210,6 +212,7 @@ var _blur := 0.0
 var _blur_set := -1.0  # the speed blur last given to the shader
 var _test_crash := -1.0
 var _test_stage := 0
+var _test_dent := ""      # --dent=KIND:STRENGTH[,...]: knock the garage car about (test aid; kinds: front, rear, left, right, corner)
 var _test_boss_sk := -99.0  # --boss-sk=X: the skill every boss races at (below -50: not set)
 var _test_fuel := 1.0
 var _test_first_station := -1.0
@@ -279,6 +282,8 @@ func _ready() -> void:
 			_test_fuel = float(a.substr(7))
 		if a.begins_with("--start-stage="):  # begin runs at this stage (test aid)
 			_test_stage = int(a.substr(14))
+		if a.begins_with("--dent="):
+			_test_dent = a.substr(7)
 		if a.begins_with("--boss-sk="):  # every boss races at this skill, whatever the highway and stage (test aid)
 			_test_boss_sk = float(a.substr(10))
 		if a == "--godmode":  # infinite lives without saving it (test aid)
@@ -316,6 +321,8 @@ func _ready() -> void:
 				_test_replay_cam = rpa[1]
 		if a == "--idcolor":
 			idcolor = true
+		if a.begins_with("--save-sfx="):  # write every sound effect as a wav file into this folder, then carry on (test aid)
+			_save_sfx_dir = a.substr(11)
 		if a == "--demo-pops":
 			demo_pops = true
 		if a.begins_with("--burst="):
@@ -349,6 +356,10 @@ func _ready() -> void:
 	sound = EngineAudio.new()
 	add_child(sound)
 	sound.set_enabled(Save.data.sound)
+	if _save_sfx_dir != "":
+		DirAccess.make_dir_recursive_absolute(_save_sfx_dir)
+		for k in sound._sfx:
+			(sound._sfx[k] as AudioStreamWAV).save_to_wav("%s/%s.wav" % [_save_sfx_dir, k])
 	_music = AudioStreamPlayer.new()
 	var ms: Variant = load("res://assets/audio/cold_iron_street.mp3")
 	if ms is AudioStreamMP3:
@@ -1159,6 +1170,7 @@ func _impact(o: Vehicle, ct: Dictionary) -> float:
 	var v0 := pb.vel
 	Wreck.separate(pb, ob, ct.n, float(ct.depth))
 	var j := Wreck.impact(pb, ob, ct.n, ct.p, 0.2, 0.25, 1.5)
+	_damage_pair(player, pb, o, ob, ct, j)
 	if autotest:
 		print("[autotest] impact j=%.1f player %.1f,%.1f -> %.1f,%.1f m/s spin %+.2f; other %s %.1f,%.1f -> %.1f,%.1f spin %+.2f; contact (%.2f, %.2f) n (%.2f, %.2f)" % [
 			j, v0.x, v0.y, pb.vel.x, pb.vel.y, pb.w - w0, o.shape_id, o.vx, o.v, ob.vel.x, ob.vel.y, ob.w, ct.p.x - player.x, ct.p.y - player.z, ct.n.x, ct.n.y])
@@ -1208,8 +1220,10 @@ func _sync_wreck(c: Vehicle) -> void:
 
 func _update_wreck_car(c: Vehicle, dt: float) -> void:
 	c.wreck.step(dt)
-	_wreck_rail(c.wreck)
+	var blow := _wreck_rail(c.wreck)
 	_sync_wreck(c)
+	if blow > 2.0:
+		_damage_rail(c, c.wreck, blow)
 
 
 ## Keep a wreck inside the guardrails: it bounces off them and scrapes along them. Returns the hardest blow.
@@ -1247,6 +1261,7 @@ func _wreck_contacts() -> void:
 			Wreck.separate(a.wreck, bb, ct.n, float(ct.depth))
 			var jj := Wreck.impact(a.wreck, bb, ct.n, ct.p, 0.2, 0.25)
 			if jj > 0.0:
+				_damage_pair(a, a.wreck, b, bb, ct, jj)
 				_make_wreck(b, bb)
 				if jj > 2.0 and absf(a.z - player.z) < 80.0:
 					sound.play("crash", randf_range(0.9, 1.1), clampf(-16.0 + jj, -16.0, -4.0))
@@ -1375,7 +1390,7 @@ func _start_boss() -> void:
 		c.b_ahead = c.z > boss.z + boss.l
 		c.b_min = 99.0
 		c.b_cut = false
-	hud.banner("VS " + String(bi.full).to_upper(), "OUT-SCORE %s IN %s" % [Data.boss_skill_name(run.stage), Fmt.km(run.b_len)])
+	hud.banner("VS " + String(bi.full).to_upper(), "OUT-SCORE %s IN %s" % [Data.boss_skill_name(run.stage), Fmt.km(run.b_len)], "alert")
 
 
 var _bdbg := {}
@@ -1605,7 +1620,7 @@ func _route_cleared() -> void:
 		Save.data.routes = r + 2
 		var nxt: String = Data.CITIES[r + 2].name
 		_notify("HIGHWAY TO %s OPEN" % nxt.to_upper(), "hot")
-		hud.banner("NEW HIGHWAY OPEN", "%s → %s ON THE WORLD MAP" % [String(Data.CITIES[r + 1].name).to_upper(), nxt.to_upper()])
+		hud.banner("NEW HIGHWAY OPEN", "%s → %s ON THE WORLD MAP" % [String(Data.CITIES[r + 1].name).to_upper(), nxt.to_upper()], "good")
 	Save.persist()
 	if autotest:
 		print("[autotest] route %d cleared, %d highways open" % [r, int(Save.data.get("routes", 1))])
@@ -1629,7 +1644,7 @@ func _end_battle() -> void:
 			Save.data.unlocked.append(bi.car)
 			Save.persist()
 			unlocked_new = true
-		sound.play("ding", 1.26, 3.0)
+		sound.play("chime", 1.0, 0.0)
 		_show_pick(bi, unlocked_new)
 	else:
 		if not (Save.setting("dev_lives") or godmode):  # infinite lives covers lost races too
@@ -1649,10 +1664,10 @@ func _end_battle() -> void:
 ## Scoring and crash messages: small text floating just above your car in the
 ## chase view, low on screen from the bonnet, and on the infotainment screen
 ## in the cockpit, so they never cover the traffic ahead.
-func _notify(text: String, kind := "") -> void:
+func _notify(text: String, kind := "", pts := 0) -> void:
 	if Save.data.cam.mode == "cockpit":
 		player.model.show_message(text, kind)  # on the infotainment screen as well
-	hud.pop_feed(text, kind)
+	hud.pop_feed(text, kind, pts)  # (a scoring message's text grows with the points)
 
 
 func _mult() -> float:
@@ -1664,7 +1679,7 @@ func _add_score(base: float, label: String, combo: int, kind := "") -> void:
 		run.combo += combo
 		run.combo_t = run.combo_time
 		sound.play("whoosh", randf_range(0.9, 1.15))
-		sound.play("ding", pow(2.0, minf(run.combo, 14) / 12.0), -6.0)
+		sound.play("ding", EngineAudio.combo_pitch(run.combo), -6.0)
 	elif run.combo > 0:
 		run.combo_t = minf(run.combo_time, run.combo_t + 0.6)
 	var pts := roundi(base * _mult() * run.mods.score)
@@ -1673,7 +1688,7 @@ func _add_score(base: float, label: String, combo: int, kind := "") -> void:
 	if run.phase == "boss":
 		run.b_score += pts
 	if label != "":
-		_notify("%s +%s" % [label, Fmt.num(pts)], kind)
+		_notify("%s +%s" % [label, Fmt.num(pts)], kind, pts)
 
 
 func _award(kind: String, c: Vehicle, clr: float) -> void:
@@ -1764,7 +1779,9 @@ func _hit(reason: String, other: Vehicle = null, ct := {}) -> void:
 		jolt = 0.8
 	else:
 		# a barrier: a glancing scrape costs little, hitting it at an angle a lot
+		var scrape := absf(v0 * sin(player.course))
 		player.v *= lerpf(0.9, 0.55, clampf(absf(player.course) / 0.35, 0.0, 1.0))
+		_damage_hit(player, _body_of(player), Vector2(side * Data.RAIL, player.z + player.l * 0.55), Vector2(-side, 0.0), maxf(3.0, scrape * 1.1))
 		jolt = 0.8
 	shake = jolt
 	_flash.color.a = 0.25 + 0.2 * jolt
@@ -1802,7 +1819,7 @@ func _make_debris() -> CPUParticles3D:
 	p.angular_velocity_min = -720.0
 	p.angular_velocity_max = 720.0
 	p.scale_amount_min = 0.4
-	p.scale_amount_max = 1.3
+	p.scale_amount_max = 2.4  # (a few of them are whole panels)
 	p.particle_flag_rotate_y = true
 	var m := BoxMesh.new()
 	m.size = Vector3(0.14, 0.03, 0.1)
@@ -1834,6 +1851,175 @@ func _debris_at(pos: Vector3, paint: Color, n := 32) -> void:
 	_debris.position = pos
 	_debris.restart()
 	_debris.emitting = true
+
+
+# ---------------------------------------------------------------- damage
+
+var _dmg_queue: Array[CarDamage] = []  # cars with dents waiting to be pressed into their meshes
+var _parts: Array = []                 # things flying off cars (a wheel): {node, p (road: x, y, z), v, w, t}
+
+
+## A point on the road (x across, y along) in a car's own space: x across, y up, z along with the nose at -length.
+func _model_space(b: Wreck, l: float, pt: Vector2, y: float) -> Vector3:
+	var h := b.heading()
+	var rel := pt - b.pos
+	return Vector3(rel.dot(Vector2(h.y, -h.x)), y, -(l / 2.0 + rel.dot(h)))
+
+
+## A push on the road in a car's own space.
+func _model_dir(b: Wreck, d: Vector2) -> Vector3:
+	var h := b.heading()
+	return Vector3(d.dot(Vector2(h.y, -h.x)), 0.0, -d.dot(h))
+
+
+## Both cars of a collision take their share: `ct.n` points from a to b, `j` is the change of speed a got
+## (b's is what its weight makes of it).
+func _damage_pair(a: Vehicle, ab: Wreck, b: Vehicle, bb: Wreck, ct: Dictionary, j: float) -> void:
+	if j <= 0.0:
+		return
+	var n := Vector2(float(ct.n.x), float(ct.n.y))
+	_damage_hit(a, ab, ct.p, -n, j)
+	_damage_hit(b, bb, ct.p, n, j * ab.mass / maxf(bb.mass, 0.3))
+
+
+## A wreck that slides into the guardrail: a dent on the side that touched it.
+func _damage_rail(c: Vehicle, b: Wreck, blow: float) -> void:
+	var side := signf(c.x) if absf(c.x) > 0.01 else 1.0
+	_damage_hit(c, b, Vector2(side * Data.RAIL, b.pos.y), Vector2(-side, 0.0), blow)
+
+
+## A knock to one car: a dent where it was hit, and for the harder ones broken glass and lamps, the number
+## plate, a wheel, smoke. `push` is the way the shell was shoved (a unit vector on the road).
+func _damage_hit(v: Vehicle, b: Wreck, pt: Vector2, push: Vector2, strength: float) -> void:
+	if strength < 2.5 or v.model == null or not is_instance_valid(v.model) or absf(v.z - player.z) > 150.0:
+		return
+	if _dmg_queue.size() >= 5 and v != player and v.model.dmg == null:
+		return  # (a pile-up: the cars in view first)
+	var p := _model_space(b, v.l, pt, randf_range(0.42, 0.78))
+	p.x = clampf(p.x, -v.w * 0.5, v.w * 0.5)
+	p.z = clampf(p.z, -v.l, 0.0)
+	_damage_model(v.model, p, _model_dir(b, push), strength, v, push)
+	if strength >= 4.0:  # bits of the car and a shower of sparks where the metal met
+		var at := Vector3(pt.x, 0.6, -(pt.y - player.z))
+		_debris_at(at, v.model.paint_color, clampi(int(strength * 2.5), 10, 36))
+		if strength >= 5.0:
+			_spark_at(at)
+
+
+## The same, on a car's own model: `p` is where it was hit in the car's space and `dir` the way the shell was
+## shoved. (`v` is the vehicle it belongs to, when there is one: a wheel needs its speed to fly off.)
+func _damage_model(m: CarModel, p: Vector3, dir: Vector3, strength: float, v: Vehicle = null, push := Vector2.ZERO) -> void:
+	var d := m.damage()
+	d.hit(p, dir, strength)
+	if not _dmg_queue.has(d):
+		_dmg_queue.append(d)
+	var l: float = m.shape.l
+	var w: float = m.shape.w
+	var nose := p.z < -l * 0.72
+	var tail := p.z > -l * 0.28
+	# glass: the window nearest the blow cracks, shatters when it is hard
+	if strength >= 4.0:
+		var amount := clampf((strength - 3.0) / 8.0, 0.2, 1.0)
+		if v == player:
+			amount = minf(amount, 0.5)  # (cracks, not a milky haze: it is the driver's own windscreen)
+		if nose:
+			m.crack_glass(m.glass_spot("front"), amount)
+		elif tail:
+			m.crack_glass(m.glass_spot("rear"), amount)
+		else:
+			m.crack_glass(m.glass_spot("side", signf(p.x) if absf(p.x) > 0.05 else 1.0), amount)
+		if strength >= 6.0 and (v == null or absf(v.z - player.z) < 60.0):
+			sound.play("glass", randf_range(0.9, 1.15), clampf(-14.0 + strength, -12.0, -2.0))
+	if strength >= 5.0 and (nose or tail):
+		m.break_lamps()
+	if strength >= 6.5:
+		m.lose_plate()
+	# a corner knocked hard enough loses its wheel
+	if strength >= 9.0 and (nose or tail) and absf(p.x) > w * 0.22 and (v != null or _test_dent != "") and randf() < 0.55:
+		_throw_wheel(v, m, m.nearest_wheel(p), push, strength)
+	if (d.level >= 0.55 and (d.front >= d.rear or nose)) or strength >= 8.0:
+		m.start_smoke(d.level >= 1.7 and v != player)  # (no flames in the player's face)
+
+
+## Test aid (--dent=KIND:STRENGTH,...): the garage car takes some knocks.
+func _apply_test_dents() -> void:
+	var m := garage.car
+	var l: float = m.shape.l
+	var w: float = m.shape.w
+	for spec in _test_dent.split(","):
+		var kv := spec.split(":")
+		var strength := float(kv[1]) if kv.size() > 1 else 8.0
+		match kv[0]:
+			"front":
+				_damage_model(m, Vector3(0.25, 0.6, -l), Vector3(0, 0, 1), strength)
+			"rear":
+				_damage_model(m, Vector3(-0.3, 0.6, 0.0), Vector3(0, 0, -1), strength)
+			"left":
+				_damage_model(m, Vector3(-w / 2.0, 0.65, -l * 0.45), Vector3(1, 0, 0), strength)
+			"right":
+				_damage_model(m, Vector3(w / 2.0, 0.65, -l * 0.45), Vector3(-1, 0, 0), strength)
+			"corner":
+				_damage_model(m, Vector3(-w * 0.4, 0.6, -l * 0.97), Vector3(0.45, 0, 0.9), strength, null, Vector2(0.45, 0.9))
+	_test_dent = ""
+
+
+## Wheel i comes off car v and rolls, bounces and spins away.
+func _throw_wheel(v: Vehicle, m: CarModel, i: int, push: Vector2, strength: float) -> void:
+	var wn := m.detach_wheel(i)
+	if wn == null:
+		return
+	if autotest:
+		print("[autotest] wheel %d came off (strength %.1f)" % [i, strength])
+	m.add_child(wn)
+	wn.top_level = true  # (it keeps its own place in the world from here on)
+	var wp := wn.global_position
+	var rp := Vector3(wp.x, maxf(wp.y, 0.3), player.z - wp.z)  # road coordinates: z along the road
+	var out := Vector2(float(push.x), float(push.y)).normalized() if push.length() > 0.01 else Vector2(0.0, 1.0)
+	var vel := Vector3((v.vx if v else 0.0) + out.x * strength * 0.5, 2.0 + strength * 0.25, (v.v if v else 0.0) + out.y * strength * 0.5 + 2.0)
+	_parts.append({"node": wn, "p": rp, "v": vel, "w": vel.z / 0.32, "t": 0.0})
+	sound.play("crash", 1.3, -10.0)
+
+
+## Pressing in dents (a few milliseconds a frame) and the parts that have come off.
+func _damage_work(delta: float) -> void:
+	if not _dmg_queue.is_empty():
+		var t0 := Time.get_ticks_usec()
+		var i := 0
+		while i < _dmg_queue.size():
+			var left := 3500 - (Time.get_ticks_usec() - t0)
+			if left <= 0:
+				break
+			if _dmg_queue[i].step(left):
+				i += 1
+			else:
+				_dmg_queue.remove_at(i)
+	var k := _parts.size() - 1
+	while k >= 0:
+		var pt: Dictionary = _parts[k]
+		var node: Node3D = pt.node
+		pt.t += delta
+		var pos: Vector3 = pt.p
+		var vel: Vector3 = pt.v
+		vel.y -= 9.8 * delta
+		pos += vel * delta
+		if pos.y < 0.32:
+			pos.y = 0.32
+			if vel.y < -0.5:
+				vel.y = -vel.y * 0.38
+			else:
+				vel.y = 0.0
+			vel.x *= 1.0 - minf(1.0, 2.0 * delta)
+			vel.z *= 1.0 - minf(1.0, 1.4 * delta)
+		pt.p = pos
+		pt.v = vel
+		var roll: float = pt.w * delta
+		pt.w = float(pt.w) * (1.0 - minf(1.0, 0.5 * delta))
+		node.position = Vector3(pos.x, pos.y, -(pos.z - player.z))
+		node.basis = node.basis.rotated(node.basis.x, -roll)
+		if pt.t > 7.0 or pos.z < player.z - 150.0 or pos.z > player.z + 400.0:
+			node.queue_free()
+			_parts.remove_at(k)
+		k -= 1
 
 
 # ---------------------------------------------------------------- last-life crash
@@ -1962,6 +2148,7 @@ func _crash_rail() -> void:
 		var j := Wreck.impact(b, null, wc.n, wc.p, 0.3, 0.35)
 		if j <= 0.0:
 			continue
+		_damage_hit(player, b, wc.p, -Vector2(float(wc.n.x), float(wc.n.y)), j)
 		if into > 2.5:
 			sound.play("crash", 1.2, -6.0)
 			_spark_at(Vector3(wc.p.x, 0.6, -(wc.p.y - player.z)))
@@ -2061,6 +2248,7 @@ func _crash_collide(o: Vehicle, out: Array[PackedVector2Array]) -> void:
 	var j := Wreck.impact(b, ob, n, ct.p, 0.2, 0.25)
 	if j <= 0.0:
 		return  # already moving apart
+	_damage_pair(player, b, o, ob, ct, j)
 	_make_wreck(o, ob)
 	var contact: Vector2 = ct.p
 	if autotest and j > 1.0:
@@ -2224,7 +2412,7 @@ func _drive_manual(dt: float, brk: bool, vr: float, cmd: float) -> void:
 		player.yaw = clampf(player.yaw + _yaw_kick * dt, -0.7, 0.7)
 		_yaw_kick = move_toward(_yaw_kick, 0.0, 6.5 * dt)
 	# how hard the tyres are working (0 .. 1: the limit), for the controls and the haptics
-	var work := absf(v * player.yaw_rate) / maxf(SteerModel.usable(grip, auth), 0.1)
+	var work := absf(v * player.yaw_rate) / maxf(SteerModel.usable_at(grip, auth, v), 0.1)
 	_feel_load = lerpf(_feel_load, clampf(work, 0.0, 1.3), minf(1.0, dt * 14.0))
 	player.vx = v * sin(player.course)
 	player.x += player.vx * dt
@@ -2302,7 +2490,7 @@ func _collisions() -> void:
 				print("[autotest] cop BUSTED after %.1f s, traffic pulled over %d times" % [run.cop_t, _yields])
 			_hit("BUSTED", boss, bct)
 			if run.phase == "cop":
-				hud.banner("BUSTED", "-1 LIFE")
+				hud.banner("BUSTED", "-1 LIFE", "alert")
 				_end_cop()
 		else:
 			_hit("RIVAL CONTACT", boss, bct)
@@ -2525,7 +2713,7 @@ func _start_cop() -> void:
 	_cop_held = 0.0
 	_yields = 0
 	run.cop_due = true
-	hud.banner("POLICE PURSUIT", "DON'T GET RAMMED FOR %d S · ESCAPE FOR +1 LIFE" % int(COP_TIME))
+	hud.banner("POLICE PURSUIT", "DON'T GET RAMMED FOR %d S · ESCAPE FOR +1 LIFE" % int(COP_TIME), "alert")
 	if autotest:
 		print("[autotest] police pursuit stage %d" % run.stage)
 
@@ -2622,15 +2810,16 @@ func _boss_music(on: bool, fade := 6.0) -> void:
 		return
 	if _music_tween:
 		_music_tween.kill()
-	_music_tween = create_tween()
 	if on:
 		if not Save.data.sound:
 			return
 		if not _music.playing:
 			_music.volume_db = -40.0
 			_music.play(MUSIC_START)
+		_music_tween = create_tween()
 		_music_tween.tween_property(_music, "volume_db", MUSIC_DB, 2.5)
 	elif _music.playing:
+		_music_tween = create_tween()  # (a tween with nothing to do only draws a warning, so one is made only when there is a fade)
 		_music_tween.tween_property(_music, "volume_db", -60.0, fade).set_trans(Tween.TRANS_SINE)
 		_music_tween.tween_callback(_music.stop)
 
@@ -2788,9 +2977,9 @@ func _begin_incoming(cop: bool) -> void:
 	_clear_station_for(player.v * BOSS_WARN + run.b_len + 300.0)
 	var bi := Data.boss_info(run.stage)
 	if cop or not run.cop_due:
-		hud.banner("BOSS OR POLICE?", "SOMETHING IS COMING IN %d S" % int(BOSS_WARN))
+		hud.banner("BOSS OR POLICE?", "SOMETHING IS COMING IN %d S" % int(BOSS_WARN), "alert")
 	else:
-		hud.banner(String(bi.full).to_upper() + " INCOMING", String(bi.line).to_upper())
+		hud.banner(String(bi.full).to_upper() + " INCOMING", String(bi.line).to_upper(), "alert")
 	sound.play("ding", 1.2, -2.0)
 	if autotest:
 		print("[autotest] %s incoming stage %d" % ["police" if cop else "boss", run.stage])
@@ -2855,7 +3044,7 @@ func _update_run(dt: float) -> void:
 				else:
 					_start_boss()
 					_boss_music(true)
-					hud.banner("REMATCH", "OUT-SCORE HIM IN %s" % Fmt.km(run.b_len))
+					hud.banner("REMATCH", "OUT-SCORE HIM IN %s" % Fmt.km(run.b_len), "alert")
 			return
 		var r := _stage_req()
 		if (run.stage_dist >= r.d or run.stage_score >= r.p) and not _station_busy():
@@ -2871,7 +3060,7 @@ func _update_run(dt: float) -> void:
 				_start_cop()
 			else:
 				_start_boss()
-				hud.banner(String(run.b_info.full).to_upper(), "OUT-SCORE HIM IN %s" % Fmt.km(run.b_len))
+				hud.banner(String(run.b_info.full).to_upper(), "OUT-SCORE HIM IN %s" % Fmt.km(run.b_len), "alert")
 	elif run.phase == "cop":
 		run.cop_t += dt
 		run.siren_t -= dt
@@ -2883,8 +3072,8 @@ func _update_run(dt: float) -> void:
 			_notify("ESCAPED · +1 LIFE", "hot")
 			if autotest:
 				print("[autotest] cop ESCAPED, traffic pulled over %d times" % _yields)
-			hud.banner("ESCAPED", "+1 LIFE")
-			sound.play("ding", 1.5, 3.0)
+			hud.banner("ESCAPED", "+1 LIFE", "good")
+			sound.play("chime", 1.0, 0.0)
 			_end_cop()
 	elif run.phase == "boss":
 		run.b_dist += d
@@ -2999,6 +3188,9 @@ func _process(delta: float) -> void:
 	if state == S.REFUEL and run:
 		_pump_frame(delta)
 	_probe_gfx(delta)
+	_damage_work(delta)
+	if _test_dent != "" and garage.car != null and garage.active and _frame > 8:
+		_apply_test_dents()
 	if _sim_running():
 		_update_time(delta)
 	if perf:
@@ -3067,9 +3259,12 @@ func _process(delta: float) -> void:
 			print("[autotest] crash t=%.2f x=%.2f vel=%s yaw=%.2f roll=%.2f rr=%.2f air=%.2f settled=%s" % [crash.t, player.x, crash.vel, crash.yaw, crash.roll, crash.roll_rate, crash.air, crash.settled])
 	if demo_pops and run:
 		_demo_t += delta
-		if _demo_t > 1.0:
+		if _demo_t > 0.4:
 			_demo_t = 0.0
-			_notify("NEAR MISS +%d" % randi_range(120, 480), ["", "hot"].pick_random())
+			var amounts := [35, 120, 480, 1800, 6500, 24000]  # small to big: the text grows with the score
+			var labels := ["PASS", "NEAR MISS", "NEAR MISS", "RAZOR PASS", "RAZOR PASS", "RAZOR PASS"]
+			_demo_i = (_demo_i + 1) % amounts.size()
+			_notify("%s +%s" % [labels[_demo_i], Fmt.num(amounts[_demo_i])], "hot" if amounts[_demo_i] >= 1000 else "", amounts[_demo_i])
 	_check_shots()
 
 
@@ -3206,7 +3401,7 @@ func _sync_visuals(delta: float) -> void:
 	# soft glow pulses on the road under the car instead.
 	player.model.visible = not idcolor
 	player.model.set_ghost(run != null and run.invuln > 0.0 and run.dying <= 0.0, t)
-	player.model.set_gauges(player.v * 3.6 / 300.0, sound.rpm / (sound.redline * 1.1))
+	player.model.set_gauges(player.v * 3.6 / 300.0, sound.rpm / CabinParts.tach_max(sound.redline))
 	# the wheel in the car turns with your hand however fast you go (at a crawl, with the road wheels)
 	var hand := _steer_cmd * 1.5 if (_live() and not autotest) else 0.0
 	var phys := player.steer * 7.0
@@ -4292,7 +4487,7 @@ func _replay_show(t: float, dt: float) -> void:
 	pm.set_steer(p[Replay.P_STEER])
 	pm.set_wheel_steer(p[Replay.P_STEER] / 7.0)
 	pm.set_gear(int(f.gear), absf(dt))
-	pm.set_gauges(p[Replay.P_V] * 3.6 / 300.0, float(f.rpm) / (sound.redline * 1.1))
+	pm.set_gauges(p[Replay.P_V] * 3.6 / 300.0, float(f.rpm) / CabinParts.tach_max(sound.redline))
 	sound.quiet = not rp.play
 	sound.drive(p[Replay.P_V], st.top, p[Replay.P_GAS] > 0.5, p[Replay.P_BRAKE] > 0.5, true, absf(dt) if absf(dt) > 0.0 else 0.016)
 
@@ -4680,7 +4875,7 @@ func _update_fuel(dt: float) -> void:
 			_new_station(float(station.z))
 	if run.fuel <= 0.0 and run.pit.is_empty():
 		if run.dry_t == 0.0:
-			hud.banner("OUT OF FUEL", "COASTING")
+			hud.banner("OUT OF FUEL", "COASTING", "alert")
 		run.dry_t += dt if player.v < 1.0 else 0.0001
 		if run.dry_t > 1.2:
 			_end_run("Ran out of fuel")

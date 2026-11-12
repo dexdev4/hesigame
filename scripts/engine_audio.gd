@@ -125,8 +125,10 @@ func _ready() -> void:
 	_sfx["whoosh"] = _make_whoosh()
 	_sfx["crash"] = _make_crash()
 	_sfx["ding"] = _make_ding()
+	_sfx["chime"] = _make_chime()
 	_sfx["blowoff"] = _make_blowoff()
 	_sfx["siren"] = _make_siren()
+	_sfx["glass"] = _make_glass()
 	if _eng.is_empty():
 		set_car(Data.CARS[0])
 
@@ -445,14 +447,14 @@ func play(name: String, pitch := 1.0, vol_db := 0.0) -> void:
 			return
 
 
-func _wav(samples: PackedFloat32Array) -> AudioStreamWAV:
+func _wav(samples: PackedFloat32Array, rate := RATE) -> AudioStreamWAV:
 	var bytes := PackedByteArray()
 	bytes.resize(samples.size() * 2)
 	for i in samples.size():
 		bytes.encode_s16(i * 2, int(clampf(samples[i], -1.0, 1.0) * 30000.0))
 	var w := AudioStreamWAV.new()
 	w.format = AudioStreamWAV.FORMAT_16_BITS
-	w.mix_rate = int(RATE)
+	w.mix_rate = int(rate)
 	w.stereo = false
 	w.data = bytes
 	return w
@@ -499,13 +501,103 @@ func _make_crash() -> AudioStreamWAV:
 	return _wav(out)
 
 
+## The scoring sound's pitch for a combo of n: a step up a major pentatonic scale for each link of the chain,
+## so a run of passes climbs a tune (G A B D E G A ...) instead of a chromatic crawl, and tops out.
+const PENTA := [0, 2, 4, 7, 9]
+static func combo_pitch(n: int) -> float:
+	var k := maxi(n, 0)
+	var semis: int = int(PENTA[k % 5]) + 12 * (k / 5)
+	return pow(2.0, minf(float(semis), 19.0) / 12.0)
+
+
+const SFX_RATE := 44100.0  # the bells are made at the full rate: a sparkle on top needs the room
+
+
+## One soft bell strike added into `buf` from sample `at`: an FM strike that settles to a pure tone, a quieter
+## octave shimmer, a bright partial that dies at once and a two-millisecond tick for presence.
+func _bell(buf: PackedFloat32Array, at: int, f0: float, gain: float, decay := 9.5, max_len := 0.5) -> void:
+	var rate := SFX_RATE
+	var n := mini(buf.size(), at + int(rate * max_len))  # (a bell is made for no longer than it is heard: this is built at start-up)
+	for i in range(at, n):
+		var t := float(i - at) / rate
+		var env := (1.0 - exp(-t * 1100.0)) * exp(-t * decay)             # about a millisecond to open, then a soft fall
+		if t > 0.01 and env < 0.0004:
+			break  # (it has died away)
+		var idx := 2.3 * exp(-t * 26.0)                                      # the FM depth: metallic at the strike, pure after
+		var mod := sin(TAU * f0 * 3.5 * t)
+		var tone := sin(TAU * f0 * t + idx * mod) * 0.78
+		var shimmer := sin(TAU * f0 * 2.0 * t + 0.5 * idx * mod) * 0.4 * exp(-t * 12.0)
+		var spark := sin(TAU * f0 * 5.02 * t) * 0.2 * exp(-t * 38.0)
+		var tick := (_rng.randf() * 2.0 - 1.0) * exp(-t * 1100.0) * 0.3
+		buf[i] += (tone + shimmer + spark + tick) * env * gain
+
+
+## Adds a little room to a dry sound: three quiet, short echoes.
+func _room(dry: PackedFloat32Array) -> PackedFloat32Array:
+	var out := dry.duplicate()
+	for e in [[0.019, 0.2], [0.043, 0.12], [0.071, 0.07]]:
+		var d := int(SFX_RATE * float(e[0]))
+		for i in range(d, dry.size()):
+			out[i] += dry[i - d] * float(e[1])
+	return out
+
+
+## Brings the loudest sample to `peak`.
+func _level(buf: PackedFloat32Array, peak: float) -> PackedFloat32Array:
+	var m := 0.0001
+	for v in buf:
+		m = maxf(m, absf(v))
+	var k := peak / m
+	for i in buf.size():
+		buf[i] *= k
+	return buf
+
+
+## The scoring sound: one soft, glassy bell (G5; the game plays it higher up the pentatonic scale as the combo grows).
 func _make_ding() -> AudioStreamWAV:
-	var n := int(RATE * 0.22)
+	var buf := PackedFloat32Array()
+	buf.resize(int(SFX_RATE * 0.5))
+	_bell(buf, 0, 784.0, 1.0)
+	return _wav(_level(_room(buf), 0.32), SFX_RATE)
+
+
+## A bigger reward (a boss beaten, an escape, a new highway): a rising three-note arpeggio with a last sparkle.
+func _make_chime() -> AudioStreamWAV:
+	var buf := PackedFloat32Array()
+	buf.resize(int(SFX_RATE * 1.25))
+	var notes := [[784.0, 0.0, 0.9], [987.8, 0.085, 0.9], [1174.7, 0.17, 0.95], [1568.0, 0.27, 0.8]]
+	for nt in notes:
+		_bell(buf, int(SFX_RATE * float(nt[1])), float(nt[0]), float(nt[2]), 6.5, 0.55)
+	return _wav(_level(_room(buf), 0.36), SFX_RATE)
+
+
+## Glass breaking: a sharp snap, then a shower of small bright pieces landing.
+func _make_glass() -> AudioStreamWAV:
+	var n := int(RATE * 0.7)
 	var out := PackedFloat32Array()
 	out.resize(n)
+	var lp := 0.0
 	for i in n:
 		var t := float(i) / RATE
-		out[i] = (sin(TAU * 660.0 * t) * 0.6 + sin(TAU * 1320.0 * t) * 0.2) * exp(-t * 16.0) * 0.4
+		var nz := _rng.randf() * 2.0 - 1.0
+		lp += 0.3 * (nz - lp)
+		var hp := nz - lp  # (high-passed noise)
+		out[i] = hp * exp(-t * 85.0) * 1.0 + hp * exp(-t * 7.0) * 0.1
+	for k in 40:
+		var at := int(RATE * pow(_rng.randf(), 1.8) * 0.55)  # (more early than late)
+		var f := _rng.randf_range(2200.0, 6200.0)
+		var dec := _rng.randf_range(35.0, 90.0)
+		var amp := _rng.randf_range(0.1, 0.32) * (1.0 - float(at) / float(n))
+		for j in int(RATE * 0.08):
+			if at + j >= n:
+				break
+			var tt := float(j) / RATE
+			out[at + j] += sin(TAU * f * tt) * exp(-tt * dec) * amp
+	var m := 0.0001
+	for v in out:
+		m = maxf(m, absf(v))
+	for i in n:
+		out[i] *= 0.5 / m
 	return _wav(out)
 
 

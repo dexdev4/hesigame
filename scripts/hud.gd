@@ -44,11 +44,8 @@ var _sp_tag: Label
 var _unit: Label
 var _rpm: ProgressBar
 var _pops: VBoxContainer
-var _banner: VBoxContainer
-var _banner_t: Label
-var _banner_s: Label
+var _bands: Array[PanelContainer] = []  # the notifications sliding in from the right edge (police, boss, stage...)
 var _hint: Label
-var _banner_tween: Tween
 var _hint_tween: Tween
 var _fill_white: StyleBoxFlat
 var _fill_amber: StyleBoxFlat
@@ -516,7 +513,7 @@ func _build_play() -> void:
 
 	# scoring messages: a short feed just under the score counter, out of the way of the road
 	_feed = VBoxContainer.new()
-	_feed.add_theme_constant_override("separation", -4)
+	_feed.add_theme_constant_override("separation", 3)
 	_feed.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	play_layer.add_child(_feed)
 	_pops = VBoxContainer.new()
@@ -527,23 +524,6 @@ func _build_play() -> void:
 	_pops.alignment = BoxContainer.ALIGNMENT_BEGIN
 	_pops.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	play_layer.add_child(_pops)
-
-	_banner = VBoxContainer.new()
-	_banner.anchor_right = 1.0
-	_banner.anchor_top = 0.24
-	_banner.anchor_bottom = 0.24
-	_banner.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_banner.modulate.a = 0.0
-	play_layer.add_child(_banner)
-	_banner_t = _label("", 110, LINE, display_font)
-	_banner_t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_banner_t.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.5))
-	_banner_t.add_theme_constant_override("shadow_offset_y", 5)
-	_banner.add_child(_banner_t)
-	_banner_s = _label("", 22, AMBER, mono_font)
-	_banner_s.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_banner_s.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_banner.add_child(_banner_s)
 
 	_hint = _label("Swipe left or right anywhere to steer", 24, LINE, mono_font)
 	_hint.anchor_right = 1.0
@@ -720,7 +700,10 @@ func _set_fill(bar: ProgressBar, fill: StyleBoxFlat) -> void:
 
 
 func update_play(d: Dictionary) -> void:
-	_feed.position = Vector2(_mult_bg.global_position.x, _mult_bg.global_position.y + _mult_bg.size.y + 6.0) - play_layer.global_position
+	var feed_y := _mult_bg.global_position.y + _mult_bg.size.y + 6.0
+	if mirror and mirror.is_visible_in_tree() and mirror.global_position.x < 360.0:
+		feed_y = maxf(feed_y, mirror.global_position.y + mirror.size.y + 6.0)  # (not behind the mirror)
+	_feed.position = Vector2(_mult_bg.global_position.x, feed_y) - play_layer.global_position
 	_score.text = d.score
 	_mult.text = d.mult
 	_mult_bg.modulate = Color(1, 1, 1, 1) if d.combo_on else Color(1, 1, 1, 0.45)
@@ -798,35 +781,100 @@ func pop(text: String, kind := "") -> void:
 	tw.tween_callback(l.queue_free)
 
 
-## A scoring message in the feed under the score counter: newest on top,
-## a few at most, each fading out after a moment.
-func pop_feed(text: String, kind := "") -> void:
-	var col := LINE
-	var size := 19
+## The size of a scoring message's text: small for a few points, growing with the score (a pass of 50 is
+## 15 px, 1,000 is 21, 10,000 is 27 and 100,000 is 33).
+static func score_size(pts: int) -> int:
+	if pts <= 0:
+		return 15
+	return roundi(clampf(13.0 + 6.0 * log(1.0 + pts / 40.0) / log(10.0), 13.0, 34.0))
+
+
+## The colour of a scoring message: white for the small ones, amber as it grows, orange for the big ones.
+static func score_color(pts: int) -> Color:
+	return LINE.lerp(AMBER, smoothstep(300.0, 2500.0, float(pts))).lerp(Color("#ff8a3d"), smoothstep(4000.0, 14000.0, float(pts)))
+
+
+## A slim band with an accent stripe down its left edge.
+func _band_style(accent: Color, alpha := 0.82, left_radius := 8) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.035, 0.045, 0.055, alpha)
+	sb.border_color = accent
+	sb.border_width_left = 5
+	sb.corner_radius_top_left = left_radius
+	sb.corner_radius_bottom_left = left_radius
+	return sb
+
+
+## A scoring message in the feed under the score counter: newest on top, a few at most, each fading out after
+## a moment. Each is a slim band; its text is small and grows with the points scored (`pts`, 0 for a message
+## that is not points: fuel, a hit...).
+func pop_feed(text: String, kind := "", pts := 0) -> void:
+	var accent := LINE
+	var col := score_color(pts) if pts > 0 else LINE
 	if kind == "hot":
-		col = AMBER
-		size = 21
+		accent = AMBER
+		if pts <= 0:
+			col = AMBER
 	elif kind == "bad":
+		accent = TAIL
 		col = TAIL
 	elif kind == "small":
+		accent = MUTED
 		col = MUTED
-	var l := _label(text, size, col, display_font)
+	else:
+		accent = col
+	var size := score_size(pts)
+	var p := PanelContainer.new()
+	var sb := _band_style(accent, 0.55, 6)
+	sb.corner_radius_top_right = 6
+	sb.corner_radius_bottom_right = 6
+	sb.content_margin_left = 9.0
+	sb.content_margin_right = 10.0
+	sb.content_margin_top = 2.0
+	sb.content_margin_bottom = 2.0
+	p.add_theme_stylebox_override("panel", sb)
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	p.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	var label_text := text
+	var num_text := ""
+	if pts > 0 and text.rfind(" +") > 0:  # "NEAR MISS +245": the words stay small and the number grows
+		label_text = text.substr(0, text.rfind(" +"))
+		num_text = text.substr(text.rfind(" +") + 1)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 7)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	p.add_child(row)
+	var l := _label(label_text, size if num_text == "" else clampi(12 + size / 6, 13, 17), col if num_text == "" else Color(LINE, 0.82), display_font)
 	l.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.7))
 	l.add_theme_constant_override("shadow_offset_y", 2)
-	l.add_theme_constant_override("outline_size", 5)
-	l.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.45))
-	l.modulate.a = 0.0
-	_feed.add_child(l)
-	_feed.move_child(l, 0)
+	l.size_flags_vertical = Control.SIZE_SHRINK_END
+	row.add_child(l)
+	if num_text != "":
+		var n := _label(num_text, size, col, display_font)
+		n.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.7))
+		n.add_theme_constant_override("shadow_offset_y", 2)
+		n.size_flags_vertical = Control.SIZE_SHRINK_END
+		row.add_child(n)
+	p.modulate.a = 0.0
+	_feed.add_child(p)
+	_feed.move_child(p, 0)
 	while _feed.get_child_count() > 4:
 		var old := _feed.get_child(_feed.get_child_count() - 1)
 		_feed.remove_child(old)
 		old.queue_free()
-	var tw := l.create_tween()
-	tw.tween_property(l, "modulate:a", 1.0, 0.08)
-	tw.tween_interval(1.3)
-	tw.tween_property(l, "modulate:a", 0.0, 0.3)
-	tw.tween_callback(l.queue_free)
+	# it grows out of the left edge (and a big score gives a little punch)
+	var h := p.get_combined_minimum_size().y
+	p.pivot_offset = Vector2(0.0, h / 2.0)
+	p.scale = Vector2(0.55, 1.0)
+	var tw := p.create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(p, "modulate:a", 1.0, 0.08)
+	tw.tween_property(p, "scale:x", 1.0, 0.16).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	if pts >= 1000:
+		tw.tween_property(p, "scale:y", 1.0, 0.22).from(1.22).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.chain().tween_interval(1.1 + size / 40.0)
+	tw.chain().tween_property(p, "modulate:a", 0.0, 0.3)
+	tw.chain().tween_callback(p.queue_free)
 
 
 ## Small floating message at a screen position (usually just above the car).
@@ -865,16 +913,60 @@ func pop_at(text: String, kind: String, pos: Vector2) -> void:
 	tw.chain().tween_callback(l.queue_free)
 
 
-func banner(title: String, sub := "") -> void:
-	_banner_t.text = title
-	_banner_s.text = sub
-	if _banner_tween:
-		_banner_tween.kill()
-	_banner.modulate.a = 0.0
-	_banner_tween = create_tween()
-	_banner_tween.tween_property(_banner, "modulate:a", 1.0, 0.25)
-	_banner_tween.tween_interval(1.7)
-	_banner_tween.tween_property(_banner, "modulate:a", 0.0, 0.5)
+## A notification (the police, a boss, a new stage, an escape...): a slim band that slides in from the right
+## edge, stays a moment and slides out again. `kind` colours its stripe: "alert" (red), "good" (green) or
+## "info" (amber).
+func banner(title: String, sub := "", kind := "info") -> void:
+	var accent := AMBER
+	var sub_col := MUTED
+	if kind == "alert":
+		accent = TAIL
+		sub_col = Color("#ffb3a8")
+	elif kind == "good":
+		accent = Color("#5bd68b")
+		sub_col = Color("#b9f0cf")
+	var p := PanelContainer.new()
+	var sb := _band_style(accent, 0.86, 10)
+	sb.border_width_left = 7
+	sb.content_margin_left = 16.0
+	sb.content_margin_right = 20.0
+	sb.content_margin_top = 7.0
+	sb.content_margin_bottom = 9.0
+	sb.shadow_color = Color(0, 0, 0, 0.35)
+	sb.shadow_size = 8
+	p.add_theme_stylebox_override("panel", sb)
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 0)
+	vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	p.add_child(vb)
+	var t := _label(title, 30, LINE, display_font)
+	vb.add_child(t)
+	if sub != "":
+		var sl := _label(sub, 15, sub_col, mono_font)
+		sl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		sl.custom_minimum_size.x = minf(maxf(t.get_minimum_size().x, 240.0), 460.0)
+		vb.add_child(sl)
+	play_layer.add_child(p)
+	var sz := p.get_combined_minimum_size()
+	p.size = sz
+	var vp := play_layer.size if play_layer.size.x > 10.0 else get_viewport().get_visible_rect().size
+	# a free slot under the others, then it slides in
+	var slot := 0
+	for b in _bands:
+		if is_instance_valid(b):
+			slot += 1
+	var y := vp.y * 0.27 + slot * (sz.y + 6.0)
+	p.position = Vector2(vp.x, y)
+	_bands.append(p)
+	var hold := 1.7 + 0.03 * (title.length() + sub.length()) + (0.8 if kind == "alert" else 0.0)
+	var tw := p.create_tween()
+	tw.tween_property(p, "position:x", vp.x - sz.x, 0.28).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tw.tween_interval(hold)
+	tw.tween_property(p, "position:x", vp.x + 8.0, 0.24).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+	tw.tween_callback(func() -> void:
+		_bands.erase(p)
+		p.queue_free())
 
 
 func show_hint() -> void:
@@ -1369,9 +1461,10 @@ func _style_tab(b: Button, on: bool) -> void:
 
 ## Ease a bar to a new value (or just set it when it is not on screen).
 func _tween_bar(bar: ProgressBar, v: float) -> void:
-	var old: Variant = bar.get_meta("tw", null)
-	if old is Tween and (old as Tween).is_valid():
-		(old as Tween).kill()
+	if bar.has_meta("tw"):
+		var old: Variant = bar.get_meta("tw")
+		if old is Tween and (old as Tween).is_valid():
+			(old as Tween).kill()
 	if not bar.is_visible_in_tree():
 		bar.value = v
 		return

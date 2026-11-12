@@ -1471,6 +1471,19 @@ static func _truck_kit() -> Dictionary:
 
 var shape: Dictionary
 var _tails: MeshInstance3D
+var _body_mi: MeshInstance3D      # the shell's detailed mesh (and its light version, _far_mi): what a crash dents
+var _far_mi: MeshInstance3D
+var _surface_names: Array = []
+var _surface_names_far: Array = []
+var _plate_label: Label3D
+var _calipers: Array = []         # by wheel: its brake caliper (or null)
+var _gone: Array[bool] = []       # by wheel: it has come off
+var _cracks := 0
+var _lamps_out := false
+var _smoke_fx: CPUParticles3D
+var _fire_fx: CPUParticles3D
+var dmg: CarDamage                # what crashes have done to it (null while untouched)
+var paint_color := Color(0.8, 0.8, 0.82)  # its body colour (the bits that fly off in a crash take it)
 var _sig_l: MeshInstance3D
 var _sig_r: MeshInstance3D
 var _body: Node3D
@@ -1486,8 +1499,11 @@ var _phase := randf() * TAU
 var _braking := false
 var _shape_id := ""
 var _needles: Array[Node3D] = []
+var _needle_shadows: Array[Node3D] = []
 var _steer_node: Node3D
-var _display: Label3D
+var _display: Label3D          # the speed, big, in the window between the dials
+var _display_gear: Label3D
+var _display_unit: Label3D
 var _screen: Label3D
 var _lever: Node3D
 var _lever_base := Vector3.ZERO
@@ -1521,12 +1537,14 @@ const LOD_NEAR := 40.0
 func build(shape_id: String, color: Color, cab_color := Color("#b5322a"), style := {}) -> void:
 	shape = Data.SHAPES[shape_id]
 	_shape_id = shape_id
+	paint_color = color
 	var kit := _kit(shape_id, style)
 	_body = Node3D.new()
 	add_child(_body)
 
 	var body := MeshInstance3D.new()
 	body.mesh = kit.body
+	_body_mi = body
 	var M := {}
 	if kit.has("surfaces"):
 		M = {
@@ -1540,13 +1558,16 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a"), style 
 		if kit.get("truck", false):
 			M["paint"] = paint(cab_color)  # tractor unit; the box keeps the main colour
 		var names: Array = kit.surfaces
+		_surface_names = names
 		for i in names.size():
 			body.set_surface_override_material(i, M[names[i]])
 		# the light version of the body takes over beyond LOD_NEAR
 		var kit_lq := _kit(shape_id, style, true)
 		var far := MeshInstance3D.new()
+		_far_mi = far
 		far.mesh = kit_lq.body
 		var names_lq: Array = kit_lq.surfaces
+		_surface_names_far = names_lq
 		for i in names_lq.size():
 			far.set_surface_override_material(i, M[names_lq[i]])
 		var near: float = kit.get("lod_near", LOD_NEAR)  # detailed imported/forged bodies hand over sooner
@@ -1593,6 +1614,8 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a"), style 
 			_lod(mf, LOD_NEAR, DRAW_DISTANCE)
 		add_child(wn)  # wheels stay level when the body rolls
 		_wheels.append(wn)
+		_gone.append(false)
+		_calipers.append(null)
 		if not kit.get("truck", false):
 			# brake caliper: fixed to the car, curving round the disc behind the spokes
 			var cal := MeshInstance3D.new()
@@ -1604,6 +1627,7 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a"), style 
 			cal.rotation.x = 0.35
 			_lod(cal, 0.0, LOD_NEAR)
 			add_child(cal)
+			_calipers[_calipers.size() - 1] = cal
 
 	if style.has("plate") or style.has("badge"):
 		var py: float = kit.get("plate_y", 0.6)
@@ -1618,6 +1642,7 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a"), style 
 			if kit.get("truck", false):
 				pl.position = Vector3(0, 0.82, 0.055)
 			_body.add_child(pl)
+			_plate_label = pl
 			_lod(pl, 0.0, 45.0)
 		if style.has("badge"):
 			var bd := Label3D.new()
@@ -2072,6 +2097,7 @@ func set_signal(dir: int, lit: bool) -> void:
 var _roll := 0.0
 var _pitch := 0.0
 var _bob := 0.0
+var _droop := Vector2.ZERO  # (pitch, roll) the body sags by when a wheel is missing
 var _body_xf := Transform3D(Basis(Vector3.INF, Vector3.INF, Vector3.INF), Vector3.INF)  # what the body node was last given (nothing yet)
 
 
@@ -2087,11 +2113,13 @@ func _pose_body() -> void:
 	if _body == null or shape.is_empty():
 		return
 	var xf: Transform3D
-	if _pitch == 0.0 and _roll == 0.0:
+	var pitch := _pitch + _droop.x
+	var roll := _roll + _droop.y
+	if pitch == 0.0 and roll == 0.0:
 		xf = Transform3D(Basis.IDENTITY, Vector3(0, _bob, 0))  # (what the general case comes to, without the trigonometry: traffic never leans)
 	else:
 		var pivot := Vector3(0.0, _wheel_r, -float(shape.l) * 0.5)
-		var b := Basis.from_euler(Vector3(-_pitch, 0.0, _roll))
+		var b := Basis.from_euler(Vector3(-pitch, 0.0, roll))
 		xf = Transform3D(b, pivot - b * pivot + Vector3(0, _bob, 0))
 	if xf != _body_xf:  # a car standing still is not moved again every frame
 		_body_xf = xf
@@ -2155,9 +2183,231 @@ func clear_crash_pose() -> void:
 ## World positions of the four tyre contact patches.
 func wheel_contacts() -> Array[Vector3]:
 	var out: Array[Vector3] = []
-	for wn in _wheels:
-		out.append(wn.global_position - global_transform.basis.y * _wheel_r)
+	for i in _wheels.size():
+		if not _gone[i]:
+			out.append(_wheels[i].global_position - global_transform.basis.y * _wheel_r)
 	return out
+
+
+# ---------------------------------------------------------------- damage
+
+## The meshes of the shell that a crash dents (the body, its light version, the tail and signal lamps).
+func damage_targets() -> Array[MeshInstance3D]:
+	var out: Array[MeshInstance3D] = []
+	for mi: MeshInstance3D in [_body_mi, _far_mi, _tails, _sig_l, _sig_r, _cabin_mi]:
+		if mi != null and is_instance_valid(mi):
+			out.append(mi)
+	return out
+
+
+## What crashes have done to this car (made at the first knock).
+func damage() -> CarDamage:
+	if dmg == null:
+		dmg = CarDamage.new(self)
+	return dmg
+
+
+## Where the glass is, in the car's space: "front" (the windscreen), "rear" or "side" (+1 right, -1 left).
+func glass_spot(which: String, side := 1.0) -> Vector3:
+	var pr: Dictionary = PROFILES.get(_shape_id, {})
+	var w: float = shape.w
+	var l: float = shape.l
+	var t: float = shape.t
+	if pr.has("gh"):
+		var g: Array = pr.gh
+		var mid: float = (float(g[4]) + float(g[5])) * 0.5
+		match which:
+			"front":
+				return Vector3(0.0, mid - 0.04, -(float(g[1]) - 0.4))
+			"rear":
+				return Vector3(0.0, float(g[4]) + 0.14, -(float(g[0]) + 0.1))
+			_:
+				return Vector3(side * w * 0.5 * float(g[6]), mid, -(float(g[0]) + float(g[1])) * 0.5)
+	match which:
+		"front":
+			return Vector3(0.0, t * 0.78, -l * 0.4)
+		"rear":
+			return Vector3(0.0, t * 0.78, -l * 0.12)
+		_:
+			return Vector3(side * w * 0.5, t * 0.75, -l * 0.28)
+
+
+## A window cracks round `p` (0.2 a star, 1 shattered). Two can be cracked at once (the glass shader draws both).
+func crack_glass(p: Vector3, amount: float) -> void:
+	var slot := "crack_a" if _cracks % 2 == 0 else "crack_b"
+	_cracks += 1
+	for mi in [_body_mi, _far_mi]:
+		if mi != null:
+			mi.set_instance_shader_parameter(slot, Vector4(p.x, p.y, p.z, clampf(amount, 0.0, 1.0)))
+
+
+## A smashed front: the headlamps and the tail lamps go dark and dull.
+func break_lamps() -> void:
+	if _lamps_out:
+		return
+	_lamps_out = true
+	var dull := mat(Color("#2a1f1c"), 0.0, 0.5)
+	for pair in [[_body_mi, _surface_names], [_far_mi, _surface_names_far]]:
+		var mi: MeshInstance3D = pair[0]
+		if mi == null:
+			continue
+		var names: Array = pair[1]
+		for i in names.size():
+			if String(names[i]) in ["head", "headlens"]:
+				mi.set_surface_override_material(i, dull)
+	if _tails:
+		_tails.material_override = mat(Color("#3a1210"), 0.0, 0.5)
+
+
+## The number plate comes off with a hard knock.
+func lose_plate() -> void:
+	if _plate_label:
+		_plate_label.visible = false
+
+
+func wheel_count() -> int:
+	return _wheels.size()
+
+
+func wheel_gone(i: int) -> bool:
+	return i >= 0 and i < _gone.size() and _gone[i]
+
+
+## The wheel nearest a point in the car's space (-1 if they have all come off).
+func nearest_wheel(p: Vector3) -> int:
+	var best := -1
+	var best_d := 1e9
+	for i in _wheels.size():
+		if _gone[i]:
+			continue
+		var d := Vector2(_wheels[i].position.x - p.x, _wheels[i].position.z - p.z).length_squared()
+		if d < best_d:
+			best_d = d
+			best = i
+	return best
+
+
+## Take wheel i off the car. Returns it (a node with its tyre and rim, in the car's own space, its world
+## transform kept) for the game to fling down the road, or null. The car sags at that corner.
+func detach_wheel(i: int) -> Node3D:
+	if i < 0 or i >= _wheels.size() or _gone[i]:
+		return null
+	var wn := _wheels[i]
+	var gone_front: bool = wn.position.z < -float(shape.l) * 0.5
+	var side := signf(wn.position.x)
+	_gone[i] = true
+	var xf := wn.global_transform
+	remove_child(wn)
+	if _calipers[i]:
+		(_calipers[i] as Node3D).visible = false
+	# the body sags towards the corner that has lost its wheel
+	_droop += Vector2((-0.03 if gone_front else 0.03), side * 0.035)
+	_pose_body()
+	wn.transform = xf  # (outside the tree: the game puts it in the world and keeps this transform)
+	return wn
+
+
+## Smoke (and, when badly damaged, flames) from under the bonnet.
+func start_smoke(heavy: bool) -> void:
+	if _smoke_fx == null:
+		_smoke_fx = _make_engine_smoke()
+		add_child(_smoke_fx)
+		_smoke_fx.position = Vector3(0.0, float(shape.t) * 0.66, -float(shape.l) * 0.78)
+	_smoke_fx.emitting = true
+	if heavy and _fire_fx == null:
+		_fire_fx = _make_engine_fire()
+		add_child(_fire_fx)
+		_fire_fx.position = _smoke_fx.position
+		_fire_fx.emitting = true
+
+
+static var _puff_tex: Texture2D
+
+
+static func _puff() -> Texture2D:
+	if _puff_tex == null:
+		var g := GradientTexture2D.new()
+		g.fill = GradientTexture2D.FILL_RADIAL
+		g.fill_from = Vector2(0.5, 0.5)
+		g.fill_to = Vector2(0.5, 0.0)
+		g.width = 64
+		g.height = 64
+		var gr := Gradient.new()
+		gr.set_color(0, Color(1, 1, 1, 1))
+		gr.set_color(1, Color(1, 1, 1, 0))
+		g.gradient = gr
+		_puff_tex = g
+	return _puff_tex
+
+
+func _make_engine_smoke() -> CPUParticles3D:
+	var p := CPUParticles3D.new()
+	p.amount = 14
+	p.lifetime = 1.7
+	p.local_coords = false  # the smoke is left behind as the car drives on
+	p.direction = Vector3(0, 1, 0.5)
+	p.spread = 18.0
+	p.initial_velocity_min = 0.8
+	p.initial_velocity_max = 1.8
+	p.gravity = Vector3(0, 0.9, 0)
+	p.scale_amount_min = 0.5
+	p.scale_amount_max = 1.0
+	var curve := Curve.new()
+	curve.add_point(Vector2(0.0, 0.35))
+	curve.add_point(Vector2(1.0, 1.7))
+	p.scale_amount_curve = curve
+	var grad := Gradient.new()
+	grad.set_color(0, Color(0.16, 0.16, 0.17, 0.7))
+	grad.set_color(1, Color(0.35, 0.35, 0.36, 0.0))
+	p.color_ramp = grad
+	var m := QuadMesh.new()
+	m.size = Vector2(1.1, 1.1)
+	p.mesh = m
+	var mt := StandardMaterial3D.new()
+	mt.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mt.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mt.vertex_color_use_as_albedo = true
+	mt.albedo_texture = _puff()
+	mt.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+	mt.billboard_keep_scale = true
+	mt.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+	p.material_override = mt
+	p.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return p
+
+
+func _make_engine_fire() -> CPUParticles3D:
+	var p := CPUParticles3D.new()
+	p.amount = 10
+	p.lifetime = 0.55
+	p.local_coords = true
+	p.direction = Vector3(0, 1, 0.2)
+	p.spread = 14.0
+	p.initial_velocity_min = 0.9
+	p.initial_velocity_max = 2.0
+	p.gravity = Vector3(0, 1.5, 0)
+	p.scale_amount_min = 0.35
+	p.scale_amount_max = 0.7
+	var grad := Gradient.new()
+	grad.set_color(0, Color(1.0, 0.78, 0.25, 0.95))
+	grad.add_point(0.45, Color(1.0, 0.36, 0.08, 0.7))
+	grad.set_color(1, Color(0.2, 0.05, 0.02, 0.0))
+	p.color_ramp = grad
+	var m := QuadMesh.new()
+	m.size = Vector2(0.8, 0.8)
+	p.mesh = m
+	var mt := StandardMaterial3D.new()
+	mt.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mt.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mt.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	mt.vertex_color_use_as_albedo = true
+	mt.albedo_texture = _puff()
+	mt.billboard_mode = BaseMaterial3D.BILLBOARD_PARTICLES
+	mt.billboard_keep_scale = true
+	mt.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+	p.material_override = mt
+	p.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return p
 
 
 ## Pitch the body: positive dips the nose (braking), negative squats (accelerating).
@@ -2190,6 +2440,8 @@ func spin(v: float, dt: float) -> void:
 	var b_front := Basis.from_euler(Vector3(_spin, -_wheel_steer, 0.0))
 	var b_rear := Basis.from_euler(Vector3(_spin, 0.0, 0.0))
 	for i in _wheels.size():
+		if _gone[i]:
+			continue
 		var wn := _wheels[i]
 		wn.transform = Transform3D(b_front if _wheel_front[i] else b_rear, wn.position)
 
@@ -2328,33 +2580,35 @@ static func _strap(st: SurfaceTool, a: Vector3, b: Vector3, w: float, t: float) 
 ## bottom); spokes = spoke angles; hub = "box" or "round". screen: "wide",
 ## "tablet" (a tall floating tablet) or "retro" (a small radio); pods = small
 ## extra gauges on the dash top; two_tone = lower dash in the leather colour;
-## cage = a roll hoop behind the seats. dials = [speedo ring, rev ring, needle].
+## cage = a roll hoop behind the seats. dials = [accent (rings, mph scale), numerals, needle]. vents: "rect", "round"
+## or "strip"; strip_kind: the finish of the dash strip ("brushed", "carbon", "wood" or "paint"); bezel: "chrome" or "dark"
+## dial rings. The dial faces and the screen's map are baked art (tools/make_cockpit_art.py), the rest is CabinParts.
 ## Imported cars keep the cabin style of the generated body they replaced.
 const CABIN_ALIAS := {"kestrel": "hatch", "bruiser": "muscle", "copperhead": "fastback", "halcyon": "super", "static": "rcoupe", "marshal": "msedan", "lastexit": "hyper", "vanta": "sedan"}
 const CABINS := {
-	"hot_hatch": {"leather": "#23262b", "insert": "#2f62b0", "stitch": "#5a9bff", "ambient": "#3d8bff", "strip": "#3b4047", "wheel": "flat", "screen": "tablet",
+	"hot_hatch": {"vents": "round", "strip_kind": "carbon", "leather": "#23262b", "insert": "#2f62b0", "stitch": "#5a9bff", "ambient": "#3d8bff", "strip": "#3b4047", "wheel": "flat", "screen": "tablet",
 		"dials": ["#5a9bff", "#e6e6e6", "#ff4a2a"], "accent": "#5a9bff"},
-	"sport_sedan": {"leather": "#1b1b1d", "insert": "#2a2a2d", "stitch": "#d0202a", "ambient": "#ff3b30", "strip": "#8d939a", "wheel": "round", "marker": "#d0202a", "screen": "wide",
+	"sport_sedan": {"vents": "round", "strip_kind": "brushed", "leather": "#1b1b1d", "insert": "#2a2a2d", "stitch": "#d0202a", "ambient": "#ff3b30", "strip": "#8d939a", "wheel": "round", "marker": "#d0202a", "screen": "wide",
 		"dials": ["#ff3b30", "#e6e6e6", "#ff3b30"], "seats": "bucket", "accent": "#d0202a"},
-	"compact": {"leather": "#1c1c1e", "insert": "#d9a21b", "stitch": "#f5c52e", "ambient": "#f5c52e", "strip": "#d9a21b", "wheel": "flat", "marker": "#f5c52e", "screen": "wide",
+	"compact": {"vents": "round", "strip_kind": "paint", "leather": "#1c1c1e", "insert": "#d9a21b", "stitch": "#f5c52e", "ambient": "#f5c52e", "strip": "#d9a21b", "wheel": "flat", "marker": "#f5c52e", "screen": "wide",
 		"dials": ["#f5c52e", "#f5c52e", "#ffffff"], "seats": "bucket", "accent": "#f5c52e"},
-	"coupe": {"leather": "#8a6038", "insert": "#a67848", "stitch": "#e8d8b8", "ambient": "#ffe2b0", "strip": "#b9bfc5", "trim": "#4a382a", "carpet": "#2a221c", "wheel": "round", "spokes": [0.0, 3.14159], "hub": "round",
+	"coupe": {"vents": "rect", "strip_kind": "brushed", "bezel": "chrome", "leather": "#8a6038", "insert": "#a67848", "stitch": "#e8d8b8", "ambient": "#ffe2b0", "strip": "#b9bfc5", "trim": "#4a382a", "carpet": "#2a221c", "wheel": "round", "spokes": [0.0, 3.14159], "hub": "round",
 		"screen": "wide", "dials": ["#e8d8b8", "#e8d8b8", "#ff7a2a"], "two_tone": true, "liner": "#6a6258"},
-	"hatch": {"leather": "#4a4e55", "insert": "#6a7078", "stitch": "#2aa198", "ambient": "#2aa198", "strip": "#5a5f66", "trim": "#3a3d42", "dash": "#25272b", "wheel": "round", "spokes": [0.35, 2.79, 1.5708, 1.5708],
+	"hatch": {"vents": "rect", "strip_kind": "paint", "leather": "#4a4e55", "insert": "#6a7078", "stitch": "#2aa198", "ambient": "#2aa198", "strip": "#5a5f66", "trim": "#3a3d42", "dash": "#25272b", "wheel": "round", "spokes": [0.35, 2.79, 1.5708, 1.5708],
 		"screen": "retro", "dials": ["#e6e6e6", "#e6e6e6", "#ff4a2a"], "liner": "#7a7c80"},
-	"sedan": {"leather": "#b8a488", "insert": "#c8b69a", "stitch": "#8a7458", "ambient": "#fff2d8", "strip": "#6b4a2e", "trim": "#8a7860", "carpet": "#3a3228", "wheel": "round", "spokes": [0.3, 2.84, 1.2, 1.94], "hub": "round",
+	"sedan": {"vents": "rect", "strip_kind": "wood", "bezel": "chrome", "leather": "#b8a488", "insert": "#c8b69a", "stitch": "#8a7458", "ambient": "#fff2d8", "strip": "#6b4a2e", "trim": "#8a7860", "carpet": "#3a3228", "wheel": "round", "spokes": [0.3, 2.84, 1.2, 1.94], "hub": "round",
 		"screen": "wide", "dials": ["#fff2d8", "#fff2d8", "#ff4a2a"], "two_tone": true, "liner": "#a8a090"},
-	"muscle": {"leather": "#161616", "insert": "#1e1e1e", "stitch": "#e8e8e8", "ambient": "#ffb02e", "strip": "#c9ced3", "wheel": "round", "spokes": [0.0, 3.14159, 1.5708], "spoke_metal": true, "hub": "round", "thin_rim": true,
+	"muscle": {"vents": "round", "strip_kind": "brushed", "bezel": "chrome", "leather": "#161616", "insert": "#1e1e1e", "stitch": "#e8e8e8", "ambient": "#ffb02e", "strip": "#c9ced3", "wheel": "round", "spokes": [0.0, 3.14159, 1.5708], "spoke_metal": true, "hub": "round", "thin_rim": true,
 		"screen": "retro", "pods": 3, "dials": ["#e8e8e8", "#e8e8e8", "#ff3b2a"], "accent": "#e8e8e8"},
-	"super": {"leather": "#d8dce2", "insert": "#aab8c8", "stitch": "#2ad0e8", "ambient": "#2ad0e8", "strip": "#1c1e22", "trim": "#2a2d32", "wheel": "flat", "marker": "#2ad0e8", "screen": "tablet",
+	"super": {"vents": "strip", "strip_kind": "carbon", "leather": "#d8dce2", "insert": "#aab8c8", "stitch": "#2ad0e8", "ambient": "#2ad0e8", "strip": "#1c1e22", "trim": "#2a2d32", "wheel": "flat", "marker": "#2ad0e8", "screen": "tablet",
 		"dials": ["#2ad0e8", "#e6e6e6", "#2ad0e8"], "seats": "bucket", "liner": "#3a3c40", "accent": "#2ad0e8"},
-	"fastback": {"leather": "#6a3a1e", "insert": "#7c4826", "stitch": "#f08a2a", "ambient": "#f08a2a", "strip": "#3a3d42", "trim": "#2c2420", "wheel": "round", "spokes": [0.0, 3.14159, 1.5708], "spoke_metal": true, "hub": "round",
+	"fastback": {"vents": "round", "strip_kind": "brushed", "bezel": "chrome", "leather": "#6a3a1e", "insert": "#7c4826", "stitch": "#f08a2a", "ambient": "#f08a2a", "strip": "#3a3d42", "trim": "#2c2420", "wheel": "round", "spokes": [0.0, 3.14159, 1.5708], "spoke_metal": true, "hub": "round",
 		"screen": "retro", "pods": 3, "dials": ["#f08a2a", "#e8e8e8", "#ff3b2a"], "accent": "#f08a2a"},
-	"msedan": {"leather": "#17181b", "insert": "#22252b", "stitch": "#2f7fe8", "ambient": "#2f7fe8", "strip": "#1c1e22", "wheel": "flat", "marker": "#2f7fe8", "screen": "wide",
+	"msedan": {"vents": "strip", "strip_kind": "carbon", "leather": "#17181b", "insert": "#22252b", "stitch": "#2f7fe8", "ambient": "#2f7fe8", "strip": "#1c1e22", "wheel": "flat", "marker": "#2f7fe8", "screen": "wide",
 		"dials": ["#e6e6e6", "#e6e6e6", "#ff3b2a"], "seats": "bucket", "accent": "#2f7fe8"},
-	"rcoupe": {"leather": "#1a1b1e", "insert": "#1f8fe8", "stitch": "#1fa3ff", "ambient": "#1fa3ff", "strip": "#1fa3ff", "wheel": "flat", "marker": "#f3f5ef", "screen": "tablet", "pods": 1,
+	"rcoupe": {"vents": "strip", "strip_kind": "paint", "leather": "#1a1b1e", "insert": "#1f8fe8", "stitch": "#1fa3ff", "ambient": "#1fa3ff", "strip": "#1fa3ff", "wheel": "flat", "marker": "#f3f5ef", "screen": "tablet", "pods": 1,
 		"dials": ["#1fa3ff", "#f3f5ef", "#f3f5ef"], "seats": "bucket", "liner": "#2a2c30", "accent": "#1fa3ff"},
-	"hyper": {"leather": "#8e1420", "insert": "#1a1a1c", "stitch": "#e8c84a", "ambient": "#ff2a2a", "strip": "#1c1e22", "trim": "#1e1f22", "wheel": "yoke", "marker": "#e8c84a", "screen": "tablet",
+	"hyper": {"vents": "round", "strip_kind": "carbon", "leather": "#8e1420", "insert": "#1a1a1c", "stitch": "#e8c84a", "ambient": "#ff2a2a", "strip": "#1c1e22", "trim": "#1e1f22", "wheel": "yoke", "marker": "#e8c84a", "screen": "tablet",
 		"dials": ["#ff2a2a", "#e8c84a", "#e8c84a"], "seats": "bucket", "cage": true, "liner": "#1e1f22", "accent": "#b0122a"},
 }
 
@@ -2463,7 +2717,7 @@ func build_interior() -> void:
 	var zs: float = dz + (zf - dz) * 0.9
 	_box(S.stitch, Vector3(0, pad_y.call(zs) + 0.003, zs), Vector3(hd * 2.0 - 0.06, 0.004, 0.006))
 	_box(lower, Vector3(0, yd - 0.3, zf - 0.2), Vector3(hb * 2.0, 0.18, 0.4))                  # lower dash
-	_box(S.alu, Vector3(0, yd - 0.11, zf + 0.005), Vector3(hb * 2.0 - 0.1, 0.025, 0.012))      # trim strip
+	CabinParts.trim_strip(_body, String(cab.get("strip_kind", "paint")), Color(String(cab.get("strip", "#8d939a"))), Vector3(0, yd - 0.11, zf + 0.005), Vector3(hb * 2.0 - 0.1, 0.025, 0.012))      # trim strip
 	_box(S.ambient, Vector3(0, yd - 0.126, zf + 0.007), Vector3(hb * 2.0 - 0.12, 0.004, 0.006))  # ambient light line
 	for sd in [-1.0, 1.0]:
 		_box(S.ambient, Vector3(sd * (hb - 0.062), yd - 0.07, (zr + dz) / 2.0), Vector3(0.004, 0.004, absf(dz - zr) * 0.9))
@@ -2486,32 +2740,29 @@ func build_interior() -> void:
 			_cyl(S.chrome, Vector3(sd * 0.115, sy, sz + 0.012), 0.017, 0.024, Vector3.BACK, 12)
 		for k in 5:  # preset buttons
 			_box(S.chrome, Vector3(-0.064 + k * 0.032, sy - 0.05, sz + 0.004), Vector3(0.024, 0.014, 0.008))
-	if scr != "retro":
-		# sat-nav map in the lower half of the screen
-		var my := sy - shh * 0.29
-		_box(S.map, Vector3(0, my, sz + 0.0055), Vector3(sw - 0.02, shh * 0.36, 0.002))
-		for rd in [[-0.06, 0.0, 0.11, 0.005], [0.03, -0.01, 0.005, 0.045], [0.07, 0.008, 0.07, 0.004]]:
-			_box(S.screen, Vector3(rd[0] * sw / 0.25, my + rd[1], sz + 0.007), Vector3(rd[2] * sw / 0.25, rd[3], 0.002))
-		_box(S.route, Vector3(0.0, my, sz + 0.0075), Vector3(0.004, 0.04, 0.002))
-		_box(S.route, Vector3(-0.03 * sw / 0.25, my + 0.02, sz + 0.0075), Vector3(0.06 * sw / 0.25, 0.004, 0.002))
 	_box(S.trim, Vector3(-ex, yd - 0.3, zf - 0.04), Vector3(0.46, 0.16, 0.02))               # glovebox lid
 	_box(S.chrome, Vector3(-ex + 0.17, yd - 0.25, zf - 0.025), Vector3(0.06, 0.015, 0.015))  # glovebox latch
 	for sd in [-1.0, 1.0]:
 		_box(S.dash, Vector3(sd * 0.36, yd - 0.32, zf - 0.02), Vector3(0.34, 0.14, 0.08))      # knee bolsters
-	for vx in [-0.1, 0.1, -(hb - 0.14), hb - 0.14]:
-		var c := Vector3(vx, yd - 0.02, zf + 0.005)
-		_box(S.chrome, c, Vector3(0.16, 0.075, 0.01))
-		_box(S.vent, c + Vector3(0, 0, 0.004), Vector3(0.145, 0.062, 0.01))
-		for k in 3:
-			_box(S.trim, c + Vector3(0, -0.02 + k * 0.02, 0.008), Vector3(0.14, 0.006, 0.006))
+	var vent_kind: String = cab.get("vents", "rect")
+	if vent_kind == "strip":  # one slim vent right across the dash
+		CabinParts.vent_strip(S, -(hb - 0.12), hb - 0.12, yd - 0.015, zf + 0.005)
+	else:
+		for vx in [-0.1, 0.1, -(hb - 0.14), hb - 0.14]:
+			var c := Vector3(vx, yd - 0.02, zf + 0.005)
+			if vent_kind == "round":
+				CabinParts.vent_round(S, c, 0.04)
+			else:
+				CabinParts.vent_rect(S, c, 0.16, 0.075)
+	CabinParts.defrost(S, hd - 0.12, pad_y.call(dz + 0.075) + 0.001, dz + 0.075)  # the demister slot against the windscreen
 	# centre stack with screen, climate knobs and hazard switch
 	_box(S.dash, Vector3(0, yd - 0.27, zf - 0.06), Vector3(0.32, 0.44, 0.16))
 	_box(S.chrome, Vector3(0, sy, sz), Vector3(sw + 0.02, shh + 0.02, 0.004))
-	_box(S.screen, Vector3(0, sy, sz + 0.003), Vector3(sw, shh, 0.004))
+	CabinParts.screen(_body, Vector3(0, sy, sz + 0.0056), Vector2(sw, shh), _shape_id)  # the lit glass: a map, and the card the radio text prints on
 	var knob_y := yd - 0.33 if scr != "tablet" else yd - 0.36
 	for k in 3:
-		_cyl(S.chrome, Vector3(-0.08 + k * 0.08, knob_y, zf + 0.025), 0.026, 0.02, Vector3.BACK, 14)
-		_cyl(S.vent, Vector3(-0.08 + k * 0.08, knob_y, zf + 0.036), 0.02, 0.005, Vector3.BACK, 12)
+		CabinParts.knob(S, Vector3(-0.08 + k * 0.08, knob_y, zf + 0.025), 0.026)
+	CabinParts.button_row(S, 0.0, knob_y - 0.065, zf + 0.022, 5, 0.052)
 	_box(S.red, Vector3(0, knob_y + 0.075 if scr != "tablet" else knob_y + 0.05, zf + 0.024), Vector3(0.04, 0.025, 0.01))
 	# extra gauges in small pods on the dash top (oil, volts, boost), kept low
 	var pods: int = cab.get("pods", 0)
@@ -2534,7 +2785,7 @@ func build_interior() -> void:
 	var y_dial: float = minf(eye.y - 0.72 * 0.33, float(sight.call(zf)) - 0.052 - 0.012)  # about 18 degrees below the eye
 	var dial_tilt := atan2(eye.y - y_dial, ez - zf)   # the dials face the driver's eye
 	# the steering column, rising from the dash to the wheel hub
-	var hub := Vector3(ex, eye.y - 0.30, ez - 0.55)
+	var hub := Vector3(ex, eye.y - 0.30 - (0.05 if cab.get("wheel", "round") == "yoke" else 0.0), ez - 0.55)  # (a yoke sits lower, so its top bar does not hide the speed readout)
 	_strap(S.dash, Vector3(ex, ypad - 0.2, zf + 0.01), hub + Vector3(0, -0.04, -0.03), 0.1, 0.1)
 	for sd in [-1.0, 1.0]:
 		_strap(S.dash, hub + Vector3(sd * 0.05, -0.09, 0.0), hub + Vector3(sd * 0.17, -0.07, 0.03), 0.018, 0.018)  # stalks
@@ -2626,8 +2877,8 @@ func build_interior() -> void:
 	var cc := func(key: String, def: String) -> Color: return Color(String(cab.get(key, def)))
 	var strip_col: Color = cc.call("strip", "#8d939a")
 	var mats := {
-		"carpet": mat(cc.call("carpet", "#232427"), 0.0, 1.0), "trim": mat(cc.call("trim", "#34363a"), 0.0, 0.8),
-		"dash": mat(cc.call("dash", "#17181b"), 0.0, 0.7), "pad": mat(cc.call("dash", "#17181b").lightened(0.04), 0.0, 0.9),
+		"carpet": mat(cc.call("carpet", "#232427"), 0.0, 1.0), "trim": mat(cc.call("trim", "#34363a"), 0.0, 0.62),
+		"dash": mat(cc.call("dash", "#1d1f23"), 0.0, 0.5), "pad": mat(cc.call("dash", "#1d1f23").lightened(0.06), 0.0, 0.46),
 		"leather": mat(cc.call("leather", "#2b2624"), 0.0, 0.55), "insert": mat(cc.call("insert", "#3a3a3d"), 0.0, 0.85),
 		"chrome": mat(Color("#c9ced3"), 0.0, 0.3, 0.35),
 		# the dash strip: bright metal, or dark gloss for wood and carbon
@@ -2697,71 +2948,47 @@ func build_interior() -> void:
 	stem.position = mpos + Vector3(0, 0.05, -0.012)  # joins the mirror to the roof above it
 	_body.add_child(stem)
 
-	# instrument cluster: speedometer and rev counter with ticks and needles
-	for k in 2:
-		var dial := Node3D.new()
-		dial.position = Vector3(ex + (0.095 if k == 0 else -0.095), y_dial, zf + 0.012)
-		dial.rotation.x = -dial_tilt
-		_body.add_child(dial)
-		var face := MeshInstance3D.new()
-		var cm := CylinderMesh.new()
-		cm.top_radius = 0.05
-		cm.bottom_radius = 0.05
-		cm.height = 0.01
-		cm.radial_segments = 24
-		face.mesh = cm
-		face.rotation.x = PI / 2.0
-		face.material_override = mat(Color("#0e0f11"), 0.0, 0.4)
-		dial.add_child(face)
-		var ring := MeshInstance3D.new()
-		var tm := TorusMesh.new()
-		tm.inner_radius = 0.046
-		tm.outer_radius = 0.053
-		tm.rings = 24
-		tm.ring_segments = 4
-		ring.mesh = tm
-		ring.rotation.x = PI / 2.0
-		ring.material_override = mat(Color(String((cab.get("dials", ["#f5b52e", "#e6e6e6", "#ff4a2a"]) as Array)[k])), 1.6)
-		dial.add_child(ring)
-		for t in 9:
-			var a := lerpf(2.2, -2.2, t / 8.0)
-			var tick := MeshInstance3D.new()
-			tick.mesh = box_mesh(Vector3(0.003, 0.009, 0.002))
-			tick.position = Vector3(-sin(a), cos(a), 0) * 0.038 + Vector3(0, 0, 0.007)
-			tick.rotation.z = a
-			tick.material_override = mat(Color("#ff3b2a") if (k == 1 and t >= 7) else Color("#e8e8e8"), 1.4)
-			dial.add_child(tick)
-		var pivot := Node3D.new()
-		pivot.position = Vector3(0, 0, 0.009)
-		dial.add_child(pivot)
-		var needle := MeshInstance3D.new()
-		needle.mesh = box_mesh(Vector3(0.004, 0.04, 0.003))
-		needle.position = Vector3(0, 0.018, 0)
-		needle.material_override = mat(Color(String((cab.get("dials", ["#f5b52e", "#e6e6e6", "#ff4a2a"]) as Array)[2])), 3.0)
-		pivot.add_child(needle)
-		_needles.append(pivot)
-	# digital readout between the dials, and the infotainment screen
+	# instrument cluster: the baked panel (numbered dials, redline, warning lamps) with real needles standing off it,
+	# and the gear and speed readout in the window between the dials
+	var dial_cols: Array = cab.get("dials", ["#f5b52e", "#e6e6e6", "#ff4a2a"])
+	var cluster_node := CabinParts.cluster(_body, Vector3(ex, y_dial, zf + 0.012), dial_tilt, _shape_id, cab, _needles, _needle_shadows)
+	var readout := Color(String(dial_cols[0])).lightened(0.3)
 	_display = Label3D.new()
-	_display.font_size = 40
-	_display.pixel_size = 0.00042
-	_display.modulate = Color(String((cab.get("dials", ["#f5b52e", "#e6e6e6", "#ff4a2a"]) as Array)[0])).lightened(0.25)
+	_display.font_size = 64
+	_display.pixel_size = 0.00033
+	_display.modulate = Color(String(dial_cols[1])).lerp(Color.WHITE, 0.35)
 	_display.outline_size = 0
-	_display.position = Vector3(ex, y_dial, zf + 0.016)
-	_display.rotation.x = -dial_tilt
-	_body.add_child(_display)
+	_display.position = Vector3(0.0, 0.0, 0.0035)
+	_display.text = "0"
+	cluster_node.add_child(_display)
+	_display_gear = Label3D.new()
+	_display_gear.font_size = 30
+	_display_gear.pixel_size = 0.00033
+	_display_gear.modulate = readout
+	_display_gear.outline_size = 0
+	_display_gear.position = Vector3(0.0, 0.0158, 0.0035)
+	cluster_node.add_child(_display_gear)
+	_display_unit = Label3D.new()
+	_display_unit.font_size = 30
+	_display_unit.pixel_size = 0.00033
+	_display_unit.modulate = readout
+	_display_unit.outline_size = 0
+	_display_unit.position = Vector3(0.0, -0.0185, 0.0035)
+	cluster_node.add_child(_display_unit)
 	_screen = Label3D.new()
 	_screen.font_size = 30
 	_screen.pixel_size = 0.0008
 	_screen.modulate = Color("#cfe8ff")
 	_screen.outline_size = 0
-	_screen.position = Vector3(0, sy + shh * 0.17, sz + 0.008)
+	_screen.position = Vector3(0, sy + shh * 0.281, sz + 0.0085)  # on the card at the top of the screen's art
 	_screen.font_size = 26
+	_screen.pixel_size = 0.0006
 	if scr == "tablet":
-		_screen.pixel_size = 0.00062
-		_screen.position.y = sy + shh * 0.24
+		_screen.position.y = sy + shh * 0.311
 	elif scr == "retro":
-		_screen.pixel_size = 0.0005
-		_screen.position.y = sy
+		_screen.pixel_size = 0.00042
+		_screen.modulate = Color("#ffd49a")
+		_screen.position.y = sy + 0.006
 	_body.add_child(_screen)
 
 	# steering wheel: tilted column with a spinning rim, spokes, airbag hub and paddles
@@ -2772,66 +2999,19 @@ func build_interior() -> void:
 	_steer_node = Node3D.new()
 	tilt.add_child(_steer_node)
 	var wheel_kind: String = cab.get("wheel", "round")
-	var rim := MeshInstance3D.new()
-	rim.mesh = _rim_mesh(wheel_kind, cab.get("thin_rim", false))
-	rim.material_override = mats.leather
-	_steer_node.add_child(rim)
-	var spoke_mat: Material = mat(Color("#6b7078"), 0.0, 0.5, 0.4) if cab.get("spoke_metal", false) else mats.dash
-	for a in cab.get("spokes", [0.0, PI, PI * 0.5]):  # 0 = right, PI = left, PI/2 = bottom
-		var ang := float(a)
-		var reach := 0.172
-		if wheel_kind != "round" and sin(ang) > 0.7:
-			reach = 0.118  # down to the flat bottom
-		var spoke := MeshInstance3D.new()
-		spoke.mesh = box_mesh(Vector3(reach - 0.04, 0.012 if cab.get("spoke_metal", false) else 0.025, 0.03 if cab.get("spoke_metal", false) else 0.045))
-		spoke.position = Vector3(cos(ang), 0, sin(ang)) * (0.04 + (reach - 0.04) * 0.5)
-		spoke.rotation.y = -ang
-		spoke.material_override = spoke_mat
-		_steer_node.add_child(spoke)
-	var hubm := MeshInstance3D.new()
-	if cab.get("hub", "box") == "round":
-		var hm := CylinderMesh.new()
-		hm.top_radius = 0.058
-		hm.bottom_radius = 0.064
-		hm.height = 0.05
-		hm.radial_segments = 20
-		hubm.mesh = hm
-	else:
-		hubm.mesh = box_mesh(Vector3(0.12, 0.05, 0.1))
-	hubm.material_override = mats.dash
-	_steer_node.add_child(hubm)
-	var badge := MeshInstance3D.new()
-	badge.mesh = box_mesh(Vector3(0.03, 0.005, 0.02))
-	badge.position = Vector3(0, 0.028, 0)
-	badge.material_override = mat(Color("#f5b52e"), 1.5)
-	_steer_node.add_child(badge)
-	if cab.has("marker"):  # the straight-ahead mark at twelve o'clock
-		var mk := MeshInstance3D.new()
-		mk.mesh = box_mesh(Vector3(0.022, 0.037, 0.037))
-		mk.position = Vector3(0, 0, -0.105 if wheel_kind == "yoke" else -0.172)
-		mk.material_override = mat(Color(String(cab.marker)), 0.6)
-		_steer_node.add_child(mk)
+	var spoke_mat: Material = mat(Color("#8a9098"), 0.0, 0.34, 0.9) if cab.get("spoke_metal", false) else mats.dash
+	CabinParts.wheel(_steer_node, cab, mats.leather, spoke_mat, mats.chrome, mats.vent, mats.stitch)
 
 	# the driver: gloved hands on the rim at a quarter to three, arms that follow the wheel
-	var glove := mat(Color("#141416"), 0.0, 0.45)
+	var glove := mat(Color("#2b2d31"), 0.0, 0.5)
 	var sleeve := mat(Color("#2a2f38"), 0.0, 0.85)
 	for sd in [-1.0, 1.0]:
 		var hand := MeshInstance3D.new()
-		var cap := CapsuleMesh.new()
-		cap.radius = 0.028
-		cap.height = 0.11
-		cap.radial_segments = 10
-		cap.rings = 3
-		hand.mesh = cap
+		hand.mesh = CabinParts.hand_mesh(sd)
 		hand.material_override = glove
 		hand.position = Vector3(sd * 0.168, 0.01, -0.045)
-		hand.rotation = Vector3(PI / 2.0, 0, sd * 0.25)
+		hand.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		_steer_node.add_child(hand)
-		var knuckles := MeshInstance3D.new()
-		knuckles.mesh = box_mesh(Vector3(0.036, 0.05, 0.08))
-		knuckles.material_override = glove
-		knuckles.position = Vector3(sd * 0.15, 0.03, -0.04)
-		_steer_node.add_child(knuckles)
 		_hands.append(hand)
 		var arm := []
 		for k in 2:
@@ -2922,13 +3102,14 @@ float opening(sampler2D m, vec3 p, int i) {
 void fragment() {
 	float w = max(opening(mask0, lp, 0), max(opening(mask1, lp, 1), opening(mask2, lp, 2)));
 	if (w > 0.5) { discard; }                               // a window opening
+	float seal = 1.0 - 0.5 * smoothstep(0.04, 0.5, w);      // dark where the glass meets the trim: a seal in shadow
 	vec3 up = normalize((VIEW_MATRIX * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
 	vec3 fn = normalize(cross(dFdx(VERTEX), dFdy(VERTEX)));  // the face's own normal
 	float d = -abs(dot(fn, up));                            // about -1 on the roof, 0 on the pillars and doors
 	vec3 base = mix(wall, roof, 1.0 - smoothstep(-0.75, -0.25, d));
 	float lit = 0.8 + 0.25 * (1.0 - smoothstep(-3.2, -0.8, lp.z));  // brighter towards the windscreen
 	lit *= 0.82 + 0.18 * smoothstep(0.7, 1.15, lp.y);       // darker down by the door sills
-	ALBEDO = pow(base * lit, vec3(0.72)) * dim;             // lifted a little (the tone mapping crushes dark trim to black), dimmed at night
+	ALBEDO = pow(base * lit, vec3(0.72)) * dim * seal;      // lifted a little (the tone mapping crushes dark trim to black), dimmed at night
 }
 """
 	var sm := ShaderMaterial.new()
@@ -3041,8 +3222,13 @@ static func _inner_load(id: String) -> Dictionary:
 func set_gauges(speed_frac: float, rpm_frac: float) -> void:
 	if _needles.size() < 2:
 		return
-	_needles[0].rotation.z = lerpf(2.2, -2.2, clampf(speed_frac, 0.0, 1.0))
-	_needles[1].rotation.z = lerpf(2.2, -2.2, clampf(rpm_frac, 0.0, 1.0))
+	var a0 := lerpf(2.2, -2.2, clampf(speed_frac, 0.0, 1.0))
+	var a1 := lerpf(2.2, -2.2, clampf(rpm_frac, 0.0, 1.0))
+	_needles[0].rotation.z = a0
+	_needles[1].rotation.z = a1
+	if _needle_shadows.size() >= 2:
+		_needle_shadows[0].rotation.z = a0
+		_needle_shadows[1].rotation.z = a1
 
 
 ## Steering wheel angle in radians (positive turns right).
@@ -3169,7 +3355,9 @@ func set_display(gear: int, speed: String, unit: String, trip: String) -> void:
 		_d_gear = gear
 		_d_speed = speed
 		_d_unit = unit
-		_display.text = "%d\n%s %s" % [gear, speed, unit]
+		_display.text = speed
+		_display_gear.text = "GEAR %d" % gear
+		_display_unit.text = unit
 	if _screen:
 		var sid: String = Save.data.selected
 		if sid != _screen_id:

@@ -93,6 +93,8 @@ func sample(t: float) -> Dictionary:
 			var v := va.duplicate()
 			for i in 4:
 				v[i] = lerpf(va[i], vb[i], k)
+			if va.size() > C_YAW and vb.size() > C_YAW:
+				v[C_YAW] = va[C_YAW] + wrapf(vb[C_YAW] - va[C_YAW], -PI, PI) * k  # a wreck's heading, the short way round
 			cars[id] = v
 		else:
 			cars[id] = va
@@ -115,10 +117,13 @@ const P_STEER := 10
 const P_GHOST := 11  # invulnerable glow
 const P_PITCH := 12
 
-# indices into each car's array: x, z, v, vx, braking, signal direction
+# indices into each car's array: x, z, v, vx, braking, signal direction, heading and wreck flag
+# (a car that has been hit slides and spins about its middle: x, z and the heading say where)
 const C_X := 0
 const C_Z := 1
 const C_V := 2
 const C_VX := 3
 const C_BRAKE := 4
 const C_SIG := 5
+const C_YAW := 6
+const C_WRECK := 7

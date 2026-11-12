@@ -1699,6 +1699,7 @@ func _build_settings() -> void:
 	pdev.add_child(_wrap("For testing. Unlocks change your saved progress.", 20, MUTED))
 	_option_row(pdev, "dev_lives", "Infinite lives", "")
 	_option_row(pdev, "dev_fps", "FPS counter", "")
+	_option_row(pdev, "dev_hitbox", "Show hit boxes", "")
 	var dev := GridContainer.new()
 	dev.columns = 2
 	dev.add_theme_constant_override("h_separation", 12)
@@ -1760,6 +1761,7 @@ func render_settings() -> void:
 		"gfx": String(Save.setting("gfx")).to_upper(),
 		"mirror": "ON" if Save.setting("mirror") else "OFF",
 		"dev_lives": "ON" if Save.setting("dev_lives") else "OFF", "dev_fps": "ON" if Save.setting("dev_fps") else "OFF",
+		"dev_hitbox": "ON" if Save.setting("dev_hitbox") else "OFF",
 	}
 	for key in states:
 		var b: Button = _set["t_" + key]

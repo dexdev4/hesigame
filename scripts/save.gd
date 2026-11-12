@@ -43,6 +43,7 @@ const SETTING_DEFAULTS := {
 	# developer tools
 	"dev_lives": false,           # infinite lives
 	"dev_fps": false,             # frame-rate counter
+	"dev_hitbox": false,          # draw every car's hit box
 }
 
 

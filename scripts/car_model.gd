@@ -2108,13 +2108,15 @@ func show_tag_pop(text: String) -> void:
 ## Crash pose: the whole car (body and wheels) turned by `heading` (radians,
 ## + = nose to the right) and rolled by `roll` (radians, + = right side up),
 ## pivoting on its centre so it never sinks into the road. `air` lifts it.
-func set_crash_pose(x: float, heading: float, roll: float, air: float) -> void:
+## `x` is where the middle of the car is across the road and `z0` where its rear
+## bumper is along the scene's z (0 for the player, who is always at the origin).
+func set_crash_pose(x: float, heading: float, roll: float, air: float, z0 := 0.0) -> void:
 	var hw: float = shape.w / 2.0
 	var hh: float = shape.t / 2.0
 	var b := Basis(Vector3.UP, -heading) * Basis(Vector3.BACK, roll)
 	var cy := hw * absf(sin(roll)) + hh * absf(cos(roll)) + air
 	var centre := Vector3(0, hh, -shape.l / 2.0)
-	transform = Transform3D(b, Vector3(x, cy, -shape.l / 2.0) - b * centre)
+	transform = Transform3D(b, Vector3(x, cy, z0 - shape.l / 2.0) - b * centre)
 	_roll = 0.0
 	_pitch = 0.0
 	_pose_body()

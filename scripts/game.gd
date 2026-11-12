@@ -213,6 +213,10 @@ var station := {}       # the next fuel stop: {z, name, color, prices: {regular,
 var last_station := {}  # the one before (still shown in replays)
 var pump := {}          # the refuel screen: {litres, bill, on, auto, t}
 var godmode := false
+var perf: PerfProbe = null  # --perf: time the frame's sections and count what is drawn (see PerfProbe)
+var _frame := 0             # frames since the start, for --shot-frame and --state-log
+var _shot_frames: Array = []  # [[frame, path], ...] from --shot-frame=FRAME:PATH (test aid: the same frame every run, with --fixed-fps)
+var _state_log := 0         # --state-log=EVERY: print the simulation's state every EVERY frames, to compare builds exactly
 var show_hitboxes := false  # --hitboxes (or Settings > Developer): draw every car's hit box
 var _test_collide := ""     # --collide-at=SEC:KIND[:LIVES]: set up a real collision (see _collision_test)
 var _test_collide_t := -1.0
@@ -273,6 +277,17 @@ func _ready() -> void:
 			godmode = true
 		if a == "--hitboxes":  # draw every car's hit box (test aid)
 			show_hitboxes = true
+		if a == "--perf" or a.begins_with("--perf="):  # time the frame, count what is drawn (test aid)
+			perf = PerfProbe.new()
+			if a.begins_with("--perf="):
+				perf.every = maxi(1, int(a.substr(7)))
+		if a.begins_with("--seed="):  # the same random world every run (test aid; with --fixed-fps a run repeats exactly)
+			seed(int(a.substr(7)))
+		if a.begins_with("--shot-frame="):  # FRAME:PATH: a screenshot at that frame (test aid)
+			var sf := a.substr(13).split(":", true, 1)
+			_shot_frames.append([int(sf[0]), sf[1]])
+		if a.begins_with("--state-log="):  # print the simulation's state every N frames (test aid)
+			_state_log = int(a.substr(12))
 		if a.begins_with("--collide-at="):  # SEC:KIND[:LIVES] a real collision at that time (test aid)
 			var cp := a.substr(13).split(":")
 			_test_collide_t = float(cp[0])
@@ -2679,6 +2694,9 @@ func _sim_running() -> bool:
 
 
 func _process(delta: float) -> void:
+	_frame += 1
+	if perf:
+		perf.begin()
 	if showroom != "":
 		scenery.update_view(0.0, -1.0, 0.0)
 		var front := showroom == "front"
@@ -2727,24 +2745,40 @@ func _process(delta: float) -> void:
 			dt *= lerpf(0.35, 1.0, clampf((crash.t - 0.9) / 1.4, 0.0, 1.0))
 		if _live() and not autotest and crash == null and run.pit.is_empty():
 			_analog_steer(minf(delta, 0.05))  # the hand is read once per frame, in real time, even in hit-stop
+		if perf:
+			perf.mark("input")
 		var h := dt / 2.0
 		for i in 2:
 			t += h
 			_update_player(h)
+			if perf:
+				perf.mark("player")
 			_update_traffic(h)
+			if perf:
+				perf.mark("traffic")
 			_update_boss(h)
+			if perf:
+				perf.mark("boss")
 			_collisions()
+			if perf:
+				perf.mark("collisions")
 			if state == S.PLAY:
 				_update_run(h)
+			if perf:
+				perf.mark("run")
 			if not _sim_running():
 				break
 	if state == S.PLAY and run:
 		_record(dt)
+	if perf:
+		perf.mark("replay record")
 	if state == S.REFUEL and run:
 		_pump_frame(delta)
 	_probe_gfx(delta)
 	if _sim_running():
 		_update_time(delta)
+	if perf:
+		perf.mark("time of day")
 	_post_speed()
 	var now := Time.get_ticks_msec() / 1000.0
 	if _test_crash > 0.0 and now > _test_crash and _live():
@@ -2783,13 +2817,21 @@ func _process(delta: float) -> void:
 		print("[autotest] replay opened, %.1f s recorded" % replay.duration())
 	shake = maxf(0.0, shake - delta * 2.2)
 	_flash.color.a = maxf(0.0, _flash.color.a - delta * 0.8)
+	if perf:
+		perf.mark("other")
 	_sync_visuals(delta)
+	if perf:
+		perf.mark("visuals")
 	_update_hud()
+	if perf:
+		perf.mark("hud")
 	var snd_gas := ((in_gas if _live() else ap_gas) if not autotest else ap_gas) and state != S.PAUSED
 	if run and run.pit.get("step", "") == "out":
 		snd_gas = true  # driving itself back out onto the highway
 	var snd_brake := (in_brake if _live() else ap_brake) if not autotest else ap_brake
 	sound.drive(player.v, st.top, snd_gas, snd_brake, state == S.PLAY, delta)
+	if perf:
+		perf.mark("sound")
 	if autotest:
 		_log_t += delta
 		if _log_t > 3.0:
@@ -2807,7 +2849,36 @@ func _process(delta: float) -> void:
 	_check_shots()
 
 
+## The simulation's state in one line, to compare two builds exactly (see --state-log).
+func _print_state() -> void:
+	var sx := 0.0
+	var sz := 0.0
+	var sv := 0.0
+	var svx := 0.0
+	for c in traffic:
+		sx += c.x
+		sz += c.z
+		sv += c.v
+		svx += c.vx
+	var r := ""
+	if run:
+		r = " | score=%d lives=%d dist=%.4f stage=%d phase=%s combo=%d fuel=%.4f" % [run.score, run.lives, run.dist, run.stage, run.phase, run.combo, run.fuel]
+	print("[state] f=%d player x=%.6f z=%.6f v=%.6f vx=%.6f yaw=%.6f course=%.6f | traffic n=%d x=%.6f z=%.6f v=%.6f vx=%.6f%s" % [
+		_frame, player.x, player.z, player.v, player.vx, player.yaw, player.course, traffic.size(), sx, sz, sv, svx, r])
+
+
 func _check_shots() -> void:
+	for sf in _shot_frames:
+		if sf[0] == _frame:
+			get_viewport().get_texture().get_image().save_png(sf[1])
+	if _state_log > 0 and _frame % _state_log == 0:
+		_print_state()
+	if perf and perf.end_frame():
+		var tms: Array = []
+		for c in traffic:
+			if c.model and c.model.visible:
+				tms.append(c.model)
+		perf.report(self, player.model, tms, scenery, hud.mirror.get("_vp") as SubViewport if hud and hud.mirror else null)
 	if idcolor and burst.size() == 3 and Time.get_ticks_msec() / 1000.0 > burst[0] and burst[1] > 0:
 		if _id_log == null:
 			_id_log = FileAccess.open(burst[2] + "/log.txt", FileAccess.WRITE)

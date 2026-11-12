@@ -71,6 +71,7 @@ var _st_i := 0
 
 var _sfx := {}
 var _players: Array[AudioStreamPlayer] = []
+var _rng := RandomNumberGenerator.new()  # the sound's own noise: how much of it is made must never change the game's random numbers
 
 
 func _ready() -> void:
@@ -234,7 +235,7 @@ func drive(v: float, top: float, gas: bool, brake: bool, live: bool, dt: float) 
 			if brake or not gas:
 				_blip_t = 0.14
 	if gear > prev_gear and _eng.turbo and _boost > 0.4:
-		play("blowoff", randf_range(0.95, 1.08), -6.0)
+		play("blowoff", _rng.randf_range(0.95, 1.08), -6.0)
 	var target := _rpm_for(v, top, gear)
 	if gear == 1 and v < 7.0:
 		target = maxf(target, idle + (1900.0 if gas else 0.0) * (1.0 - v / 7.0))  # clutch slip
@@ -296,6 +297,7 @@ func synth(n: int) -> PackedVector2Array:
 	var crank_amp := 0.07 * (1.0 - rpm / redline) * (0.5 + 0.5 * _load)
 	var whine_amp := 0.006 * (1.0 if gear <= 3 else 0.4) * (0.4 + 0.6 * (1.0 - _load)) * minf(1.0, _speed / 8.0)
 	var fire_k := float(_cyl) / TABLE
+	var rng := _rng  # (a local: GDScript reads those far faster than members)
 	var tb := _table
 	var tb_off := _table_off
 	var env := _env
@@ -348,13 +350,13 @@ func synth(n: int) -> PackedVector2Array:
 		var s_off := tb_off[i0]  # the soft overrun table needs no interpolation
 		var mixk := minf(ld * 1.3, 1.0)
 		var s := s_off + (s_on - s_off) * mixk
-		var nz := randf() * 2.0 - 1.0
+		var nz := rng.randf() * 2.0 - 1.0
 		# no two combustion strokes are identical: each firing gets its own
 		# strength, rougher at idle and off throttle
 		var fi := int(ph * fire_k)
 		if fi != fire_i:
 			fire_i = fi
-			fire_g = 1.0 + (0.09 + 0.12 * (1.0 - ld)) * (randf() * 2.0 - 1.0)
+			fire_g = 1.0 + (0.09 + 0.12 * (1.0 - ld)) * (rng.randf() * 2.0 - 1.0)
 		fire_gs += 0.05 * (fire_g - fire_gs)
 		n1 += 0.3 * (nz - n1)    # mid noise: exhaust rasp
 		n2 += 0.04 * (nz - n2)   # low noise: road rumble
@@ -368,10 +370,10 @@ func synth(n: int) -> PackedVector2Array:
 		out += n1 * env[i0] * rasp * (0.25 + 0.75 * ld)
 		out += (n3 - n1) * ld * (rpm_s * inv_red) * 0.12
 		# lift-off pops and crackles, and the bark of an upshift's ignition cut
-		if pop_p > 0.0 and randf() < pop_p:
-			pop = randf_range(0.5, 1.0)
-		elif bark_p > 0.0 and randf() < bark_p:
-			pop = randf_range(0.6, 1.0)
+		if pop_p > 0.0 and rng.randf() < pop_p:
+			pop = rng.randf_range(0.5, 1.0)
+		elif bark_p > 0.0 and rng.randf() < bark_p:
+			pop = rng.randf_range(0.6, 1.0)
 		if pop > 0.001:
 			pop *= 0.9965
 			pop_lp += 0.35 * (nz * pop - pop_lp)
@@ -468,7 +470,7 @@ func _make_whoosh() -> AudioStreamWAV:
 		var env := pow(sin(PI * minf(1.0, t * 1.4)), 2.0) * (1.0 - t)
 		var fc := lerpf(2600.0, 380.0, pow(t, 0.7))
 		var f := 2.0 * sin(PI * fc / RATE)
-		var nz := randf() * 2.0 - 1.0
+		var nz := _rng.randf() * 2.0 - 1.0
 		low += f * band
 		var high := nz - low - 0.5 * band
 		band += f * high
@@ -485,13 +487,13 @@ func _make_crash() -> AudioStreamWAV:
 	var partials := [[233.0, 0.25, 9.0], [377.0, 0.2, 7.0], [611.0, 0.16, 11.0], [1043.0, 0.1, 14.0], [1697.0, 0.06, 18.0]]
 	for i in n:
 		var t := float(i) / RATE
-		var nz := randf() * 2.0 - 1.0
+		var nz := _rng.randf() * 2.0 - 1.0
 		lp += lerpf(0.45, 0.03, minf(1.0, t * 2.0)) * (nz - lp)
 		var s := lp * exp(-t * 5.0) * 1.3
 		s += sin(TAU * lerpf(80.0, 40.0, minf(1.0, t * 3.0)) * t) * exp(-t * 9.0) * 0.9
 		for p in partials:
 			s += sin(TAU * p[0] * t) * p[1] * exp(-t * p[2])
-		if t > 0.05 and t < 0.5 and randf() < 0.004:
+		if t > 0.05 and t < 0.5 and _rng.randf() < 0.004:
 			s += nz * 0.6  # glass tinkle
 		out[i] = s * 0.8
 	return _wav(out)
@@ -530,7 +532,7 @@ func _make_blowoff() -> AudioStreamWAV:
 	var prev := 0.0
 	for i in n:
 		var t := float(i) / n
-		var nz := randf() * 2.0 - 1.0
+		var nz := _rng.randf() * 2.0 - 1.0
 		var hp := nz - prev
 		prev = nz
 		var flutter := 0.75 + 0.25 * sin(TAU * 34.0 * t * 0.45)

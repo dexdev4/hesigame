@@ -268,8 +268,8 @@ func drive(v: float, top: float, gas: bool, brake: bool, live: bool, dt: float) 
 
 
 func _process(_delta: float) -> void:
-	if _pb == null:
-		return
+	if _pb == null or AudioServer.is_bus_mute(0):
+		return  # nobody would hear it: the garage, or the sound turned off in Settings
 	var n := _pb.get_frames_available()
 	if n > 0:
 		_pb.push_buffer(synth(n))

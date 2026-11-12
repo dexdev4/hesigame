@@ -40,6 +40,7 @@ const SETTING_DEFAULTS := {
 	"mirror_scale": 1.0,
 	"mirror_pos": [],
 	"gfx": "",                    # high, medium or low; empty until the first launch picks one
+	"fps_cap": 0,                 # most frames a second to draw: 0 = as often as the screen refreshes, or 60, or 30
 	# developer tools
 	"dev_lives": false,           # infinite lives
 	"dev_fps": false,             # frame-rate counter

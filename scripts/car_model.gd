@@ -1478,6 +1478,9 @@ var _wheels: Array[Node3D] = []
 var _wheel_steer := 0.0  # road-wheel angle of the front wheels, radians (+ = right)
 var _wheel_r := 0.32
 var _spin := 0.0
+var _wheel_front: Array[bool] = []  # which of the wheels steer
+var _applied_spin := INF            # what the wheels were last turned to
+var _applied_steer := INF
 var _road := 0.0
 var _phase := randf() * TAU
 var _braking := false
@@ -1490,6 +1493,12 @@ var _lever: Node3D
 var _lever_base := Vector3.ZERO
 var _lever_target := Vector3.ZERO
 var _last_screen := ""
+var _d_gear := -1          # what the gear display and the infotainment screen were last built from
+var _d_speed := ""
+var _d_unit := ""
+var _screen_id := ""
+var _screen_name := ""
+var _screen_trip: Variant = null
 var _cabin_mi: MeshInstance3D
 var _halo: MeshInstance3D
 var _halo_mat: StandardMaterial3D
@@ -2051,14 +2060,19 @@ func set_brake(on: bool) -> void:
 
 ## dir: -1 left, 1 right, 0 off. lit toggles the blink phase.
 func set_signal(dir: int, lit: bool) -> void:
-	_sig_l.visible = dir < 0 and lit
-	_sig_r.visible = dir > 0 and lit
+	var l := dir < 0 and lit
+	var r := dir > 0 and lit
+	if l != _sig_l.visible:
+		_sig_l.visible = l
+	if r != _sig_r.visible:
+		_sig_r.visible = r
 
 
 ## Lean the body (not the wheels) for a sense of weight when steering.
 var _roll := 0.0
 var _pitch := 0.0
 var _bob := 0.0
+var _body_xf := Transform3D(Basis(Vector3.INF, Vector3.INF, Vector3.INF), Vector3.INF)  # what the body node was last given (nothing yet)
 
 
 func set_roll(r: float) -> void:
@@ -2072,9 +2086,16 @@ func set_roll(r: float) -> void:
 func _pose_body() -> void:
 	if _body == null or shape.is_empty():
 		return
-	var pivot := Vector3(0.0, _wheel_r, -float(shape.l) * 0.5)
-	var b := Basis.from_euler(Vector3(-_pitch, 0.0, _roll))
-	_body.transform = Transform3D(b, pivot - b * pivot + Vector3(0, _bob, 0))
+	var xf: Transform3D
+	if _pitch == 0.0 and _roll == 0.0:
+		xf = Transform3D(Basis.IDENTITY, Vector3(0, _bob, 0))  # (what the general case comes to, without the trigonometry: traffic never leans)
+	else:
+		var pivot := Vector3(0.0, _wheel_r, -float(shape.l) * 0.5)
+		var b := Basis.from_euler(Vector3(-_pitch, 0.0, _roll))
+		xf = Transform3D(b, pivot - b * pivot + Vector3(0, _bob, 0))
+	if xf != _body_xf:  # a car standing still is not moved again every frame
+		_body_xf = xf
+		_body.transform = xf
 
 
 var _tag_pop: Label3D
@@ -2153,12 +2174,24 @@ func spin(v: float, dt: float) -> void:
 		var k := minf(v / 30.0, 1.0)
 		_bob = (0.005 * sin(_road * 1.3 + _phase) + 0.0025 * sin(_road * 4.1 + _phase * 2.0)) * k
 		_pose_body()
-	var front_z := 0.0
-	for wn in _wheels:
-		front_z = minf(front_z, wn.position.z)
-	for wn in _wheels:
-		wn.rotation.x = _spin
-		wn.rotation.y = -_wheel_steer if wn.position.z < front_z + 0.6 else 0.0
+	if _wheel_front.size() != _wheels.size():
+		var front_z := 0.0  # the wheels at the front axle are the ones that steer
+		for wn in _wheels:
+			front_z = minf(front_z, wn.position.z)
+		_wheel_front.clear()
+		for wn in _wheels:
+			_wheel_front.append(wn.position.z < front_z + 0.6)
+	if _spin == _applied_spin and _wheel_steer == _applied_steer:
+		return  # nothing turned since last time
+	_applied_spin = _spin
+	_applied_steer = _wheel_steer
+	# (the same turn as setting rotation.x and rotation.y on each wheel, in one go, worked out once for the
+	# wheels that steer and once for the ones that do not)
+	var b_front := Basis.from_euler(Vector3(_spin, -_wheel_steer, 0.0))
+	var b_rear := Basis.from_euler(Vector3(_spin, 0.0, 0.0))
+	for i in _wheels.size():
+		var wn := _wheels[i]
+		wn.transform = Transform3D(b_front if _wheel_front[i] else b_rear, wn.position)
 
 
 ## Turn the front wheels to a road-wheel angle (radians, + = right).
@@ -3132,13 +3165,23 @@ func set_display(gear: int, speed: String, unit: String, trip: String) -> void:
 	if _msg and _msg.visible and Time.get_ticks_msec() > _msg_until:
 		_msg.visible = false
 		_screen.visible = true
-	if _display:
+	if _display and (gear != _d_gear or speed != _d_speed or unit != _d_unit):  # (only when it shows something different)
+		_d_gear = gear
+		_d_speed = speed
+		_d_unit = unit
 		_display.text = "%d\n%s %s" % [gear, speed, unit]
 	if _screen:
-		var t := "REDLINE FM  98.4\n%s\nTrip %s" % [Data.car_by_id(Save.data.selected).name, trip]
-		if t != _last_screen:
-			_last_screen = t
-			_screen.text = t
+		var sid: String = Save.data.selected
+		if sid != _screen_id:
+			_screen_id = sid
+			_screen_name = Data.car_by_id(sid).name
+			_screen_trip = null  # (the screen is built again below)
+		if trip != _screen_trip:
+			_screen_trip = trip
+			var t := "REDLINE FM  98.4\n%s\nTrip %s" % [_screen_name, trip]
+			if t != _last_screen:
+				_last_screen = t
+				_screen.text = t
 
 
 ## Moves the gear lever through an H pattern (1-2 left, 3-4 middle, 5-6 right).

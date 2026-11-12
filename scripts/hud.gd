@@ -677,6 +677,30 @@ func set_pedals(g: bool, b: bool) -> void:
 	brake.pressed = b
 
 
+var _sign_bg := Color(0, 0, 0, 0)  # what the stage sign's panel was last coloured
+var _fill_of := {}                 # bar -> the fill style it was last given
+var _unit_key := []                # what the line under the speed was last built from
+
+
+var _color_of := {}                # label -> the font colour it was last given
+
+
+## A label's colour, set only when it is a different one (a theme override makes the label work out its size
+## and shape its text again every time, the same colour or not).
+func _set_font_color(label: Control, color: Color) -> void:
+	if _color_of.get(label) != color:
+		_color_of[label] = color
+		label.add_theme_color_override("font_color", color)
+
+
+## A bar's fill, set only when it is a different one (setting a theme override tells the bar's
+## whole branch of the tree that its theme changed, even when it is the same style).
+func _set_fill(bar: ProgressBar, fill: StyleBoxFlat) -> void:
+	if _fill_of.get(bar) != fill:
+		_fill_of[bar] = fill
+		bar.add_theme_stylebox_override("fill", fill)
+
+
 func update_play(d: Dictionary) -> void:
 	_feed.position = Vector2(_mult_bg.global_position.x, _mult_bg.global_position.y + _mult_bg.size.y + 6.0) - play_layer.global_position
 	_score.text = d.score
@@ -692,22 +716,28 @@ func update_play(d: Dictionary) -> void:
 		_max_lives = d.max_lives
 		_lives_ctrl.queue_redraw()
 	_kmh.text = d.kmh
-	_unit.text = "%s  ·  GEAR %d  ·  %s" % [d.unit, d.gear, d.get("clock", "")]
+	var unit_key := [d.unit, d.gear, d.get("clock", "")]
+	if unit_key != _unit_key:  # (the line under the speed changes with the gear and once a minute, not every frame)
+		_unit_key = unit_key
+		_unit.text = "%s  ·  GEAR %d  ·  %s" % unit_key
 	_rpm.value = clampf(d.rpm, 0.0, 1.0)
-	_rpm.add_theme_stylebox_override("fill", _fill_red if d.rpm > 0.9 else (_fill_amber if d.rpm > 0.75 else _fill_white))
-	_kmh.add_theme_color_override("font_color", AMBER if d.fast else LINE)
+	_set_fill(_rpm, _fill_red if d.rpm > 0.9 else (_fill_amber if d.rpm > 0.75 else _fill_white))
+	_set_font_color(_kmh, AMBER if d.fast else LINE)
 	_sp_tag.text = "HIGH SPEED BONUS" if d.fast else ""
 	if d.has("fuel"):
 		var f: float = d.fuel
 		_fuel_bar.value = clampf(f, 0.0, 1.0)
 		var low := f < 0.25
 		var blink := f < 0.1 and fmod(Time.get_ticks_msec() / 1000.0, 0.8) < 0.4
-		_fuel_bar.add_theme_stylebox_override("fill", _fill_red if low else (_fill_amber if f < 0.4 else _fill_white))
+		_set_fill(_fuel_bar, _fill_red if low else (_fill_amber if f < 0.4 else _fill_white))
 		_fuel_bar.modulate.a = 0.35 if blink else 1.0
 		_fuel_val.text = d.fuel_l
-		_fuel_val.add_theme_color_override("font_color", TAIL if low else LINE)
+		_set_font_color(_fuel_val, TAIL if low else LINE)
 		_fuel_next.text = d.fuel_next
-	(_g["style"] as StyleBoxFlat).bg_color = Color("#173a6e", 0.92) if d.get("cop", false) else (RED_SIGN if d.boss else Color(SIGN, 0.88))
+	var sign_bg := Color("#173a6e", 0.92) if d.get("cop", false) else (RED_SIGN if d.boss else Color(SIGN, 0.88))
+	if sign_bg != _sign_bg:  # (setting a style's colour redraws everything that uses it, even if it is the same colour)
+		_sign_bg = sign_bg
+		(_g["style"] as StyleBoxFlat).bg_color = sign_bg
 	_g.title.text = d.title
 	_g.sub.text = d.sub
 	_g.l1.text = d.l1
@@ -716,8 +746,8 @@ func update_play(d: Dictionary) -> void:
 	_g.b2.value = clampf(d.f2, 0.0, 1.0)
 	_g.v1.text = d.v1
 	_g.v2.text = d.v2
-	_g.b1.add_theme_stylebox_override("fill", _fill_amber if d.done1 else _fill_white)
-	_g.b2.add_theme_stylebox_override("fill", _fill_red if d.boss else (_fill_amber if d.done2 else _fill_white))
+	_set_fill(_g.b1, _fill_amber if d.done1 else _fill_white)
+	_set_fill(_g.b2, _fill_red if d.boss else (_fill_amber if d.done2 else _fill_white))
 
 
 func pop(text: String, kind := "") -> void:
@@ -1686,6 +1716,7 @@ func _build_settings() -> void:
 	_group(pd, "Screen")
 	_option_row(pd, "orientation", "Orientation", "Portrait or landscape.")
 	_option_row(pd, "gfx", "Graphics", "Lower it if the game stutters.")
+	_option_row(pd, "fps_cap", "Frame rate", "Screen is as smooth as the display goes. On a 90 or 120 Hz screen 60 or 30 runs the phone much cooler.")
 	_option_row(pd, "units", "Speed units", "")
 	_group(pd, "Rear-view mirror")
 	_option_row(pd, "mirror", "Mirror", "Move it with Edit on-screen layout (Controls).")
@@ -1759,6 +1790,7 @@ func render_settings() -> void:
 		"tilt_invert": "REVERSED" if Save.setting("tilt_invert") else "NORMAL",
 		"orientation": "LANDSCAPE" if Save.setting("orientation") == "landscape" else "PORTRAIT",
 		"gfx": String(Save.setting("gfx")).to_upper(),
+		"fps_cap": {0: "SCREEN", 60: "60 FPS", 30: "30 FPS"}.get(int(Save.setting("fps_cap")), "SCREEN"),
 		"mirror": "ON" if Save.setting("mirror") else "OFF",
 		"dev_lives": "ON" if Save.setting("dev_lives") else "OFF", "dev_fps": "ON" if Save.setting("dev_fps") else "OFF",
 		"dev_hitbox": "ON" if Save.setting("dev_hitbox") else "OFF",
@@ -2207,7 +2239,15 @@ func clicks_blocked() -> bool:
 	return not _scroll.is_empty() and _scroll.on or Time.get_ticks_msec() < _block_clicks_until
 
 
+## When a finger, the mouse or a key last did anything. The HUD gets input before the game does and takes
+## the drags that scroll a menu or move a pedal, so it is the one that sees all of it; the game reads this
+## to tell a menu somebody is using from one nobody has touched.
+var last_input_ms := 0
+
+
 func _input(event: InputEvent) -> void:
+	if event is InputEventScreenTouch or event is InputEventScreenDrag or event is InputEventMouseButton or event is InputEventMouseMotion or event is InputEventKey:
+		last_input_ms = Time.get_ticks_msec()
 	if not _editing:
 		_menu_scroll(event)
 		return

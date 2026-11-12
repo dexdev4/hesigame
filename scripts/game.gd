@@ -205,6 +205,7 @@ var _post: ColorRect
 var _post_mat: ShaderMaterial
 var _vig_mat: ShaderMaterial
 var _blur := 0.0
+var _blur_set := -1.0  # the speed blur last given to the shader
 var _test_crash := -1.0
 var _test_stage := 0
 var _test_fuel := 1.0
@@ -269,6 +270,8 @@ func _ready() -> void:
 		if a.begins_with("--hour="):  # hold the clock at this hour, 0..24 (test aid)
 			_hour_lock = float(a.substr(7))
 			_hour = _hour_lock
+		if a.begins_with("--start-hour="):  # the clock starts at this hour and runs on (test aid)
+			_hour = float(a.substr(13))
 		if a.begins_with("--fuel="):  # start runs with this fraction of a tank (test aid)
 			_test_fuel = float(a.substr(7))
 		if a.begins_with("--start-stage="):  # begin runs at this stage (test aid)
@@ -847,31 +850,60 @@ func _lane_open_for(c: Vehicle, nl: int) -> bool:
 	return true
 
 
+var _everyone: Array[Vehicle] = []  # every vehicle on the road, rebuilt by _update_traffic
+var _ez := PackedFloat64Array()     # ...and for each of them where its rearmost point is and how far it reaches
+var _eh := PackedFloat64Array()     # sideways (arrays are read much faster than the vehicles' fields)
+
+
 func _update_traffic(dt: float) -> void:
 	var stage := run.stage if run else 1
-	var everyone: Array[Vehicle] = traffic.duplicate()
+	var everyone := _everyone
+	everyone.clear()
+	everyone.append_array(traffic)
 	everyone.append(player)
 	if boss:
 		everyone.append(boss)
 	# a crashed car sliding or lying across the road blocks its whole footprint
-	for o in everyone:
-		_set_reach(o)
+	var n_all := everyone.size()
+	_ez.resize(n_all)
+	_eh.resize(n_all)
+	for i in n_all:
+		var o := everyone[i]
+		if o.wreck == null and not (o == player and crash):
+			o.reach_h = o.w / 2.0  # (what _set_reach gives an ordinary car)
+			o.reach_z = o.z
+		else:
+			_set_reach(o)
+		_ez[i] = o.reach_z
+		_eh[i] = o.reach_h
+	var ez := _ez
+	var eh := _eh
+	var cop_on := boss != null and boss.is_cop and run != null and run.phase == "cop"
+	var wrecks := 0
 	for c in traffic:
 		if c.wreck:
 			_update_wreck_car(c, dt)  # hit: it slides and spins by itself and is no longer driven
+			wrecks += 1
 			continue
+		# the car ahead in its way: the nearest that overlaps its lane. Only one less than 45 m ahead
+		# makes it do anything (so none further off than that, plus a metre to be sure, is looked at).
 		var gap := 1e9
 		var lead: Vehicle = null
-		for o in everyone:
-			if o == c:
-				continue
-			var half := o.reach_h
-			var oz := o.reach_z
-			if absf(o.x - c.x) < half + c.w / 2.0 + 0.35 and oz > c.z:
-				var g := oz - (c.z + c.l)
-				if g < gap:
-					gap = g
-					lead = o
+		var cx := c.x
+		var cz := c.z
+		var cend := cz + c.l
+		var cw2 := c.w / 2.0
+		var far := cend + 46.0
+		for j in n_all:
+			var oz := ez[j]
+			if oz > cz and oz < far:
+				var o := everyone[j]
+				# (its x as it is now: the cars before this one in the list have already moved over)
+				if absf(o.x - cx) < eh[j] + cw2 + 0.35 and o != c:
+					var g := oz - cend
+					if g < gap:
+						gap = g
+						lead = o
 		var want := c.cruise
 		if lead and gap < 45.0:
 			want = minf(want, lead.v + (gap - 9.0) * 0.35)
@@ -883,7 +915,7 @@ func _update_traffic(dt: float) -> void:
 		c.braking = dv < -0.6
 		c.z += c.v * dt
 		c.vx = 0.0
-		if c.tlane == c.lane and _cop_behind(c):
+		if c.tlane == c.lane and cop_on and _cop_behind(c):
 			# siren behind: get out of the way, to the right if there is room, else the left
 			var dirs := [1, -1] if c.lane < 3 else [-1, 1]
 			for dl in dirs:
@@ -921,7 +953,8 @@ func _update_traffic(dt: float) -> void:
 				c.yielding = false
 			else:
 				c.x += step
-	_wreck_contacts()
+	if wrecks > 0:
+		_wreck_contacts()
 	for i in range(traffic.size() - 1, -1, -1):
 		var c := traffic[i]
 		var tail_z := player.z
@@ -2107,16 +2140,27 @@ func _collisions() -> void:
 	if not _live() or not run.pit.is_empty():
 		return
 	var p := player
-	var po := _outline(p)
-	var py := HitShape.y_range(po)
+	var po: Array[PackedVector2Array] = []  # the player's outline and how far it reaches, worked out when a car is near enough to matter
+	var px := Vector2.ZERO
+	var py := Vector2.ZERO
 	for c in traffic:
 		var near := p.z < c.z + c.l + 12.0 and p.z + p.l > c.z - 12.0 and absf(p.x - c.x) < c.reach_h + 4.0
 		var co: Array[PackedVector2Array] = []
+		var touching := false  # could the two outlines overlap at all (do the boxes round them)?
 		if near:
+			if po.is_empty():
+				po = _outline(p)
+				px = HitShape.x_range(po)
+				py = HitShape.y_range(po)
 			co = _outline(c)
+			var cxr := HitShape.x_range(co)
 			var cy := HitShape.y_range(co)
-			if py.x < cy.y + 1.5 and py.y > cy.x - 1.5:
-				# the gap between the paint, as before (the outlines are pulled in a little at each side)
+			# how far apart the boxes round the outlines are across the road: the outlines are at least that far apart
+			var box_gap := maxf(cxr.x - px.y, px.x - cxr.y)
+			touching = box_gap <= 0.0 and py.x <= cy.y and py.y >= cy.x
+			# the gap between the paint, as before (the outlines are pulled in a little at each side).
+			# A gap of 1.1 m or more scores nothing and cuts nothing, so it is not worked out.
+			if py.x < cy.y + 1.5 and py.y > cy.x - 1.5 and box_gap + 2.0 * HitShape.INSET < 1.1:
 				var clr := HitShape.lateral_gap(po, co) + 2.0 * HitShape.INSET
 				if clr < c.min_clear:
 					c.min_clear = clr
@@ -2130,7 +2174,7 @@ func _collisions() -> void:
 			c.ahead = true
 			c.passed = false
 			c.min_clear = 99.0
-		if near and run.invuln <= 0.0:
+		if touching and run.invuln <= 0.0:
 			var ct := HitShape.contact(po, co)
 			if not ct.is_empty():
 				_hit("CONTACT", c, ct)
@@ -2140,6 +2184,8 @@ func _collisions() -> void:
 		and p.z - (boss.z + boss.l) < 0.15 and boss.z < p.z + p.l
 	var bct := {}
 	if p.z < boss.z + boss.l + 12.0 and p.z + p.l > boss.z - 12.0 and absf(p.x - boss.x) < boss.reach_h + 4.0:
+		if po.is_empty():
+			po = _outline(p)
 		bct = HitShape.contact(po, _outline(boss))
 	if rammed and bct.is_empty():
 		bct = {"n": Vector2(0.0, -1.0), "depth": 0.0, "p": Vector2(p.x, p.z)}  # the police car right behind: a push on the tail
@@ -2499,8 +2545,9 @@ func _key_val(k: Dictionary, name: String) -> Variant:
 	return v
 
 
-## Light the world for this hour of the day.
-func _apply_time(hour: float) -> void:
+## Light the world for this hour of the day. The work is in four parts (0 the sun, 1 the sky and
+## the haze, 2 the cars' and headlights' night look, 3 the scenery and the stars); `part` -1 does all four.
+func _apply_time(hour: float, part := -1) -> void:
 	if _day.is_empty():
 		_day = DAY.duplicate()
 	hour = fposmod(hour, 24.0)
@@ -2514,35 +2561,53 @@ func _apply_time(hour: float) -> void:
 	var f := smoothstep(0.0, 1.0, (hour - h0) / maxf(h1 - h0, 0.001))
 	var col := func(n: String) -> Color: return (_key_val(a, n) as Color).lerp(_key_val(b, n), f)
 	var num := func(n: String) -> float: return lerpf(float(a[n]), float(b[n]), f)
-	# the sun crosses from east to west by day; the moon hangs high at night
-	var day_t := clampf((hour - 6.0) / 14.0, 0.0, 1.0)
-	_sun.rotation_degrees = Vector3(-num.call("elev"), lerpf(-115.0, 75.0, day_t), 0.0)
-	_sun.light_color = col.call("sun")
-	_sun.light_energy = num.call("e")
+	if part < 0 or part == 0:
+		# the sun crosses from east to west by day; the moon hangs high at night
+		var day_t := clampf((hour - 6.0) / 14.0, 0.0, 1.0)
+		_sun.rotation_degrees = Vector3(-num.call("elev"), lerpf(-115.0, 75.0, day_t), 0.0)
+		_sun.light_color = col.call("sun")
+		_sun.light_energy = num.call("e")
 	var sm := _sky.sky_material as ProceduralSkyMaterial
-	var top: Color = col.call("top")
-	var hor: Color = col.call("hor")
-	if sm:
-		sm.sky_top_color = top
-		sm.sky_horizon_color = hor
-		sm.ground_horizon_color = col.call("ghor")
-		sm.sky_energy_multiplier = num.call("sky")
-	_env.ambient_light_energy = num.call("amb")
-	_env.fog_light_color = col.call("fog")
-	_env.tonemap_exposure = num.call("exp")
-	_lights = num.call("lights")
-	_env.adjustment_saturation = lerpf(1.12, 0.9, _lights)
-	_env.glow_intensity = lerpf(0.45, 1.0, _lights)  # lamps bloom more in the dark
-	CarModel.set_night(smoothstep(0.0, 1.0, _lights), _sun.global_transform.basis.z.normalized(), top, hor)
-	if scenery:
-		scenery.set_sky_tint(col.call("far"), col.call("haze"))
-		scenery.set_night(smoothstep(0.3, 1.0, _lights))
-	if sm and sm.sky_cover:
-		sm.sky_cover_modulate = Color(1, 1, 1, smoothstep(0.7, 1.0, _lights) * 0.9)  # stars
-	for sp in _head_spots:
-		if is_instance_valid(sp):
-			sp.visible = _lights > 0.02
-			sp.light_energy = 6.0 * smoothstep(0.0, 1.0, _lights)
+	var top: Color
+	var hor: Color
+	if part < 0 or part == 1 or part == 2:
+		top = col.call("top")
+		hor = col.call("hor")
+	if part < 0 or part == 1:
+		if sm:
+			sm.sky_top_color = top
+			sm.sky_horizon_color = hor
+			sm.ground_horizon_color = col.call("ghor")
+			sm.sky_energy_multiplier = num.call("sky")
+		_env.ambient_light_energy = num.call("amb")
+		_env.fog_light_color = col.call("fog")
+		_env.tonemap_exposure = num.call("exp")
+		_lights = num.call("lights")
+		_env.adjustment_saturation = lerpf(1.12, 0.9, _lights)
+		_env.glow_intensity = lerpf(0.45, 1.0, _lights)  # lamps bloom more in the dark
+	if part < 0 or part == 2:
+		CarModel.set_night(smoothstep(0.0, 1.0, _lights), _sun.global_transform.basis.z.normalized(), top, hor)
+		for sp in _head_spots:
+			if is_instance_valid(sp):
+				sp.visible = _lights > 0.02
+				sp.light_energy = 6.0 * smoothstep(0.0, 1.0, _lights)
+	if part < 0 or part == 3:
+		if scenery:
+			scenery.set_sky_tint(col.call("far"), col.call("haze"))
+			scenery.set_night(smoothstep(0.3, 1.0, _lights))
+		if sm and sm.sky_cover:
+			sm.sky_cover_modulate = Color(1, 1, 1, smoothstep(0.7, 1.0, _lights) * 0.9)  # stars
+		_time_applied = hour
+
+
+## How often a part of the sky and the light is set for the hour: a quarter of the work every 0.05 s, so each
+## part every 0.2 s and no frame does it all. A day passes in 12 minutes, so in a fifth of a second the colours
+## move by less than one step of the 8-bit screen: setting them every frame changed nothing anyone could see,
+## but cost a fifth of the frame's script time.
+const TIME_STEP_EVERY := 0.05
+var _time_step_t := 1.0e9    # seconds since the last part was set (a lot at first: the first call sets one)
+var _time_step := 0          # which part comes next
+var _time_applied := -1.0    # the hour all four parts were last set for
 
 
 ## Time passes while you drive: one real minute is two hours.
@@ -2551,7 +2616,12 @@ func _update_time(dt: float) -> void:
 		_hour = _hour_lock
 	else:
 		_hour = fposmod(_hour + dt * (2.0 / 60.0), 24.0)
-	_apply_time(_hour)
+	_time_step_t += dt
+	if _time_step_t < TIME_STEP_EVERY or (_hour == _time_applied and _time_step == 0):
+		return  # (a held clock, --hour, is set once)
+	_time_step_t = 0.0
+	_apply_time(_hour, _time_step)
+	_time_step = (_time_step + 1) % 4
 
 
 func clock_text() -> String:
@@ -2613,6 +2683,19 @@ func _show_boss_intro() -> void:
 		_on_act("race", "")
 
 
+var _req_stage := -1  # the distance and points this stage asks for, worked out once per stage and highway
+var _req_route := -1
+var _req := {}
+
+
+func _stage_req() -> Dictionary:
+	if run.stage != _req_stage or Data.route != _req_route:
+		_req_stage = run.stage
+		_req_route = Data.route
+		_req = Data.stage_req(run.stage)
+	return _req
+
+
 func _update_run(dt: float) -> void:
 	if run == null:
 		return
@@ -2652,7 +2735,7 @@ func _update_run(dt: float) -> void:
 					_boss_music(true)
 					hud.banner("REMATCH", "OUT-SCORE HIM IN %s" % Fmt.km(run.b_len))
 			return
-		var r := Data.stage_req(run.stage)
+		var r := _stage_req()
 		if (run.stage_dist >= r.d or run.stage_score >= r.p) and not _station_busy():
 			_begin_incoming(not run.cop_due and (force_cop or randf() < COP_CHANCE))
 	elif run.phase == "incoming":
@@ -2693,8 +2776,27 @@ func _sim_running() -> bool:
 	return state == S.PLAY or state == S.OVER or state == S.REFUEL  # the menus show the garage instead
 
 
+const IDLE_FPS := 30         # a menu or the pause screen nobody is touching is drawn this often
+const IDLE_AFTER_MS := 1500  # ...once it has been left alone this long
+var _last_touch_ms := 0
+var _cap_now := -1
+
+
+## How often to draw. Settings > Frame rate sets a ceiling; and a menu, the garage or the pause screen that
+## nobody has touched for a moment is drawn 30 times a second (nothing moves there but a slow turn of the car,
+## which looks the same), at full rate again the moment a finger goes down.
+func _update_frame_cap() -> void:
+	var want := int(Save.setting("fps_cap"))
+	if (state == S.MENU or state == S.GARAGE or state == S.PAUSED) and Time.get_ticks_msec() - maxi(_last_touch_ms, hud.last_input_ms) > IDLE_AFTER_MS:
+		want = IDLE_FPS
+	if want != _cap_now:
+		_cap_now = want
+		Engine.max_fps = want
+
+
 func _process(delta: float) -> void:
 	_frame += 1
+	_update_frame_cap()
 	if perf:
 		perf.begin()
 	if showroom != "":
@@ -2993,7 +3095,16 @@ func _sync_visuals(delta: float) -> void:
 	_feel_haptics(delta)
 	player.model.set_gear(sound.gear, delta)
 	var sp := _speed_text()
-	player.model.set_display(sound.gear, sp[0], sp[1], ("Fuel %d L" % ceili(run.fuel)) if run else ("%.1f km" % (player.z / 1000.0)))
+	var trip: String
+	if run:
+		var fuel_i := ceili(run.fuel)
+		if fuel_i != _trip_fuel:
+			_trip_fuel = fuel_i
+			_trip_text = "Fuel %d L" % fuel_i
+		trip = _trip_text
+	else:
+		trip = "%.1f km" % (player.z / 1000.0)
+	player.model.set_display(sound.gear, sp[0], sp[1], trip)
 	# rear-view mirror camera: above the tail of the car, looking back
 	var sh: Dictionary = player.model.shape
 	var eye := Transform3D(Basis.looking_at(Vector3(0.0, -0.045, 1.0)), Vector3(0.0, float(sh.t) * 0.92, 0.45))
@@ -3023,10 +3134,22 @@ func _crash_marks() -> void:
 		smoke.position = Vector3(player.x + h3.x * player.l * 0.35, 0.7, -player.l * 0.5 - h3.y * player.l * 0.35)
 
 
+var _trip_fuel := -1          # the litres in the tank as the dash's screen last said it
+var _trip_text := ""
+var _speed_n := -1            # the speed shown last time, and its text
+var _speed_mph := false
+var _speed_arr: Array = ["0", "KM/H"]
+
+
+## [the speed, its unit] as text. The same array comes back while the number is the same: do not change it.
 func _speed_text() -> Array:
-	if Save.setting("units") == "mph":
-		return [str(roundi(player.v * 2.23694)), "MPH"]
-	return [str(roundi(player.v * 3.6)), "KM/H"]
+	var mph: bool = Save.setting("units") == "mph"
+	var n := roundi(player.v * (2.23694 if mph else 3.6))
+	if n != _speed_n or mph != _speed_mph:
+		_speed_n = n
+		_speed_mph = mph
+		_speed_arr = [str(n), "MPH" if mph else "KM/H"]
+	return _speed_arr
 
 
 func _shake_k() -> float:
@@ -3128,7 +3251,9 @@ func _post_speed() -> void:
 	if (state == S.PLAY or state == S.REPLAY) and crash == null and mode in ["chase", "hood", "cockpit"]:
 		k = clampf((player.v - 22.0) / maxf(float(st.top) - 22.0, 1.0), 0.0, 1.0) * (0.6 if mode == "cockpit" else 1.0)
 	_blur = lerpf(_blur, k, 0.08)
-	_post_mat.set_shader_parameter("speed", _blur)
+	if _blur != _blur_set:  # (once it has settled it is not sent to the shader again and again)
+		_blur_set = _blur
+		_post_mat.set_shader_parameter("speed", _blur)
 
 
 ## Look at the player's car from `ang` radians round from straight behind.
@@ -3144,18 +3269,47 @@ func _orbit_cam(ang: float, radius: float, height: float) -> void:
 	cam.global_transform = Transform3D(Basis.looking_at(centre - from), from + jitter)
 
 
+var _hud_score := -1          # text that only changes when its number does, kept between frames
+var _hud_score_s := ""
+var _hud_combo := -1
+var _hud_mult_s := ""
+var _hud_fuel_l := -1
+var _hud_fuel_s := ""
+var _hud_minute := -1
+var _hud_clock_s := ""
+var _hud_stage := -1          # ...and what only changes with the stage and the highway
+var _hud_route := -1
+var _hud_title := ""
+var _hud_boss_sub := ""
+
+
 func _update_hud() -> void:
 	if run == null:
 		return
+	if run.score != _hud_score:
+		_hud_score = run.score
+		_hud_score_s = Fmt.num(run.score)
+	if run.combo != _hud_combo:
+		_hud_combo = run.combo
+		_hud_mult_s = "x%.1f" % _mult()
+	var fuel_l := ceili(run.fuel)
+	if fuel_l != _hud_fuel_l:
+		_hud_fuel_l = fuel_l
+		_hud_fuel_s = "%d L" % fuel_l
+	var minute := int(_hour * 60.0)
+	if minute != _hud_minute:
+		_hud_minute = minute
+		_hud_clock_s = clock_text()
+	var sp := _speed_text()
 	var d := {
-		"score": Fmt.num(run.score),
-		"mult": "x%.1f" % _mult(),
+		"score": _hud_score_s,
+		"mult": _hud_mult_s,
 		"combo_on": run.combo > 0,
 		"combo_frac": run.combo_t / run.combo_time if run.combo > 0 else 0.0,
 		"lives": run.lives,
 		"max_lives": maxi(3 + Save.perm_level("lives"), run.lives),
-		"kmh": _speed_text()[0],
-		"unit": _speed_text()[1],
+		"kmh": sp[0],
+		"unit": sp[1],
 		"gear": sound.gear,
 		"rpm": sound.rpm / sound.redline,
 		"fast": player.v > 33.0,
@@ -3163,9 +3317,9 @@ func _update_hud() -> void:
 		"cop": run.phase == "cop",
 		"inf": Save.setting("dev_lives") or godmode,
 		"fuel": run.fuel / maxf(st.tank, 1.0),
-		"fuel_l": "%d L" % ceili(run.fuel),
+		"fuel_l": _hud_fuel_s,
 		"fuel_next": _fuel_next_text(),
-		"clock": clock_text(),
+		"clock": _hud_clock_s,
 	}
 	if run.phase == "cop":
 		var gp: float = maxf(0.0, player.z - (boss.z + boss.l)) if boss else 99.0
@@ -3186,15 +3340,20 @@ func _update_hud() -> void:
 			"l1": "YOU", "l2": "RIVAL", "f1": run.b_score / mx, "f2": run.b_rival / mx,
 			"v1": Fmt.num(run.b_score), "v2": Fmt.num(run.b_rival), "done1": run.b_score > run.b_rival, "done2": false})
 	else:
-		var r := Data.stage_req(run.stage)
+		if run.stage != _hud_stage or Data.route != _hud_route:  # what only changes with the stage, worked out once
+			_hud_stage = run.stage
+			_hud_route = Data.route
+			_hud_title = "%s · STAGE %d" % [Data.ROUTES[Data.route].name, run.stage]
+			_hud_boss_sub = "BOSS · " + String(Data.boss_info(run.stage).full).to_upper()
+		var r := _stage_req()
 		var d_ok: bool = run.stage_dist >= r.d
 		var p_ok: bool = run.stage_score >= r.p
-		var sub := "BOSS · " + String(Data.boss_info(run.stage).full).to_upper()
+		var sub := _hud_boss_sub
 		if run.rematch_t > 0.0:
 			sub = "REMATCH INCOMING"
 		elif not run.cop_due:
 			sub = "BOSS OR POLICE?"
-		d.merge({"title": "%s · STAGE %d" % [Data.ROUTES[Data.route].name, run.stage], "sub": sub, "l1": "DIST", "l2": "PTS",
+		d.merge({"title": _hud_title, "sub": sub, "l1": "DIST", "l2": "PTS",
 			"f1": run.stage_dist / r.d, "f2": run.stage_score / r.p,
 			"v1": "%.1f/%.1f km" % [minf(run.stage_dist, r.d) / 1000.0, r.d / 1000.0],
 			"v2": "%s/%s" % [Fmt.num(mini(run.stage_score, int(r.p))), Fmt.num(r.p)],
@@ -3394,6 +3553,8 @@ var _edge := {}
 
 
 func _input(event: InputEvent) -> void:
+	if event is InputEventScreenTouch or event is InputEventScreenDrag or event is InputEventMouseButton or event is InputEventMouseMotion or event is InputEventKey:
+		_last_touch_ms = Time.get_ticks_msec()
 	if _edge_swipe(event) and state != S.PLAY:
 		return  # an edge swipe is not a tap on whatever is underneath
 	if state == S.REPLAY:
@@ -3714,6 +3875,9 @@ func _on_act(action: String, arg: String) -> void:
 				"mirror":
 					Save.data.settings.mirror = not Save.setting("mirror")
 					hud.layout_pedals()
+				"fps_cap":
+					var caps := [0, 60, 30]
+					Save.data.settings.fps_cap = caps[(caps.find(int(Save.setting("fps_cap"))) + 1) % caps.size()]
 				"gfx":
 					var levels := ["high", "medium", "low"]
 					Save.data.settings.gfx = levels[(levels.find(Save.setting("gfx")) + 1) % levels.size()]

@@ -67,6 +67,8 @@ func clear_all() -> void:
 
 
 func update_view(base_z: float) -> void:
+	if _strips.is_empty() and not _dirty:
+		return  # no marks on the road: nothing to scroll (add_point sets the origin before the next call)
 	position.z = base_z - _origin
 	if not _dirty:
 		return

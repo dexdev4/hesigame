@@ -31,6 +31,9 @@ const SETTING_DEFAULTS := {
 	"gas_pos": [], "brake_pos": [], "wheel_pos": [], "arrows_pos": [],
 	"steer_mode": "swipe",        # swipe, wheel, buttons, tilt or stick
 	"steer_feel": "standard",     # relaxed, standard or sharp: how quickly the car answers the steering
+	# dead zones: how far a control moves before the car starts to steer (the defaults are what the
+	# controls always used). Tilt in degrees, the others as a share of the control's travel.
+	"dz_tilt": 0.9, "dz_stick": 0.035, "dz_wheel": 0.03, "dz_swipe": 0.0,
 	"tilt_invert": false,
 	"orientation": "portrait",    # portrait or landscape; fixed, never follows the phone's sensor
 	"mirror": true,               # on-screen rear-view mirror

@@ -64,11 +64,11 @@ func set_feel(h: float, l: float) -> void:
 		queue_redraw()
 
 
-## -1 (full left) .. 1 (full right), with a small dead zone in the middle.
+## -1 (full left) .. 1 (full right), with a small dead zone in the middle (Settings > Dead zones).
 func value() -> float:
 	if not active:
 		return 0.0
-	return SteerInput.dead(_x / (radius() * 0.8), 0.035)  # full lock at four-fifths of the way out
+	return SteerInput.dead(_x / (radius() * 0.8), float(Save.setting("dz_stick")))  # full lock at four-fifths of the way out
 
 
 func _draw() -> void:

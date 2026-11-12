@@ -14,7 +14,7 @@ extends RefCounted
 ## It is kept apart from the game so it can be tested on its own (tools/steer_test.gd).
 
 const TILT_FULL := 16.0        # degrees of tilt that mean full lock
-const TILT_DEAD := 0.9         # degrees of tilt that count as straight ahead
+const TILT_DEAD := 0.9         # degrees of tilt that count as straight ahead (the default of the Settings slider)
 const TILT_MIN_CUTOFF := 1.5   # Hz: how hard sensor jitter is filtered while the hand is still
 const TILT_BETA := 0.25        # ...and how fast that opens up with the hand's speed (Hz per degree/second)
 const TILT_D_CUTOFF := 5.0     # Hz: smoothing of the speed estimate itself
@@ -24,6 +24,7 @@ const EXPO := 1.1              # small commands are softened a touch for fine co
 const RATE_LP := 40.0          # Hz: smoothing of the command's rate of change
 const BOOST_MAX := 0.6         # most a quick movement adds to the command
 
+var tilt_dead := TILT_DEAD     # degrees of tilt that count as straight ahead (Settings > Dead zones)
 var _tilt_x := 0.0             # filtered tilt, degrees
 var _tilt_dx := 0.0            # its speed, degrees per second
 var _tilt_raw := 0.0
@@ -74,7 +75,7 @@ func tilt(angle: float, dt: float, spin := 0.0) -> float:
 	var speed := maxf(absf(_tilt_dx), rad_to_deg(absf(spin)))
 	_tilt_x += (deg - _tilt_x) * _alpha(TILT_MIN_CUTOFF + TILT_BETA * speed, dt)
 	var ahead := _tilt_x + clampf(TILT_AHEAD * _tilt_dx, -TILT_AHEAD_MAX, TILT_AHEAD_MAX)
-	return dead(ahead / TILT_FULL, TILT_DEAD / TILT_FULL)
+	return dead(ahead / TILT_FULL, clampf(tilt_dead, 0.0, TILT_FULL * 0.5) / TILT_FULL)
 
 
 ## A quick movement of the command gets a little more than it asked for,

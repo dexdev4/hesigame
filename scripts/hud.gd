@@ -1559,6 +1559,7 @@ func _slider_row(parent: Control, key: String, action: String, save_action: Stri
 	_set["n_" + key] = nm
 	_set["s_" + key] = sl
 	_set["v_" + key] = val_l
+	_set["r_" + key] = r
 
 
 const SETTINGS_TABS := [["controls", "CONTROLS"], ["camera", "CAMERA"], ["display", "DISPLAY & AUDIO"], ["dev", "DEVELOPER"]]
@@ -1649,6 +1650,10 @@ func _build_settings() -> void:
 	_option_row(pc, "steer_feel", "Steering response", "Relaxed, Standard or Sharp: how quickly the car answers. Try Sharp if it still feels slow.")
 	_option_row(pc, "assist", "Steering assist", "On: the car straightens up to the road when you let go. Off: it keeps its heading, like a real car.")
 	_option_row(pc, "tilt_invert", "Tilt direction", "Flip tilt steering if it feels backwards (tilt only).")
+	_group(pc, "Dead zones")
+	pc.add_child(_wrap("How far a control has to move before the car starts to steer: bigger ignores small wobbles, smaller answers sooner. The one you are steering with is highlighted. Defaults: tilt 0.9°, stick 3.5%, wheel 3%, swipe 0%.", 17, MUTED))
+	for dz in ["dz_tilt", "dz_stick", "dz_wheel", "dz_swipe"]:
+		_slider_row(pc, dz, "set", "save")
 	_group(pc, "Pedals and feel")
 	_slider_row(pc, "pedal_scale", "set", "save")
 	_option_row(pc, "haptics", "Vibration", "Buzz on near misses and crashes, on the verge, and when the tyres reach their limit.")
@@ -1723,16 +1728,26 @@ func dev_note(text: String) -> void:
 func render_settings() -> void:
 	render_cam()
 	_cam_lock = true
-	var sliders := {"steer_sens": ["Sensitivity", 0.4, 2.0], "pedal_scale": ["Pedal size", 0.7, 1.4], "mirror_scale": ["Mirror size", 0.6, 1.8]}
+	# name, smallest, largest, step, how the value reads, what it is multiplied by to read it
+	var sliders := {
+		"steer_sens": ["Sensitivity", 0.4, 2.0, 0.05, "x%.2f", 1.0],
+		"pedal_scale": ["Pedal size", 0.7, 1.4, 0.05, "x%.2f", 1.0],
+		"mirror_scale": ["Mirror size", 0.6, 1.8, 0.05, "x%.2f", 1.0],
+		"dz_tilt": ["Tilt", 0.0, 6.0, 0.1, "%.1f°", 1.0],
+		"dz_stick": ["Stick", 0.0, 0.3, 0.005, "%.1f%%", 100.0],
+		"dz_wheel": ["Wheel", 0.0, 0.3, 0.005, "%.1f%%", 100.0],
+		"dz_swipe": ["Swipe", 0.0, 0.3, 0.005, "%.1f%%", 100.0],
+	}
 	for key in sliders:
+		var cfg: Array = sliders[key]
 		var sl: HSlider = _set["s_" + key]
-		sl.min_value = sliders[key][1]
-		sl.max_value = sliders[key][2]
-		sl.step = 0.05
+		sl.min_value = cfg[1]
+		sl.max_value = cfg[2]
+		sl.step = cfg[3]
 		var val := float(Save.setting(key))
 		sl.set_value_no_signal(val)
-		_set["n_" + key].text = sliders[key][0]
-		_set["v_" + key].text = "x%.2f" % val
+		_set["n_" + key].text = cfg[0]
+		_set["v_" + key].text = String(cfg[4]) % (val * float(cfg[5]))
 	_cam_lock = false
 	var states := {
 		"assist": "ON" if Save.data.assist else "OFF (REAL)", "haptics": "ON" if Save.setting("haptics") else "OFF",
@@ -1752,6 +1767,10 @@ func render_settings() -> void:
 			b.text = "%s  ›" % states[key]
 		else:
 			b.text = "%s:  %s" % [b.get_meta("base"), states[key]]
+	# the dead zone of the steering method in use is the one that matters
+	var method: String = Save.setting("steer_mode")
+	for m in ["tilt", "stick", "wheel", "swipe"]:
+		(_set["r_dz_" + m] as Control).modulate = Color(1, 1, 1, 1.0 if method == m else 0.5)
 	# tilt direction only matters with tilt steering
 	var tilt: bool = Save.setting("steer_mode") == "tilt"
 	(_set.t_tilt_invert as Button).disabled = not tilt

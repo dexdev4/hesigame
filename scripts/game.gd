@@ -2914,9 +2914,10 @@ func _analog_steer(dt: float) -> void:
 		"wheel":
 			if not held:
 				hud.wheel.angle = _wheel_return(hud.wheel.angle, dt)
-			raw = SteerInput.dead(hud.wheel.angle / SteerWheel.MAX_ANGLE, 0.03)
+			raw = SteerInput.dead(hud.wheel.angle / SteerWheel.MAX_ANGLE, float(Save.setting("dz_wheel")))
 		"tilt":
 			var ang := _roll() - _tilt_zero
+			_steer_in.tilt_dead = float(Save.setting("dz_tilt"))
 			raw = _steer_in.tilt(-ang if Save.setting("tilt_invert") else ang, dt, Input.get_gyroscope().z)
 		"stick":
 			raw = hud.stick.value()
@@ -2925,9 +2926,9 @@ func _analog_steer(dt: float) -> void:
 			_btn_val = move_toward(_btn_val, want, (7.0 if want != 0.0 else 14.0) * dt)  # eases in, lets go quickly
 			raw = _btn_val
 		_:  # swipe
-			raw = swipe if swiping else 0.0
+			raw = SteerInput.dead(swipe, float(Save.setting("dz_swipe"))) if swiping else 0.0
 	if _steer_test != "":
-		raw = _steer_test_raw(dt)
+		raw = _steer_test_raw(dt, raw)
 	# the arrow keys steer in every mode (desktop testing)
 	if mode != "buttons" and (key_left or key_right):
 		_arrow_val = move_toward(_arrow_val, (1.0 if key_right else 0.0) - (1.0 if key_left else 0.0), 6.0 * dt)
@@ -2947,12 +2948,14 @@ var _steer_test_t0 := 0.0
 
 
 ## A scripted hand for --steer-test, fed through the real pipeline; logs what the car does.
-func _steer_test_raw(dt: float) -> float:
+func _steer_test_raw(dt: float, hand := 0.0) -> float:
 	Save.data.settings.steer_sens = 1.0
 	_steer_test_t += dt
 	var tt := _steer_test_t
 	var raw := 0.0
 	match _steer_test:
+		"pass":  # the real control's own value goes through (to check the dead zones and the controls themselves)
+			raw = hand
 		"flick":  # a 60 ms flick to half lock at 1 s, held
 			raw = 0.5 * clampf((tt - 1.0) / 0.06, 0.0, 1.0)
 		"full":  # a 60 ms flick to full lock at 1 s, held

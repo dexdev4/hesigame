@@ -1730,10 +1730,14 @@ static func set_night(k: float, sun_dir: Vector3, zenith: Color = DAY_ENV.env_ze
 	_tail_mat(false).emission_energy_multiplier = lerpf(0.9, 2.6, k)
 	for halo in [false, true]:
 		_headlens_mat(halo).emission_energy_multiplier = lerpf(2.2, 6.0, k)
+	if _mirror_mat:
+		_mirror_mat.albedo_color = Color.WHITE.lerp(Color(0.22, 0.22, 0.25), k)
 	for key in _mats:
 		var m: Variant = _mats[key]
 		if m is ShaderMaterial:
 			_dusk_params(m as ShaderMaterial)
+			if (m as ShaderMaterial).shader == _inner_shader:
+				(m as ShaderMaterial).set_shader_parameter("dim", lerpf(1.0, 0.2, k))
 	if was_on != (k > 0.01):
 		var tree := Engine.get_main_loop() as SceneTree
 		if tree:
@@ -1919,6 +1923,31 @@ static func _shell_of(body: ArrayMesh, names: Array, sh: Dictionary) -> Dictiona
 						var k2 := di * ny + yi
 						side[k2] = minf(side[k2], ax)
 	return {"top": top, "side": side, "back": back, "nd": nd, "nx": nx, "ny": ny}
+
+
+## The lowest roof or glass overhead within `r` of a point `x` across the car and
+## `d` from the rear bumper (99 where there is none).
+static func _top_over(shell: Dictionary, x: float, d: float, r := 0.1) -> float:
+	var top: PackedFloat32Array = shell.top
+	var nx: int = shell.nx
+	var nd: int = shell.nd
+	var best := 99.0
+	for di in range(maxi(int((d - r) / SHELL_STEP), 0), mini(int((d + r) / SHELL_STEP) + 1, nd - 1) + 1):
+		for xi in range(maxi(int((absf(x) - r) / SHELL_STEP), 0), mini(int((absf(x) + r) / SHELL_STEP) + 1, nx - 1) + 1):
+			best = minf(best, top[di * nx + xi])
+	return best
+
+
+## How far in the side wall (or window) is, within `r` of height `y`, `d` from the rear.
+static func _side_at(shell: Dictionary, d: float, y: float, r := 0.1) -> float:
+	var side: PackedFloat32Array = shell.side
+	var ny: int = shell.ny
+	var nd: int = shell.nd
+	var best := 99.0
+	for di in range(maxi(int((d - r) / SHELL_STEP), 0), mini(int((d + r) / SHELL_STEP) + 1, nd - 1) + 1):
+		for yi in range(maxi(int((y - r) / SHELL_STEP), 0), mini(int((y + r) / SHELL_STEP) + 1, ny - 1) + 1):
+			best = minf(best, side[di * ny + yi])
+	return best
 
 
 ## A cockpit point moved inside the measured shell (with a little clearance).
@@ -2142,20 +2171,47 @@ func body_node() -> Node3D:
 	return _body
 
 
-## Driver's eye position in car space.
-func cockpit_eye(clamp_to_shell := true) -> Vector3:
+var _eye_cache := Vector3.INF
+
+
+## Driver's eye position in car space. The seat goes where the roof is highest
+## and the head just clears it (with room to spare for the body to pitch), as
+## far forward as it takes to see a good stretch of road over the dash.
+func cockpit_eye() -> Vector3:
+	if _eye_cache != Vector3.INF:
+		return _eye_cache
 	var pr: Dictionary = PROFILES.get(_shape_id, PROFILES.sedan)
 	if not pr.has("gh"):
 		return Vector3(-0.42, 1.72, -3.95)
 	var g: Array = pr.gh
-	var y: float = float(pr.eye_y) if pr.has("eye_y") else minf(g[4] + 0.38, g[5] - 0.16)
-	var eye := Vector3(-0.36 * shape.w / 1.84, y + 0.035, -(g[1] - float(pr.get("eye_back", 1.45))))
-	if pr.has("mesh") and clamp_to_shell:
-		# the head must stay inside the real roof, door frames and rear glass:
-		# the top of the head is 9 cm above the eye, with 3 cm to spare
-		var up := Vector3(0, 0.09, 0)
-		eye = _inside_shell(eye + up, _shell(_shape_id), 0.03) - up
-	return eye
+	var ex: float = -0.36 * float(shape.w) / 1.84
+	var shell := _shell(_shape_id)
+	var best := Vector3.INF
+	var best_score := -1e9
+	for k in 36:
+		var dist := 0.9 + 0.05 * (k % 12)            # from the eye to the windscreen base
+		var xs: float = [1.0, 0.85, 0.7][k / 12]     # seat a little towards the middle if the roof is domed
+		var d: float = g[1] - dist                   # from the rear bumper
+		var roof := _top_over(shell, ex * xs, d, 0.11)
+		if roof > 90.0:
+			continue
+		var y_head := roof - 0.15                    # the head is 10 cm above the eye, with 5 cm to spare
+		var y_cowl: float = float(g[4]) - 0.03 + tan(deg_to_rad(6.5)) * dist  # eye height for a 6.5 degree view over the cowl
+		# in a low car sit as high as the roof allows (1 cm to spare for the head) rather than lose the road behind the dash
+		var y := y_head if y_head >= y_cowl else minf(y_cowl, roof - 0.11)
+		var score: float = y - 3.0 * maxf(y_cowl - y, 0.0) - 0.2 * absf(dist - 1.15) - 1.2 * (1.0 - xs) * absf(ex)
+		if score > best_score:
+			best_score = score
+			best = Vector3(ex * xs, y, -d)
+	if best == Vector3.INF:
+		var y: float = float(pr.eye_y) + 0.035 if pr.has("eye_y") else minf(g[4] + 0.38, g[5] - 0.16)
+		best = Vector3(ex, y, -(g[1] - float(pr.get("eye_back", 1.2))))
+	# and clear of the door and pillar beside it
+	var sd := _side_at(shell, -best.z, best.y, 0.1)
+	if sd < 90.0 and absf(best.x) > sd - 0.14:
+		best.x = -maxf(sd - 0.14, 0.25)
+	_eye_cache = best
+	return best
 
 
 ## Bonnet camera position in car space.
@@ -2165,6 +2221,60 @@ func hood_eye() -> Vector3:
 		return Vector3(0, 1.62, -4.75)
 	var d: float = pr.gh[1] + 0.3
 	return Vector3(0, _station_at(pr.body, d, 1) + 0.2, -d)
+
+
+## A prism along x: the convex polygon `pts` (z, y pairs) swept from x0 to x1, closed at both ends.
+static func _prism(st: SurfaceTool, pts: Array, x0: float, x1: float) -> void:
+	var n := pts.size()
+	var c := Vector2.ZERO
+	for p in pts:
+		c += p as Vector2
+	c /= n
+	for i in n:
+		var a: Vector2 = pts[i]
+		var b: Vector2 = pts[(i + 1) % n]
+		var e := b - a
+		var nz := Vector2(e.y, -e.x)
+		if nz.dot((a + b) / 2.0 - c) < 0.0:
+			nz = -nz
+		nz = nz.normalized()
+		_quad(st, Vector3(x0, a.y, a.x), Vector3(x1, a.y, a.x), Vector3(x1, b.y, b.x), Vector3(x0, b.y, b.x), Vector3(0, nz.y, nz.x))
+	var p0: Vector2 = pts[0]
+	for k in range(1, n - 1):
+		var pa: Vector2 = pts[k]
+		var pb: Vector2 = pts[k + 1]
+		_tri(st, Vector3(x0, p0.y, p0.x), Vector3(x0, pa.y, pa.x), Vector3(x0, pb.y, pb.x), Vector3.LEFT, Vector3.LEFT, Vector3.LEFT)
+		_tri(st, Vector3(x1, p0.y, p0.x), Vector3(x1, pa.y, pa.x), Vector3(x1, pb.y, pb.x), Vector3.RIGHT, Vector3.RIGHT, Vector3.RIGHT)
+
+
+## An arched hood over the instrument dials: a squared-off arch (a superellipse)
+## standing on y0, swept from z_near (the face the dials sit on) back to z_far,
+## its crown at top_near / top_far.
+static func _pod(st: SurfaceTool, cx: float, hw: float, z_near: float, z_far: float, y0: float, top_near: float, top_far: float) -> void:
+	var rings := 4
+	var segs := 14
+	var prev: Array = []
+	for r in rings + 1:
+		var f := float(r) / rings
+		var z := lerpf(z_near, z_far, f)
+		var h := maxf(lerpf(top_near, top_far, f) - y0, 0.02)
+		var ring: Array = []
+		for s in segs + 1:
+			var th := PI * s / segs
+			var cs := cos(th)
+			ring.append(Vector3(cx + hw * signf(cs) * pow(absf(cs), 0.571), y0 + h * pow(sin(th), 0.571), z))
+		if r == 0:  # the face the dials sit on
+			for s in segs:
+				_tri(st, Vector3(cx, y0, z), ring[s], ring[s + 1], Vector3.BACK, Vector3.BACK, Vector3.BACK)
+		else:
+			for s in segs:
+				var a: Vector3 = prev[s]
+				var b: Vector3 = prev[s + 1]
+				var c: Vector3 = ring[s + 1]
+				var d: Vector3 = ring[s]
+				var mid := (a + b + c + d) / 4.0
+				_quad(st, a, b, c, d, Vector3((mid.x - cx) / hw, (mid.y - y0) / h, 0.0).normalized())
+		prev = ring
 
 
 ## Box oriented along a segment (seat belts, levers).
@@ -2250,10 +2360,11 @@ static func _rim_mesh(kind: String, thin := false) -> ArrayMesh:
 	return st.commit()
 
 
-## A full cabin for the player's car: carpeted floor, dashboard with vents,
-## trim and infotainment screen, live instrument cluster, steering wheel,
-## centre console with gear lever and handbrake, seats with bolsters and
-## headrests, rear bench, door cards, headliner, visors and mirror.
+## A full cabin for the player's car, built for the driver's-eye view. The roof,
+## pillars and door tops are the body's own inner faces (see _inner_shell), so
+## they sit exactly where the bodywork is. Everything else is laid out from the
+## driver's eye so the road stays in view: the dash ends at the cowl's sight
+## line, the instrument pod sits under that line and the wheel under the pod.
 func build_interior() -> void:
 	var pr: Dictionary = PROFILES.get(_shape_id, {})
 	if pr.is_empty() or not pr.has("gh") or _steer_node:
@@ -2264,23 +2375,26 @@ func build_interior() -> void:
 	var g: Array = pr.gh
 	var w: float = shape.w
 	var hb: float = w / 2.0 * g[6] - 0.03     # inner half-width of the cabin
-	var hr: float = w / 2.0 * g[7]
-	var yb: float = g[4]
-	var yr: float = g[5]
+	var yb: float = g[4]                       # belt line
+	var yr: float = g[5]                       # roof
 	var rear_top: float = pr.body[0][1]
 	var floor_y: float = minf(0.3, rear_top - 0.3) + 0.08
 	var eye := cockpit_eye()
 	var ex := eye.x
 	var ez := eye.z
-	var dz: float = -(g[1] - 0.05)            # windshield base
+	var dz: float = -(g[1] - 0.05)            # windscreen base
 	var zr: float = -g[0]                     # rear of the cabin
+	var shell := _shell(_shape_id)
+	# the real roof (or glass) height overhead at (x, z), measured from the body mesh
+	var roof_at := func(x: float, z: float) -> float:
+		var t := _top_over(shell, x, -z, 0.05)
+		return t if t < 90.0 else yr
 
-	var bbi := BodyBuilder.new(_shape_id, pr, shape, {})  # for the real roof line
 	var S := {}
 	var cab: Dictionary = CABINS.get(CABIN_ALIAS.get(_shape_id, _shape_id), {})
 	var bucket: bool = cab.get("seats", "comfort") == "bucket"
 	var scr: String = cab.get("screen", "wide")
-	var keys := ["carpet", "trim", "dash", "pad", "leather", "cloth", "insert", "chrome", "alu", "vent", "screen", "red", "stitch", "ambient", "map", "route", "accent"]
+	var keys := ["carpet", "trim", "dash", "pad", "leather", "insert", "chrome", "alu", "vent", "screen", "red", "stitch", "ambient", "map", "route", "accent"]
 	for k in keys:
 		S[k] = _new_st()
 
@@ -2298,52 +2412,36 @@ func build_interior() -> void:
 		_box(S.chrome, Vector3(x - sd * 0.02, yb - 0.12, ez - 0.32), Vector3(0.03, 0.04, 0.12))                     # door handle
 		_box(S.alu, Vector3(x - sd * 0.005, yb - 0.17, (ez + dz) / 2.0 + 0.2), Vector3(0.01, 0.015, absf(dz - ez) * 0.9))  # trim line
 		_cyl(S.vent, Vector3(x - sd * 0.008, floor_y + 0.2, ez - 0.45), 0.09, 0.012, Vector3.RIGHT, 14)                  # speaker
-		# B-pillar trim, kept under the roof (coupes and fastbacks slope down here)
-		var bp_top := minf(yb + 0.38, bbi.roof_y(-(ez + 0.5)) - 0.06)
-		if bp_top > yb + 0.08:
-			_box(S.trim, Vector3(sd * (hb - 0.06), (yb - 0.02 + bp_top) * 0.5, ez + 0.5), Vector3(0.06, bp_top - yb + 0.02, 0.1))
-		_box(S.trim, Vector3(sd * (hr - 0.08), yr - 0.07, ez + 0.05), Vector3(0.04, 0.03, 0.22))                     # grab handle
 
 	# --- dashboard
-	# Fit the dash under the windscreen: a raked screen is low at its base, so
-	# the dash drops a little and, if that is not enough, moves back.
-	var yd := yb
-	var dzd := dz
-	var fitted := false
-	for si in 11:
-		var shift := si * 0.02
-		for di in 13:
-			var y_try := yb - float(pr.get("dash_drop", 0.0)) - di * 0.01  # low cars: dash sits under the eye line
-			var pad_ok := y_try + 0.09 <= bbi.roof_y(g[1] - 0.06 - shift) - 0.02
-			var hood_ok := y_try + 0.23 <= bbi.roof_y(g[1] - 0.43 - shift) - 0.02
-			if pad_ok and hood_ok:
-				yd = y_try
-				dzd = dz + shift
-				fitted = true
-				break
-		if fitted:
-			break
-	# upper dash: narrower on cars whose windscreen is narrow at its base
+	var D := ez - dz                               # eye to the windscreen base
+	var ypad := yb - 0.035                         # top of the dash where it meets the windscreen
+	var zf := maxf(ez - 0.72, dz + 0.18)           # the instrument panel's face, towards the driver
+	var yd := ypad - 0.14                          # level of the panel's fittings
 	var hd: float = minf(hb, float(pr.get("dash_hw", hb)))
-	_box(S.dash, Vector3(0, yd - 0.08, dzd + 0.3), Vector3(hd * 2.0, 0.26, 0.6))
-	_box(S.pad, Vector3(0, yd + 0.06, dzd + 0.27), Vector3(hd * 2.0 - 0.02, 0.03, 0.52))
-	_box(S.stitch, Vector3(0, yd + 0.076, dzd + 0.53), Vector3(hd * 2.0 - 0.06, 0.004, 0.006))
+	var pad_y := func(z: float) -> float:
+		return ypad - 0.07 * clampf((z - dz) / (zf - dz), 0.0, 1.0)
 	var lower: SurfaceTool = S.leather if cab.get("two_tone", false) else S.dash
-	_box(lower, Vector3(0, yd - 0.3, dzd + 0.35), Vector3(hb * 2.0, 0.18, 0.4))               # lower dash
-	_box(S.alu, Vector3(0, yd - 0.11, dzd + 0.605), Vector3(hb * 2.0 - 0.1, 0.025, 0.012))     # trim strip
-	_box(S.ambient, Vector3(0, yd - 0.126, dzd + 0.607), Vector3(hb * 2.0 - 0.12, 0.004, 0.006))  # ambient light line
+	# a soft-touch pad on top, sloping down towards the driver, over the dash body
+	_prism(S.pad, [Vector2(dz, ypad), Vector2(zf, ypad - 0.07), Vector2(zf, ypad - 0.115), Vector2(dz, ypad - 0.045)], -hd, hd)
+	_prism(S.dash, [Vector2(dz, ypad - 0.045), Vector2(zf, ypad - 0.115), Vector2(zf, ypad - 0.46), Vector2(dz, ypad - 0.46)], -hd, hd)
+	var zs: float = dz + (zf - dz) * 0.9
+	_box(S.stitch, Vector3(0, pad_y.call(zs) + 0.003, zs), Vector3(hd * 2.0 - 0.06, 0.004, 0.006))
+	_box(lower, Vector3(0, yd - 0.3, zf - 0.2), Vector3(hb * 2.0, 0.18, 0.4))                  # lower dash
+	_box(S.alu, Vector3(0, yd - 0.11, zf + 0.005), Vector3(hb * 2.0 - 0.1, 0.025, 0.012))      # trim strip
+	_box(S.ambient, Vector3(0, yd - 0.126, zf + 0.007), Vector3(hb * 2.0 - 0.12, 0.004, 0.006))  # ambient light line
 	for sd in [-1.0, 1.0]:
 		_box(S.ambient, Vector3(sd * (hb - 0.062), yd - 0.07, (zr + dz) / 2.0), Vector3(0.004, 0.004, absf(dz - zr) * 0.9))
 	# infotainment: a wide screen in the dash, a tall floating tablet, or a small radio
 	var sw := 0.25
 	var shh := 0.145
 	var sy := yd - 0.13
-	var sz := dzd + 0.621
+	var sz := zf + 0.021
 	if scr == "tablet":
 		sw = 0.17
 		shh = 0.25
 		sy = yd - 0.085
-		sz = dzd + 0.632
+		sz = zf + 0.032
 		_box(S.dash, Vector3(0, sy, sz - 0.008), Vector3(sw + 0.03, shh + 0.03, 0.014))  # the tablet's body, proud of the dash
 	elif scr == "retro":
 		sw = 0.17
@@ -2361,46 +2459,55 @@ func build_interior() -> void:
 			_box(S.screen, Vector3(rd[0] * sw / 0.25, my + rd[1], sz + 0.007), Vector3(rd[2] * sw / 0.25, rd[3], 0.002))
 		_box(S.route, Vector3(0.0, my, sz + 0.0075), Vector3(0.004, 0.04, 0.002))
 		_box(S.route, Vector3(-0.03 * sw / 0.25, my + 0.02, sz + 0.0075), Vector3(0.06 * sw / 0.25, 0.004, 0.002))
-	_box(S.trim, Vector3(-ex, yd - 0.3, dzd + 0.56), Vector3(0.46, 0.16, 0.02))               # glovebox lid
-	_box(S.chrome, Vector3(-ex + 0.17, yd - 0.25, dzd + 0.575), Vector3(0.06, 0.015, 0.015))  # glovebox latch
+	_box(S.trim, Vector3(-ex, yd - 0.3, zf - 0.04), Vector3(0.46, 0.16, 0.02))               # glovebox lid
+	_box(S.chrome, Vector3(-ex + 0.17, yd - 0.25, zf - 0.025), Vector3(0.06, 0.015, 0.015))  # glovebox latch
 	for sd in [-1.0, 1.0]:
-		_box(S.dash, Vector3(sd * 0.36, yd - 0.32, dzd + 0.58), Vector3(0.34, 0.14, 0.08))      # knee bolsters
+		_box(S.dash, Vector3(sd * 0.36, yd - 0.32, zf - 0.02), Vector3(0.34, 0.14, 0.08))      # knee bolsters
 	for vx in [-0.1, 0.1, -(hb - 0.14), hb - 0.14]:
-		var c := Vector3(vx, yd - 0.02, dzd + 0.605)
+		var c := Vector3(vx, yd - 0.02, zf + 0.005)
 		_box(S.chrome, c, Vector3(0.16, 0.075, 0.01))
 		_box(S.vent, c + Vector3(0, 0, 0.004), Vector3(0.145, 0.062, 0.01))
 		for k in 3:
 			_box(S.trim, c + Vector3(0, -0.02 + k * 0.02, 0.008), Vector3(0.14, 0.006, 0.006))
-	# binnacle and instrument cluster backing
-	_box(S.dash, Vector3(ex, yd + 0.115, dzd + 0.5), Vector3(0.38, 0.03, 0.22))
-	_box(S.dash, Vector3(ex, yd + 0.035, dzd + 0.55), Vector3(0.36, 0.13, 0.1))
 	# centre stack with screen, climate knobs and hazard switch
-	_box(S.dash, Vector3(0, yd - 0.27, dzd + 0.54), Vector3(0.32, 0.44, 0.16))
+	_box(S.dash, Vector3(0, yd - 0.27, zf - 0.06), Vector3(0.32, 0.44, 0.16))
 	_box(S.chrome, Vector3(0, sy, sz), Vector3(sw + 0.02, shh + 0.02, 0.004))
 	_box(S.screen, Vector3(0, sy, sz + 0.003), Vector3(sw, shh, 0.004))
 	var knob_y := yd - 0.33 if scr != "tablet" else yd - 0.36
 	for k in 3:
-		_cyl(S.chrome, Vector3(-0.08 + k * 0.08, knob_y, dzd + 0.625), 0.026, 0.02, Vector3.BACK, 14)
-		_cyl(S.vent, Vector3(-0.08 + k * 0.08, knob_y, dzd + 0.636), 0.02, 0.005, Vector3.BACK, 12)
-	_box(S.red, Vector3(0, knob_y + 0.075 if scr != "tablet" else knob_y + 0.05, dzd + 0.624), Vector3(0.04, 0.025, 0.01))
-	# extra gauges in pods on top of the dash (oil, volts, boost)
+		_cyl(S.chrome, Vector3(-0.08 + k * 0.08, knob_y, zf + 0.025), 0.026, 0.02, Vector3.BACK, 14)
+		_cyl(S.vent, Vector3(-0.08 + k * 0.08, knob_y, zf + 0.036), 0.02, 0.005, Vector3.BACK, 12)
+	_box(S.red, Vector3(0, knob_y + 0.075 if scr != "tablet" else knob_y + 0.05, zf + 0.024), Vector3(0.04, 0.025, 0.01))
+	# extra gauges in small pods on the dash top (oil, volts, boost), kept low
 	var pods: int = cab.get("pods", 0)
 	for k in pods:
-		var px := (k - (pods - 1) / 2.0) * 0.095
-		var pc := Vector3(px, yd + 0.105, dzd + 0.5)
-		_cyl(S.dash, pc, 0.042, 0.07, Vector3.BACK, 14)
-		_cyl(S.chrome, pc + Vector3(0, 0, 0.036), 0.04, 0.004, Vector3.BACK, 14)
-		_cyl(S.vent, pc + Vector3(0, 0, 0.038), 0.034, 0.004, Vector3.BACK, 14)
-		_box(S.red, pc + Vector3(0.008, 0.008, 0.042), Vector3(0.004, 0.03, 0.002), Basis(Vector3.BACK, -0.6 + k * 0.5))
-	# steering column, stalks and pedals
-	_box(S.dash, Vector3(ex, yd - 0.14, dzd + 0.69), Vector3(0.12, 0.1, 0.24))
+		var px := (k - (pods - 1) / 2.0) * 0.07
+		var pz := zf - 0.1
+		var pc := Vector3(px, pad_y.call(pz) + 0.004, pz)
+		_cyl(S.dash, pc, 0.026, 0.05, Vector3.BACK, 14)
+		_cyl(S.chrome, pc + Vector3(0, 0, 0.026), 0.025, 0.004, Vector3.BACK, 14)
+		_cyl(S.vent, pc + Vector3(0, 0, 0.028), 0.021, 0.004, Vector3.BACK, 14)
+		_box(S.red, pc + Vector3(0.005, 0.005, 0.032), Vector3(0.003, 0.018, 0.002), Basis(Vector3.BACK, -0.6 + k * 0.5))
+
+	# --- the instrument pod: an arch over the dials, never rising above the sight
+	# line from the eye over the cowl, so it cannot hide the road or the bonnet
+	var tan_c := maxf((eye.y - ypad) / D, 0.06)
+	var sight := func(z: float) -> float:
+		return eye.y - tan_c * (ez - z) - 0.014
+	var pod_y0: float = pad_y.call(zf) - 0.03
+	_pod(S.dash, ex, 0.25, zf, zf - 0.3, pod_y0, sight.call(zf), sight.call(zf - 0.3))
+	var y_dial: float = minf(eye.y - 0.72 * 0.33, float(sight.call(zf)) - 0.052 - 0.012)  # about 18 degrees below the eye
+	var dial_tilt := atan2(eye.y - y_dial, ez - zf)   # the dials face the driver's eye
+	# the steering column, rising from the dash to the wheel hub
+	var hub := Vector3(ex, eye.y - 0.30, ez - 0.55)
+	_strap(S.dash, Vector3(ex, ypad - 0.2, zf + 0.01), hub + Vector3(0, -0.04, -0.03), 0.1, 0.1)
 	for sd in [-1.0, 1.0]:
-		_strap(S.dash, Vector3(ex + sd * 0.05, yd - 0.12, dzd + 0.74), Vector3(ex + sd * 0.17, yd - 0.1, dzd + 0.72), 0.018, 0.018)
+		_strap(S.dash, hub + Vector3(sd * 0.05, -0.09, 0.0), hub + Vector3(sd * 0.17, -0.07, 0.03), 0.018, 0.018)  # stalks
 	for k in 3:
-		_box(S.alu, Vector3(ex - 0.12 + k * 0.1, floor_y + 0.12, dzd + 0.3), Vector3(0.07, 0.1, 0.02), Basis(Vector3.RIGHT, -0.5))
+		_box(S.alu, Vector3(ex - 0.12 + k * 0.1, floor_y + 0.12, ez - 0.7), Vector3(0.07, 0.1, 0.02), Basis(Vector3.RIGHT, -0.5))
 
 	# --- centre console
-	var cz0: float = dz + 0.62
+	var cz0: float = zf + 0.02
 	var cz1: float = ez + 0.5
 	_box(S.trim, Vector3(0, (floor_y + yb - 0.42) / 2.0, (cz0 + cz1) / 2.0), Vector3(0.24, yb - 0.42 - floor_y, absf(cz1 - cz0)))
 	_box(S.alu, Vector3(0, yb - 0.415, (cz0 + cz1) / 2.0), Vector3(0.25, 0.01, absf(cz1 - cz0)))
@@ -2413,9 +2520,6 @@ func build_interior() -> void:
 
 	# --- front seats
 	var cushion_top: float = floor_y + 0.27
-	# height of the roof or the rear window at a distance d from the rear bumper
-	var roof_line := func(d: float) -> float:
-		return bbi.roof_y(d)  # the roof, or the rear window, as the body builds it
 	for sx in [ex, -ex]:
 		_box(S.dash, Vector3(sx, floor_y + 0.06, ez + 0.05), Vector3(0.4, 0.06, 0.45))                      # rails and base
 		_box(S.leather, Vector3(sx, cushion_top - 0.07, ez + 0.03), Vector3(0.46, 0.14, 0.5))
@@ -2427,7 +2531,7 @@ func build_interior() -> void:
 				Vector3(0.07, 0.17 if bucket else 0.12, 0.48))  # cushion bolster (deeper on bucket seats)
 		var back := Basis(Vector3.RIGHT, 0.2)
 		# fit the seat under the roof or rear window: the backrest and headrest shrink on low cars
-		var room: float = minf(yr - 0.08, roof_line.call(-(ez + 0.46)) - 0.05) - cushion_top
+		var room: float = minf(yr - 0.08, float(roof_at.call(sx, ez + 0.46)) - 0.05) - cushion_top
 		var hh: float = clampf(room * 0.27, 0.1, 0.19)
 		var bh: float = clampf(room - hh - 0.08, 0.3, 0.62)
 		var bc := Vector3(sx, cushion_top + bh / 2.0 - 0.01, ez + 0.3)
@@ -2450,7 +2554,7 @@ func build_interior() -> void:
 				_box(S.chrome, top + back.y * 0.035 + Vector3(sd * 0.07, 0, 0), Vector3(0.012, 0.07, 0.012), back)
 			_box(S.leather, top + back.y * (0.06 + hh / 2.0), Vector3(0.26, hh, 0.1), back)                       # headrest
 	# seat belt across the (empty) driver seat, from the B-pillar to the buckle
-	var belt_top := minf(yb + 0.32, bbi.roof_y(-(ez + 0.4)) - 0.1)  # anchored below the roof on low cars
+	var belt_top := minf(yb + 0.32, float(roof_at.call(hb - 0.08, ez + 0.4)) - 0.1)  # anchored below the roof on low cars
 	_strap(S.dash, Vector3(signf(ex) * (hb - 0.08), belt_top, ez + 0.4), Vector3(ex - signf(ex) * 0.22, cushion_top + 0.05, ez + 0.1), 0.045, 0.006)
 
 	# --- rear bench, tucked under the rear window (the cabin runs from zr forward to -z)
@@ -2476,22 +2580,12 @@ func build_interior() -> void:
 		# roll hoop behind the seats, braced back to the rear bulkhead
 		var hz: float = ez + 0.62
 		var hx: float = hb - 0.1
-		var htop: float = minf(yr - 0.06, bbi.roof_y(-hz) - 0.07)
+		var htop: float = minf(yr - 0.06, float(roof_at.call(hx, hz)) - 0.07)
 		for sd in [-1.0, 1.0]:
 			_strap(S.accent, Vector3(sd * hx, floor_y, hz), Vector3(sd * (hx - 0.06), htop, hz), 0.045, 0.045)
 			_strap(S.accent, Vector3(sd * (hx - 0.06), htop - 0.02, hz), Vector3(sd * (hx - 0.1), yb - 0.1, minf(zr - 0.06, hz + 0.5)), 0.04, 0.04)
 		_box(S.accent, Vector3(0, htop, hz), Vector3((hx - 0.06) * 2.0, 0.045, 0.045))
 		_strap(S.accent, Vector3(-(hx - 0.08), floor_y + 0.25, hz), Vector3(hx - 0.08, htop - 0.05, hz), 0.035, 0.035)
-	# --- headliner, visors, dome light, inner A-pillars
-	_quad(S.cloth, Vector3(-hr, yr - 0.02, -g[2]), Vector3(hr, yr - 0.02, -g[2]), Vector3(hr, yr - 0.02, -g[3]), Vector3(-hr, yr - 0.02, -g[3]), Vector3.DOWN)
-	_box(S.cloth, Vector3(0, yr - 0.05, -g[3] + 0.05), Vector3(hr * 2.0, 0.05, 0.12))
-	for sd in [-1.0, 1.0]:
-		_box(S.cloth, Vector3(sd * 0.33, yr - 0.06, -g[3] + 0.16), Vector3(0.34, 0.025, 0.17), Basis(Vector3.RIGHT, 0.12))
-		var b0 := Vector3(sd * minf(hb + 0.03, float(pr.get("ws_base_hw", 9.0))), yb, -g[1])  # foot of the A-pillar, at the windscreen's edge
-		var r0 := Vector3(sd * hr, yr, -g[3])
-		var inward := Vector3(-sd * 0.09, 0, 0)
-		_quad(S.trim, b0 + Vector3(0, 0, 0.03), b0 + inward + Vector3(0, 0, 0.05), r0 + inward + Vector3(0, -0.02, 0.05), r0 + Vector3(0, -0.02, 0.03), Vector3(-sd, 0, 0.6).normalized())
-	_box(S.screen, Vector3(0, yr - 0.03, (-g[2] - g[3]) / 2.0), Vector3(0.14, 0.012, 0.08))  # dome light
 
 	var interior := ArrayMesh.new()
 	var cc := func(key: String, def: String) -> Color: return Color(String(cab.get(key, def)))
@@ -2507,22 +2601,16 @@ func build_interior() -> void:
 		"ambient": mat(cc.call("ambient", "#ff7a3a"), 1.4), "map": mat(Color("#0c1a26"), 0.6), "route": mat(Color("#f5b52e"), 2.5),
 		"accent": mat(cc.call("accent", "#b5322a"), 0.0, 0.4, 0.2),
 	}
-	var cloth := StandardMaterial3D.new()  # unshaded: down-facing fabric would pick up the green ground light
-	cloth.albedo_color = cc.call("liner", "#4a4a4c")
-	cloth.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mats["cloth"] = cloth
 	var order: Array = []
-	var shell := _shell(_shape_id) if pr.has("mesh") else {}
 	for k in keys:
 		var arrays: Array = (S[k] as SurfaceTool).commit_to_arrays()
 		if arrays[Mesh.ARRAY_VERTEX] == null or (arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array).is_empty():
 			continue
-		if not shell.is_empty():
-			# imported bodies: squash anything that would cross the real roof or sides
-			var vs: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
-			for vi in vs.size():
-				vs[vi] = _inside_shell(vs[vi], shell)
-			arrays[Mesh.ARRAY_VERTEX] = vs
+		# squash anything that would cross the real roof or sides of the body
+		var vs: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+		for vi in vs.size():
+			vs[vi] = _inside_shell(vs[vi], shell)
+		arrays[Mesh.ARRAY_VERTEX] = vs
 		interior.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 		order.append(k)
 	var mi := MeshInstance3D.new()
@@ -2531,6 +2619,13 @@ func build_interior() -> void:
 		mi.set_surface_override_material(i, mats[order[i]])
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_body.add_child(mi)
+
+	# the roof, pillars and door tops, seen from the driver's seat
+	var liner := Color(String(cab.get("liner", "#5c5e63")))
+	_inner = _inner_shell(liner)
+	if _inner:
+		_inner.visible = false
+		_body.add_child(_inner)
 
 	# soft bounce light inside the cabin, as daylight would reflect off the seats and dash
 	var fill := OmniLight3D.new()
@@ -2543,55 +2638,40 @@ func build_interior() -> void:
 	fill.position = Vector3(0, yr - 0.25, ez - 0.25)
 	_body.add_child(fill)
 
-	# faint reflection on the inside of the windscreen
-	var sheen := StandardMaterial3D.new()
-	sheen.albedo_color = Color(0.85, 0.92, 1.0, 0.05)
-	sheen.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	sheen.roughness = 0.03
-	sheen.metallic_specular = 1.0
-	var ws := _new_st()
-	var wb0 := Vector3(-hb - 0.03, yb, -g[1])
-	var wb1 := Vector3(hb + 0.03, yb, -g[1])
-	var wr0 := Vector3(-hr, yr, -g[3])
-	var wr1 := Vector3(hr, yr, -g[3])
-	var wn := -_face_n(wb0, wb1, wr1, Vector3(0, 0.5, -1))
-	_quad(ws, wb0 + wn * 0.012, wb1 + wn * 0.012, wr1 + wn * 0.012, wr0 + wn * 0.012, wn)
-	var wsm := MeshInstance3D.new()
-	wsm.mesh = ws.commit()
-	wsm.material_override = sheen
-	wsm.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	_body.add_child(wsm)
-
-	# rear-view mirror with stem
-	var stem := MeshInstance3D.new()
-	stem.mesh = box_mesh(Vector3(0.02, 0.08, 0.02))
-	stem.material_override = mats.dash
-	stem.position = Vector3(0, yr - 0.06, -(g[3] - 0.06))
-	_body.add_child(stem)
-	var mirror := MeshInstance3D.new()
-	mirror.mesh = box_mesh(Vector3(0.24, 0.07, 0.03))
-	mirror.material_override = mats.dash
-	mirror.position = Vector3(0, yr - 0.12, -float(pr.get("mirror_d", g[3] - 0.08)))  # at the top of the windscreen
-	if not shell.is_empty():
-		mirror.position = _inside_shell(mirror.position + Vector3(0, 0.05, 0), shell) - Vector3(0, 0.05, 0)
-	stem.position = mirror.position + Vector3(0, 0.05, -0.012)  # the stem joins the mirror to the roof above it
+	# rear-view mirror, hung from the top of the windscreen and turned towards the driver
+	var md: float = float(pr.get("mirror_d", g[3] - 0.08))
+	var mt := _top_over(shell, 0.0, md, 0.03)
+	var m_top: float = mt if mt < 90.0 else yr
+	var mpos := Vector3(0, m_top - 0.105, -md)
+	var mirror := Node3D.new()
+	mirror.position = mpos
+	mirror.basis = Basis.from_euler(Vector3(atan2(mpos.y - eye.y, absf(ez - mpos.z)), atan2(ex - mpos.x, ez - mpos.z) * 0.8, 0.0))
 	_body.add_child(mirror)
+	var housing := MeshInstance3D.new()
+	housing.mesh = box_mesh(Vector3(0.2, 0.055, 0.028))
+	housing.material_override = mats.dash
+	mirror.add_child(housing)
 	var glassm := MeshInstance3D.new()
-	glassm.mesh = box_mesh(Vector3(0.22, 0.055, 0.005))
-	glassm.material_override = _glass()
-	glassm.position = mirror.position + Vector3(0, 0, 0.016)
-	_body.add_child(glassm)
+	glassm.mesh = box_mesh(Vector3(0.185, 0.043, 0.004))
+	glassm.material_override = _mirror_glass()
+	glassm.position = Vector3(0, 0, 0.0145)
+	mirror.add_child(glassm)
+	var stem := MeshInstance3D.new()
+	stem.mesh = box_mesh(Vector3(0.02, 0.06, 0.02))
+	stem.material_override = mats.dash
+	stem.position = mpos + Vector3(0, 0.05, -0.012)  # joins the mirror to the roof above it
+	_body.add_child(stem)
 
 	# instrument cluster: speedometer and rev counter with ticks and needles
 	for k in 2:
 		var dial := Node3D.new()
-		dial.position = Vector3(ex + (0.085 if k == 0 else -0.085), yd + 0.045, dzd + 0.645)
-		dial.rotation.x = -0.35
+		dial.position = Vector3(ex + (0.095 if k == 0 else -0.095), y_dial, zf + 0.012)
+		dial.rotation.x = -dial_tilt
 		_body.add_child(dial)
 		var face := MeshInstance3D.new()
 		var cm := CylinderMesh.new()
-		cm.top_radius = 0.065
-		cm.bottom_radius = 0.065
+		cm.top_radius = 0.05
+		cm.bottom_radius = 0.05
 		cm.height = 0.01
 		cm.radial_segments = 24
 		face.mesh = cm
@@ -2600,8 +2680,8 @@ func build_interior() -> void:
 		dial.add_child(face)
 		var ring := MeshInstance3D.new()
 		var tm := TorusMesh.new()
-		tm.inner_radius = 0.06
-		tm.outer_radius = 0.068
+		tm.inner_radius = 0.046
+		tm.outer_radius = 0.053
 		tm.rings = 24
 		tm.ring_segments = 4
 		ring.mesh = tm
@@ -2611,8 +2691,8 @@ func build_interior() -> void:
 		for t in 9:
 			var a := lerpf(2.2, -2.2, t / 8.0)
 			var tick := MeshInstance3D.new()
-			tick.mesh = box_mesh(Vector3(0.004, 0.012, 0.002))
-			tick.position = Vector3(-sin(a), cos(a), 0) * 0.05 + Vector3(0, 0, 0.007)
+			tick.mesh = box_mesh(Vector3(0.003, 0.009, 0.002))
+			tick.position = Vector3(-sin(a), cos(a), 0) * 0.038 + Vector3(0, 0, 0.007)
 			tick.rotation.z = a
 			tick.material_override = mat(Color("#ff3b2a") if (k == 1 and t >= 7) else Color("#e8e8e8"), 1.4)
 			dial.add_child(tick)
@@ -2620,19 +2700,19 @@ func build_interior() -> void:
 		pivot.position = Vector3(0, 0, 0.009)
 		dial.add_child(pivot)
 		var needle := MeshInstance3D.new()
-		needle.mesh = box_mesh(Vector3(0.005, 0.052, 0.003))
-		needle.position = Vector3(0, 0.024, 0)
+		needle.mesh = box_mesh(Vector3(0.004, 0.04, 0.003))
+		needle.position = Vector3(0, 0.018, 0)
 		needle.material_override = mat(Color(String((cab.get("dials", ["#f5b52e", "#e6e6e6", "#ff4a2a"]) as Array)[2])), 3.0)
 		pivot.add_child(needle)
 		_needles.append(pivot)
 	# digital readout between the dials, and the infotainment screen
 	_display = Label3D.new()
 	_display.font_size = 40
-	_display.pixel_size = 0.00055
+	_display.pixel_size = 0.00042
 	_display.modulate = Color(String((cab.get("dials", ["#f5b52e", "#e6e6e6", "#ff4a2a"]) as Array)[0])).lightened(0.25)
 	_display.outline_size = 0
-	_display.position = Vector3(ex, yd + 0.045, dzd + 0.652)
-	_display.rotation.x = -0.35
+	_display.position = Vector3(ex, y_dial, zf + 0.016)
+	_display.rotation.x = -dial_tilt
 	_body.add_child(_display)
 	_screen = Label3D.new()
 	_screen.font_size = 30
@@ -2651,7 +2731,7 @@ func build_interior() -> void:
 
 	# steering wheel: tilted column with a spinning rim, spokes, airbag hub and paddles
 	var tilt := Node3D.new()
-	tilt.position = Vector3(ex, yb - 0.1, dz + 0.8)
+	tilt.position = hub
 	tilt.rotation.x = 1.15  # wheel face points back at the driver and up
 	_body.add_child(tilt)
 	_steer_node = Node3D.new()
@@ -2661,7 +2741,7 @@ func build_interior() -> void:
 	rim.mesh = _rim_mesh(wheel_kind, cab.get("thin_rim", false))
 	rim.material_override = mats.leather
 	_steer_node.add_child(rim)
-	var spoke_mat: Material = mats.chrome if cab.get("spoke_metal", false) else mats.dash
+	var spoke_mat: Material = mat(Color("#6b7078"), 0.0, 0.5, 0.4) if cab.get("spoke_metal", false) else mats.dash
 	for a in cab.get("spokes", [0.0, PI, PI * 0.5]):  # 0 = right, PI = left, PI/2 = bottom
 		var ang := float(a)
 		var reach := 0.172
@@ -2673,18 +2753,18 @@ func build_interior() -> void:
 		spoke.rotation.y = -ang
 		spoke.material_override = spoke_mat
 		_steer_node.add_child(spoke)
-	var hub := MeshInstance3D.new()
+	var hubm := MeshInstance3D.new()
 	if cab.get("hub", "box") == "round":
 		var hm := CylinderMesh.new()
 		hm.top_radius = 0.058
 		hm.bottom_radius = 0.064
 		hm.height = 0.05
 		hm.radial_segments = 20
-		hub.mesh = hm
+		hubm.mesh = hm
 	else:
-		hub.mesh = box_mesh(Vector3(0.12, 0.05, 0.1))
-	hub.material_override = mats.dash
-	_steer_node.add_child(hub)
+		hubm.mesh = box_mesh(Vector3(0.12, 0.05, 0.1))
+	hubm.material_override = mats.dash
+	_steer_node.add_child(hubm)
 	var badge := MeshInstance3D.new()
 	badge.mesh = box_mesh(Vector3(0.03, 0.005, 0.02))
 	badge.position = Vector3(0, 0.028, 0)
@@ -2696,12 +2776,6 @@ func build_interior() -> void:
 		mk.position = Vector3(0, 0, -0.105 if wheel_kind == "yoke" else -0.172)
 		mk.material_override = mat(Color(String(cab.marker)), 0.6)
 		_steer_node.add_child(mk)
-	for sd in [-1.0, 1.0]:
-		var paddle := MeshInstance3D.new()
-		paddle.mesh = box_mesh(Vector3(0.05, 0.008, 0.08))
-		paddle.position = Vector3(sd * 0.13, -0.05, -0.02)
-		paddle.material_override = mats.alu
-		_steer_node.add_child(paddle)
 
 	# the driver: gloved hands on the rim at a quarter to three, arms that follow the wheel
 	var glove := mat(Color("#141416"), 0.0, 0.45)
@@ -2728,8 +2802,8 @@ func build_interior() -> void:
 		for k in 2:
 			var seg := MeshInstance3D.new()
 			var cyl := CylinderMesh.new()
-			cyl.top_radius = 0.024 if k == 0 else 0.03
-			cyl.bottom_radius = 0.027 if k == 0 else 0.033
+			cyl.top_radius = 0.022 if k == 0 else 0.027
+			cyl.bottom_radius = 0.025 if k == 0 else 0.03
 			cyl.height = 1.0
 			cyl.radial_segments = 10
 			seg.mesh = cyl
@@ -2738,7 +2812,7 @@ func build_interior() -> void:
 			_body.add_child(seg)
 			arm.append(seg)
 		_arms.append(arm)
-	_shoulders = [Vector3(ex - 0.2, eye.y - 0.24, ez + 0.16), Vector3(ex + 0.2, eye.y - 0.24, ez + 0.16)]
+	_shoulders = [Vector3(ex - 0.19, eye.y - 0.27, ez + 0.12), Vector3(ex + 0.19, eye.y - 0.27, ez + 0.12)]
 	_update_arms()
 
 	# gear lever on an H-pattern gate
@@ -2759,6 +2833,173 @@ func build_interior() -> void:
 	knob.position = Vector3(0, 0.15, 0)
 	knob.material_override = mats.leather
 	_lever.add_child(knob)
+
+
+var _inner: MeshInstance3D
+static var _inner_data := {}
+static var _inner_shader: Shader
+
+
+## Show the roof, pillars and door tops from inside: only in the cockpit view.
+func set_cabin_view(on: bool) -> void:
+	if _inner and _inner.visible != on:
+		_inner.visible = on
+
+
+## The body's own inner faces around the cabin, drawn from the driver's side:
+## the back faces of the roof, pillars and door panels, in headliner and trim.
+## Because they are the real bodywork they sit exactly where the car has them,
+## whatever the model, so nothing can poke through the roof or leave a gap.
+## tools/make_inner.py prepares the mesh and a smooth mask for each of the three
+## openings the driver looks out of (windscreen and the two front side windows),
+## so the shell is cut open along clean curves, not along the ragged edge of the
+## model's glass.
+func _inner_shell(liner: Color) -> MeshInstance3D:
+	if not _inner_data.has(_shape_id):
+		_inner_data[_shape_id] = _inner_load(_shape_id)
+	var data: Dictionary = _inner_data[_shape_id]
+	if data.is_empty():
+		return null
+	if _inner_shader == null:
+		_inner_shader = Shader.new()
+		_inner_shader.code = """shader_type spatial;
+render_mode cull_front, unshaded;
+uniform vec3 roof : source_color = vec3(0.25);
+uniform vec3 wall : source_color = vec3(0.12);
+uniform float dim = 1.0;
+uniform vec3 wc[3];
+uniform vec3 wn[3];
+uniform vec3 wu[3];
+uniform vec3 wv[3];
+uniform vec4 wr[3];
+uniform sampler2D mask0 : filter_linear, repeat_disable;
+uniform sampler2D mask1 : filter_linear, repeat_disable;
+uniform sampler2D mask2 : filter_linear, repeat_disable;
+varying vec3 lp;
+void vertex() { lp = VERTEX; }
+float opening(sampler2D m, vec3 p, int i) {
+	vec3 q = p - wc[i];
+	if (abs(dot(q, wn[i])) > 0.1) { return 0.0; }
+	vec2 t = vec2((dot(q, wu[i]) - wr[i].x) * wr[i].z, (dot(q, wv[i]) - wr[i].y) * wr[i].w);
+	if (t.x < 0.0 || t.y < 0.0 || t.x > 1.0 || t.y > 1.0) { return 0.0; }
+	return textureLod(m, t, 0.0).r;
+}
+void fragment() {
+	float w = max(opening(mask0, lp, 0), max(opening(mask1, lp, 1), opening(mask2, lp, 2)));
+	if (w > 0.5) { discard; }                               // a window opening
+	vec3 up = normalize((VIEW_MATRIX * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
+	vec3 fn = normalize(cross(dFdx(VERTEX), dFdy(VERTEX)));  // the face's own normal
+	float d = -abs(dot(fn, up));                            // about -1 on the roof, 0 on the pillars and doors
+	vec3 base = mix(wall, roof, 1.0 - smoothstep(-0.75, -0.25, d));
+	float lit = 0.8 + 0.25 * (1.0 - smoothstep(-3.2, -0.8, lp.z));  // brighter towards the windscreen
+	lit *= 0.82 + 0.18 * smoothstep(0.7, 1.15, lp.y);       // darker down by the door sills
+	ALBEDO = pow(base * lit, vec3(0.72)) * dim;             // lifted a little (the tone mapping crushes dark trim to black), dimmed at night
+}
+"""
+	var sm := ShaderMaterial.new()
+	sm.shader = _inner_shader
+	sm.set_shader_parameter("roof", liner)
+	sm.set_shader_parameter("wall", liner.darkened(0.45))
+	sm.set_shader_parameter("dim", lerpf(1.0, 0.2, night))
+	_mats["inner|%s" % _shape_id] = sm  # set_night dims it with the daylight
+	var wc := PackedVector3Array()
+	var wn := PackedVector3Array()
+	var wu := PackedVector3Array()
+	var wv := PackedVector3Array()
+	var wr := PackedVector4Array()
+	for k in 3:
+		var w = data.win[k]
+		if w == null:
+			wc.append(Vector3.ZERO)
+			wn.append(Vector3.ZERO)
+			wu.append(Vector3.ZERO)
+			wv.append(Vector3.ZERO)
+			wr.append(Vector4.ZERO)
+			sm.set_shader_parameter("mask%d" % k, _blank_mask())
+		else:
+			wc.append(w.c)
+			wn.append(w.n)
+			wu.append(w.u)
+			wv.append(w.v)
+			wr.append(w.r)
+			sm.set_shader_parameter("mask%d" % k, w.tex)
+	sm.set_shader_parameter("wc", wc)
+	sm.set_shader_parameter("wn", wn)
+	sm.set_shader_parameter("wu", wu)
+	sm.set_shader_parameter("wv", wv)
+	sm.set_shader_parameter("wr", wr)
+	var mi := MeshInstance3D.new()
+	mi.mesh = data.mesh
+	mi.material_override = sm
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	return mi
+
+
+static var _mirror_mat: StandardMaterial3D
+
+
+## The interior mirror's glass: pale sky over a dark road, with the horizon between.
+static func _mirror_glass() -> Material:
+	if _mirror_mat == null:
+		var img := Image.create(8, 24, false, Image.FORMAT_RGB8)
+		for y in 24:
+			var t := float(y) / 23.0
+			var c := Color("#8fa0b0").lerp(Color("#b4bec6"), t / 0.5) if t < 0.5 else Color("#4a4e54").lerp(Color("#2a2d32"), (t - 0.5) / 0.5)
+			if absf(t - 0.5) < 0.03:
+				c = Color("#8e979c")
+			for x in 8:
+				img.set_pixel(x, y, c)
+		_mirror_mat = StandardMaterial3D.new()
+		_mirror_mat.albedo_texture = ImageTexture.create_from_image(img)
+		_mirror_mat.albedo_color = Color.WHITE.lerp(Color(0.22, 0.22, 0.25), night)
+		_mirror_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	return _mirror_mat
+
+
+static var _blank: ImageTexture
+
+
+static func _blank_mask() -> ImageTexture:
+	if _blank == null:
+		_blank = ImageTexture.create_from_image(Image.create(1, 1, false, Image.FORMAT_R8))
+	return _blank
+
+
+## Loads a car's prepared inner shell (assets/models/inner/NAME.inner): its mesh
+## and the three window masks. Empty if the file is missing.
+static func _inner_load(id: String) -> Dictionary:
+	var path := "res://assets/models/inner/%s.inner" % String(PROFILES[id].mesh).get_file().get_basename()
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		push_warning("inner shell missing: %s" % path)
+		return {}
+	var nv := f.get_32()
+	var ni := f.get_32()
+	var pf := f.get_buffer(nv * 12).to_float32_array()
+	var P := PackedVector3Array()
+	P.resize(nv)
+	for i in nv:
+		P[i] = Vector3(pf[i * 3], pf[i * 3 + 1], pf[i * 3 + 2])
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = P
+	arrays[Mesh.ARRAY_INDEX] = f.get_buffer(ni * 4).to_int32_array()
+	var m := ArrayMesh.new()
+	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	var wins: Array = []
+	for k in 3:
+		if f.get_32() == 0:
+			wins.append(null)
+			continue
+		var v: PackedFloat32Array = PackedFloat32Array()
+		for j in 16:
+			v.append(f.get_float())
+		var w := f.get_16()
+		var h := f.get_16()
+		var img := Image.create_from_data(w, h, false, Image.FORMAT_R8, f.get_buffer(w * h))
+		wins.append({"c": Vector3(v[0], v[1], v[2]), "n": Vector3(v[3], v[4], v[5]), "u": Vector3(v[6], v[7], v[8]), "v": Vector3(v[9], v[10], v[11]),
+			"r": Vector4(v[12], v[13], 1.0 / v[14], 1.0 / v[15]), "tex": ImageTexture.create_from_image(img)})
+	return {"mesh": m, "win": wins}
 
 
 ## speed and rpm as 0..1 fractions of full scale.

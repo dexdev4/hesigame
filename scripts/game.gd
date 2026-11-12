@@ -2724,6 +2724,7 @@ func _update_camera(delta: float, mode: String) -> void:
 		cam.global_transform = player.model.body_node().global_transform * Transform3D(Basis.looking_at(Vector3(e.x * 0.6, e.y - 0.35, e.z - 0.7) - from), from)
 		return
 	if crash and state != S.REPLAY:
+		player.model.set_cabin_view(false)
 		_crash_cam_t += delta
 		# swing round from behind to a rear three-quarter view, then hold
 		# (towards the middle of the road, so it never ends up out on the verge)
@@ -2736,9 +2737,11 @@ func _update_camera(delta: float, mode: String) -> void:
 	cam.keep_aspect = Camera3D.KEEP_HEIGHT if land else Camera3D.KEEP_WIDTH
 	var fov_k := 0.82 if land else 1.0
 	var speed_k := clampf(player.v / 70.0, 0.0, 1.0)
-	var pitch := Basis(Vector3.RIGHT, deg_to_rad(cfg.angle))
+	# the cockpit looks a little lower than the road, so the wheel and dials are in view
+	var pitch := Basis(Vector3.RIGHT, deg_to_rad(float(cfg.angle) - ((4.0 if land else 1.0) if mode == "cockpit" else 0.0)))
 	cam_x = lerpf(cam_x, player.x * 0.62, minf(1.0, delta * 3.5))
 	sound.set_interior(mode == "cockpit")
+	player.model.set_cabin_view(mode == "cockpit")
 	if mode == "chase" and run and not run.pit.is_empty():
 		# at the fuel stop: drop under the canopy and follow the car right in
 		cam.near = 0.3

@@ -74,6 +74,7 @@ var _fuel_val: Label
 var _fuel_next: Label
 var _rf := {}
 var mirror: RearMirror
+var steer_bar: SteerBar
 var stick: FloatStick
 var _feed: VBoxContainer
 
@@ -594,6 +595,9 @@ func _build_play() -> void:
 	play_layer.add_child(stick)
 	arrows = ArrowPad.new()
 	play_layer.add_child(arrows)
+	steer_bar = SteerBar.new()
+	steer_bar.visible = false
+	play_layer.add_child(steer_bar)
 	mirror = RearMirror.new()
 	play_layer.add_child(mirror)
 	play_layer.move_child(mirror, 0)  # under the HUD band and pops
@@ -658,6 +662,14 @@ func set_speedo_visible(on: bool) -> void:
 	var spd: Control = _kmh.get_parent()
 	if spd.visible != on:
 		spd.visible = on
+
+
+## What the car is doing, drawn on whichever steering control is showing: where
+## its nose points and how hard its tyres are working.
+func set_feel(cmd: float, heading: float, load: float) -> void:
+	stick.set_feel(heading, load)
+	wheel.set_feel(heading, load)
+	steer_bar.set_feel(cmd, heading, load)
 
 
 func set_pedals(g: bool, b: bool) -> void:
@@ -1634,11 +1646,12 @@ func _build_settings() -> void:
 	_group(pc, "Steering")
 	_option_row(pc, "steer_mode", "Steering method", "Stick, swipe, on-screen wheel, left/right buttons or tilting the phone.")
 	_slider_row(pc, "steer_sens", "set", "save")
+	_option_row(pc, "steer_feel", "Steering response", "Relaxed, Standard or Sharp: how quickly the car answers. Try Sharp if it still feels slow.")
 	_option_row(pc, "assist", "Steering assist", "On: the car straightens up to the road when you let go. Off: it keeps its heading, like a real car.")
 	_option_row(pc, "tilt_invert", "Tilt direction", "Flip tilt steering if it feels backwards (tilt only).")
 	_group(pc, "Pedals and feel")
 	_slider_row(pc, "pedal_scale", "set", "save")
-	_option_row(pc, "haptics", "Vibration", "Buzz on near misses and crashes.")
+	_option_row(pc, "haptics", "Vibration", "Buzz on near misses and crashes, on the verge, and when the tyres reach their limit.")
 	pc.add_child(_button("EDIT ON-SCREEN LAYOUT", "amber", "pedal_edit"))
 	var pr := _row(12)
 	pc.add_child(pr)
@@ -1726,6 +1739,7 @@ func render_settings() -> void:
 		"shake": "ON" if Save.setting("shake") else "OFF", "sound": "ON" if Save.data.sound else "OFF",
 		"units": "MPH" if Save.setting("units") == "mph" else "KM/H",
 		"steer_mode": {"swipe": "SWIPE", "wheel": "WHEEL", "buttons": "BUTTONS", "tilt": "TILT", "stick": "STICK"}.get(Save.setting("steer_mode"), "SWIPE"),
+		"steer_feel": SteerModel.feel(Save.setting("steer_feel")).label,
 		"tilt_invert": "REVERSED" if Save.setting("tilt_invert") else "NORMAL",
 		"orientation": "LANDSCAPE" if Save.setting("orientation") == "landscape" else "PORTRAIT",
 		"gfx": String(Save.setting("gfx")).to_upper(),
@@ -1768,6 +1782,10 @@ func layout_pedals() -> void:
 	_place_pedal(brake, bsz, Save.setting("brake_pos"), brake_c, vp)
 	wheel.visible = mode == "wheel"
 	arrows.visible = mode == "buttons"
+	steer_bar.visible = mode == "tilt"
+	steer_bar.size = SteerBar.BAR_SIZE
+	# just above the speedometer block (which is 196 units tall, anchored 26 above the bottom edge)
+	steer_bar.position = Vector2(vp.x / 2.0 - steer_bar.size.x / 2.0, vp.y - _bottom - 196.0 - steer_bar.size.y - 4.0)
 	var wd := 250.0 * k
 	_place_pedal(wheel, Vector2(wd, wd), Save.setting("wheel_pos"), Vector2(26 + wd / 2.0, base_y - wd / 2.0), vp)
 	var asz := Vector2(280, 130) * k

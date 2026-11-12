@@ -30,6 +30,7 @@ const SETTING_DEFAULTS := {
 	"steer_sens": 1.0, "pedal_scale": 1.0, "haptics": true, "shake": true, "units": "kmh",
 	"gas_pos": [], "brake_pos": [], "wheel_pos": [], "arrows_pos": [],
 	"steer_mode": "swipe",        # swipe, wheel, buttons, tilt or stick
+	"steer_feel": "standard",     # relaxed, standard or sharp: how quickly the car answers the steering
 	"tilt_invert": false,
 	"orientation": "portrait",    # portrait or landscape; fixed, never follows the phone's sensor
 	"mirror": true,               # on-screen rear-view mirror

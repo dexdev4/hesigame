@@ -292,6 +292,7 @@ func _screen(name: String, bg := SIGN, width := 660.0) -> VBoxContainer:
 func show_screen(name: String) -> void:
 	for k in screens:
 		screens[k].visible = k == name
+	get_viewport().disable_3d = name == "map"  # the map covers the whole screen: nothing to draw behind it
 
 
 func _apply_safe_area() -> void:
@@ -365,6 +366,23 @@ func _layout_sheet(scr: Control, vp: Vector2, top: float, bottom: float) -> void
 		head.add_theme_constant_override("margin_top", int(20 + top))
 		head.add_theme_constant_override("margin_left", 22)
 		head.add_theme_constant_override("margin_right", 22)
+
+
+## The part of the screen (0..1 each way) the open menu leaves free for the 3D garage: above the panel in
+## portrait, to the left of it in landscape.
+func garage_free_rect() -> Rect2:
+	var vp := get_viewport().get_visible_rect().size
+	var scr: Control = null
+	for k in ["garage", "menu", "map"]:
+		if screens.has(k) and (screens[k] as Control).visible:
+			scr = screens[k]
+	if scr == null or not scr.has_meta("panel") or vp.x < 1.0 or vp.y < 1.0:
+		return Rect2(0.0, 0.1, 1.0, 0.5)
+	var r: Rect2 = (scr.get_meta("panel") as Control).get_global_rect()
+	if vp.y > vp.x:
+		var top := 0.13 if scr == screens.get("menu") else 0.07
+		return Rect2(0.0, top, 1.0, clampf(r.position.y / vp.y - top - 0.01, 0.2, 0.9))
+	return Rect2(0.0, 0.1, clampf(r.position.x / vp.x - 0.01, 0.3, 1.0), 0.86)
 
 
 ## True when a touch at pos lands on one of the sheet panels (not the 3D view).
@@ -956,7 +974,8 @@ func _build_menu() -> void:
 	var a := _stat("$0", "Cash", AMBER)
 	var b := _stat("0", "Best run")
 	for st in [a, b]:
-		(st[0] as Control).custom_minimum_size.x = 150
+		(st[0] as Control).custom_minimum_size.x = 200
+		(st[1] as Label).autowrap_mode = TextServer.AUTOWRAP_OFF  # (an amount that wraps reads as two numbers)
 		chips.add_child(st[0])
 	_menu["cash"] = a[1]
 	_menu["best"] = b[1]
@@ -1105,7 +1124,7 @@ func _build_map() -> void:
 	v.add_child(row)
 	var a := _stat("", "Country")
 	var b := _stat("", "Best here")
-	var c := _stat("", "Boss skill")
+	var c := _stat("", "Bosses")
 	for st in [a, b, c]:
 		row.add_child(st[0])
 	_map["land"] = a[1]
@@ -1135,10 +1154,7 @@ func render_map() -> void:
 		_map.info.text = "The last highway. Beat %s here to conquer the map." % Data.BOSSES[3].name
 	_map.land.text = String(r.land.title)
 	_map.best.text = Fmt.num(int(wm.best.get(str(i), 0)))
-	var keep := Data.route
-	Data.route = i
-	_map.skill.text = "+%d%%" % roundi((Data.route_scale() - 1.0) * 100.0)
-	Data.route = keep
+	_map.skill.text = Data.route_difficulty(i)
 	_map.progress.text = "%d OF %d HIGHWAYS OPEN" % [wm.unlocked, Data.ROUTES.size()]
 
 
@@ -1147,11 +1163,20 @@ func map_note(text: String) -> void:
 
 
 const GARAGE_TABS := [["cars", "CARS"], ["up", "UPGRADES"], ["paint", "PAINT"], ["wheels", "WHEELS"]]
+const CAR_TAGS := {"pulse": "HOT HATCH", "vector": "SPORT SALOON", "hornet": "COMPACT", "comet": "COUPE", "kestrel": "HOT HATCH",
+	"vanta": "SPORT SEDAN", "bruiser": "MUSCLE CAR", "halcyon": "SUPERCAR", "copperhead": "BOSS CAR · STAGE 1",
+	"marshal": "BOSS CAR · STAGE 2", "static": "BOSS CAR · STAGE 3", "lastexit": "BOSS CAR · STAGE 4"}
+const STAT_KEYS := [["accel", "ACCEL", 12.0], ["top", "TOP", 85.0], ["grip", "GRIP", 15.0], ["brake", "BRAKE", 14.0]]
+const GOOD := Color("#8be58b")
+const BAD := Color("#ff8a7a")
+
+var garage_view := ""  # the car being looked at on the cars tab ("" = the one you drive)
 
 
 func _build_garage() -> void:
 	var scr := _sheet_screen("garage")
 	var v := _bottom_panel(scr)
+	v.add_theme_constant_override("separation", 12)
 	var head := _row(10)
 	v.add_child(head)
 	var tv := VBoxContainer.new()
@@ -1159,7 +1184,7 @@ func _build_garage() -> void:
 	tv.add_theme_constant_override("separation", 0)
 	_garage["eyebrow"] = _eyebrow("Exit 12 · Service area")
 	tv.add_child(_garage.eyebrow)
-	_garage["title"] = _label("GARAGE", 54, LINE, display_font)
+	_garage["title"] = _label("GARAGE", 48, LINE, display_font)
 	tv.add_child(_garage.title)
 	head.add_child(tv)
 	var cv := VBoxContainer.new()
@@ -1168,17 +1193,22 @@ func _build_garage() -> void:
 	ce.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	cv.add_child(ce)
 	_garage["cash"] = _label("$0", 34, AMBER, mono_font)
+	_garage.cash.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	cv.add_child(_garage.cash)
 	head.add_child(cv)
-	var tabs := GridContainer.new()
-	tabs.columns = 4
-	tabs.add_theme_constant_override("h_separation", 8)
+	var tabs := _row(8)
 	v.add_child(tabs)
 	for t in GARAGE_TABS:
-		var tb := _button(t[1], "light", "tab", t[0])
+		var tb := Button.new()
+		tb.text = t[1]
+		tb.add_theme_font_override("font", display_font)
 		tb.add_theme_font_size_override("font_size", 22)
+		tb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var id: String = t[0]
+		tb.pressed.connect(func() -> void: act.emit("tab", id))
 		tabs.add_child(tb)
-		_garage["tab_" + t[0]] = tb
+		_garage["tab_" + id] = tb
+	v.add_child(_build_cars_page())
 	var scroll := ScrollContainer.new()
 	scroll.custom_minimum_size.y = 420
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -1190,31 +1220,122 @@ func _build_garage() -> void:
 	scroll.add_child(list)
 	_garage["list"] = list
 	_garage["scroll"] = scroll
-	v.add_child(_button("DONE", "light", "menu"))
+	var done := _button("DONE", "light", "menu")
+	done.add_theme_font_size_override("font_size", 28)
+	v.add_child(done)
+
+
+## The cars tab: one car at a time, with arrows to go through them all, its numbers against the car you drive
+## and a button for what you can do with it.
+func _build_cars_page() -> VBoxContainer:
+	var page := VBoxContainer.new()
+	page.add_theme_constant_override("separation", 10)
+	_garage["page_cars"] = page
+	var top := _row(10)
+	page.add_child(top)
+	top.add_child(_nav_button("‹", -1))
+	var nv := VBoxContainer.new()
+	nv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	nv.add_theme_constant_override("separation", 0)
+	_garage["meta"] = _eyebrow("")
+	_garage.meta.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	nv.add_child(_garage.meta)
+	_garage["name"] = _label("", 52, LINE, display_font)
+	_garage.name.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	nv.add_child(_garage.name)
+	top.add_child(nv)
+	top.add_child(_nav_button("›", 1))
+	_garage["blurb"] = _wrap("", 19, MUTED)
+	_garage.blurb.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_garage.blurb.max_lines_visible = 2
+	page.add_child(_garage.blurb)
+	_garage["fuel"] = _label("", 15, AMBER, mono_font)
+	_garage.fuel.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	page.add_child(_garage.fuel)
+	var grid := GridContainer.new()
+	grid.columns = 4
+	grid.add_theme_constant_override("h_separation", 12)
+	page.add_child(grid)
+	for sk in STAT_KEYS:
+		var cell := VBoxContainer.new()
+		cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		cell.add_theme_constant_override("separation", 3)
+		var lr := _row(4)
+		var lab := _label(sk[1], 13, MUTED, mono_font)
+		lab.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var dl := _label("", 13, MUTED, mono_font)
+		lr.add_child(lab)
+		lr.add_child(dl)
+		cell.add_child(lr)
+		var bar := _bar(_fill_white, 9)
+		cell.add_child(bar)
+		var val := _label("", 17, LINE, mono_font)
+		cell.add_child(val)
+		grid.add_child(cell)
+		_garage["st_" + String(sk[0])] = {"bar": bar, "val": val, "delta": dl}
+	# the one button: three looks (white, amber, outline) of which one shows
+	for kind in ["light", "amber", "ghost"]:
+		var b := _button("", kind, "")
+		b.add_theme_font_size_override("font_size", 32)
+		b.custom_minimum_size.y = 64
+		b.pressed.connect(func() -> void:
+			if String(_garage.get("act", "")) != "":
+				act.emit(_garage.act, _garage.get("act_arg", "")))
+		page.add_child(b)
+		_garage["btn_" + kind] = b
+	return page
+
+
+func _nav_button(text: String, dir: int) -> Button:
+	var b := _button(text, "ghost", "")
+	b.add_theme_font_size_override("font_size", 46)
+	b.custom_minimum_size = Vector2(76, 76)
+	b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	b.pressed.connect(func() -> void: browse(dir))
+	return b
+
+
+## The next (or previous) car on the cars tab: it comes up on the turntable.
+func browse(dir: int) -> void:
+	if clicks_blocked():
+		return  # (a drag that scrolled the menu must not also press the arrow it ended on)
+	var ids: Array = []
+	for c in Data.CARS:
+		ids.append(c.id)
+	var cur: String = garage_view if garage_view != "" else String(Save.data.selected)
+	var i := ids.find(cur)
+	garage_view = ids[(i + dir + ids.size()) % ids.size()]
+	act.emit("preview", garage_view)
+	render_garage()
 
 
 ## A colour chip button for the paint and wheel tabs.
 func _swatch(col: Color, caption: String, on: bool, action: String, arg: String) -> Button:
 	var b := Button.new()
-	b.custom_minimum_size = Vector2(0, 92)
+	b.custom_minimum_size = Vector2(0, 112)
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var sb := _flat(SIGN_DEEP, 12, AMBER if on else Color(LINE, 0.15), 4 if on else 2)
-	for k in ["normal", "hover", "pressed", "focus"]:
-		b.add_theme_stylebox_override(k, sb)
+	var clear := _flat(Color(1, 1, 1, 0.1) if on else Color(0, 0, 0, 0), 14)
+	var press := _flat(Color(1, 1, 1, 0.16), 14)
+	b.add_theme_stylebox_override("normal", clear)
+	b.add_theme_stylebox_override("hover", clear)
+	b.add_theme_stylebox_override("pressed", press)
+	b.add_theme_stylebox_override("focus", _flat(Color.TRANSPARENT, 14))
 	var vb := VBoxContainer.new()
 	vb.set_anchors_preset(Control.PRESET_FULL_RECT)
-	vb.offset_left = 10
-	vb.offset_right = -10
-	vb.offset_top = 10
-	vb.offset_bottom = -8
+	vb.offset_left = 4
+	vb.offset_right = -4
+	vb.offset_top = 8
+	vb.offset_bottom = -6
+	vb.add_theme_constant_override("separation", 8)
 	vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	b.add_child(vb)
 	var chip := Panel.new()
-	chip.custom_minimum_size.y = 40
-	chip.add_theme_stylebox_override("panel", _flat(col, 8, Color(0, 0, 0, 0.4), 2))
+	chip.custom_minimum_size = Vector2(64, 64)
+	chip.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	chip.add_theme_stylebox_override("panel", _flat(col, 32, AMBER if on else Color(1, 1, 1, 0.3), 5 if on else 2))
 	chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vb.add_child(chip)
-	var l := _label(caption, 15, LINE if on else MUTED, mono_font)
+	var l := _label(caption, 13, LINE if on else MUTED, mono_font)
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	l.clip_text = true
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1234,81 +1355,128 @@ func _card() -> Array:
 	return [p, vb]
 
 
+func _style_tab(b: Button, on: bool) -> void:
+	var sb := _flat(LINE if on else Color(0, 0, 0, 0.28), 12)
+	sb.set_content_margin_all(10)
+	var hover := sb.duplicate() as StyleBoxFlat
+	hover.bg_color = LINE.lightened(0.1) if on else Color(1, 1, 1, 0.1)
+	for k in ["normal", "pressed", "focus"]:
+		b.add_theme_stylebox_override(k, sb)
+	b.add_theme_stylebox_override("hover", hover)
+	for k in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
+		b.add_theme_color_override(k, SIGN_DEEP if on else Color(LINE, 0.72))
+
+
+## Ease a bar to a new value (or just set it when it is not on screen).
+func _tween_bar(bar: ProgressBar, v: float) -> void:
+	var old: Variant = bar.get_meta("tw", null)
+	if old is Tween and (old as Tween).is_valid():
+		(old as Tween).kill()
+	if not bar.is_visible_in_tree():
+		bar.value = v
+		return
+	var tw := bar.create_tween()
+	tw.tween_property(bar, "value", v, 0.35).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	bar.set_meta("tw", tw)
+
+
 func render_garage() -> void:
 	_garage.cash.text = "$" + Fmt.num(Save.data.cash)
-	for t in GARAGE_TABS:
-		(_garage["tab_" + t[0]] as Button).modulate = Color(1, 1, 1, 1) if garage_tab == t[0] else Color(1, 1, 1, 0.5)
+	if garage_tab != "cars" or garage_view == String(Save.data.selected):
+		garage_view = ""
 	var sel_car := Data.car_by_id(Save.data.selected)
-	_garage.title.text = "GARAGE" if garage_tab == "cars" else "WORKSHOP"
-	_garage.eyebrow.text = "EXIT 12 · SERVICE AREA" if garage_tab == "cars" else "WORKING ON · " + String(sel_car.name).to_upper()
+	for t in GARAGE_TABS:
+		_style_tab(_garage["tab_" + t[0]] as Button, garage_tab == t[0])
+	var on_cars := garage_tab == "cars"
+	_garage.title.text = "GARAGE" if on_cars else "WORKSHOP"
+	_garage.eyebrow.text = "EXIT 12 · SERVICE AREA" if on_cars else "WORKING ON · " + String(sel_car.name).to_upper()
+	(_garage.page_cars as Control).visible = on_cars
+	(_garage.scroll as Control).visible = not on_cars
+	if on_cars:
+		_render_cars_page(sel_car)
+	else:
+		_render_garage_list(sel_car)
+
+
+func _render_cars_page(cur: Dictionary) -> void:
+	var vc := Data.car_by_id(garage_view if garage_view != "" else String(cur.id))
+	var idx := 0
+	for i in Data.CARS.size():
+		if Data.CARS[i].id == vc.id:
+			idx = i
+	var owned := Save.owns(vc.id)
+	var sel: bool = cur.id == vc.id
+	var locked: bool = vc.boss >= 0 and not Save.is_unlocked(vc.id)
+	_garage.meta.text = "%d / %d  ·  %s" % [idx + 1, Data.CARS.size(), CAR_TAGS.get(vc.id, "")]
+	_garage.name.text = String(vc.name).to_upper()
+	_garage.blurb.text = vc.blurb if not locked else "Beat %s to put this car up for sale." % Data.BOSSES[vc.boss].name
+	_garage.fuel.text = "%s FUEL  ·  %d L TANK" % [String(Data.FUEL_GRADES[vc.get("fuel", "regular")].name).to_upper(), int(vc.get("tank", 45))]
+	for sk in STAT_KEYS:
+		var key: String = sk[0]
+		var value: float = vc[key]
+		var cell: Dictionary = _garage["st_" + key]
+		cell.val.text = ("%d km/h" % roundi(value * 3.6)) if key == "top" else ("%.1f" % value)
+		_tween_bar(cell.bar, clampf(value / float(sk[2]), 0.0, 1.0))
+		var d: float = value - float(cur[key])
+		var dl: Label = cell.delta
+		if sel or absf(d) < 0.04:
+			dl.text = ""
+		else:
+			var shown: float = d * 3.6 if key == "top" else d
+			dl.text = ("%+d" % roundi(shown)) if key == "top" else ("%+.1f" % shown)
+			dl.add_theme_color_override("font_color", GOOD if d > 0.0 else BAD)
+	# what the button does
+	var kind := "light"
+	var text := ""
+	var act_name := ""
+	var disabled := false
+	if sel:
+		kind = "ghost"
+		text = "✓  DRIVING"
+	elif owned:
+		text = "SELECT"
+		act_name = "select"
+	elif locked:
+		kind = "ghost"
+		text = "LOCKED"
+		disabled = true
+	else:
+		kind = "amber"
+		text = "BUY  $" + Fmt.num(vc.price)
+		act_name = "buy"
+		disabled = Save.data.cash < vc.price
+		if disabled:
+			text = "$" + Fmt.num(vc.price) + "  ·  NEED $" + Fmt.num(int(vc.price) - int(Save.data.cash)) + " MORE"
+	_garage["act"] = act_name
+	_garage["act_arg"] = vc.id
+	for k in ["light", "amber", "ghost"]:
+		var b: Button = _garage["btn_" + k]
+		b.visible = k == kind
+		if k == kind:
+			b.text = text
+			b.disabled = disabled
+			b.add_theme_font_size_override("font_size", 32 if text.length() < 18 else 22)
+			for ck in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
+				b.add_theme_color_override(ck, AMBER if sel else (LINE if k == "ghost" else (AMBER_INK if k == "amber" else SIGN_DEEP)))
+
+
+func _render_garage_list(sel_car: Dictionary) -> void:
 	var list: VBoxContainer = _garage.list
 	for ch in list.get_children():
 		list.remove_child(ch)
 		ch.queue_free()
-	if garage_tab == "cars":
-		for c in Data.CARS:
-			var owned := Save.owns(c.id)
-			var sel: bool = Save.data.selected == c.id
-			var locked: bool = c.boss >= 0 and not Save.is_unlocked(c.id)
-			var card := _card()
-			list.add_child(card[0])
-			var top := _row(12)
-			card[1].add_child(top)
-			var sw := ColorRect.new()
-			sw.color = Color(c.color)
-			sw.custom_minimum_size = Vector2(22, 22)
-			sw.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-			top.add_child(sw)
-			var nm := _label(String(c.name).to_upper(), 34, LINE, display_font)
-			nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			top.add_child(nm)
-			var btn: Button
-			if sel:
-				btn = _button("DRIVING", "light", "")
-				btn.disabled = true
-			elif owned:
-				btn = _button("SELECT", "light", "select", c.id)
-			elif locked:
-				btn = _button("LOCKED", "ghost", "")
-				btn.disabled = true
-			else:
-				btn = _button("$" + Fmt.num(c.price), "amber", "buy", c.id)
-				btn.disabled = Save.data.cash < c.price
-			btn.size_flags_horizontal = Control.SIZE_SHRINK_END
-			btn.add_theme_font_size_override("font_size", 26)
-			if not sel:
-				var vw := _button("VIEW", "ghost", "preview", c.id)
-				vw.size_flags_horizontal = Control.SIZE_SHRINK_END
-				vw.add_theme_font_size_override("font_size", 22)
-				top.add_child(vw)
-			top.add_child(btn)
-			var sub: String = c.blurb if not locked else "Beat %s to put this car up for sale." % Data.BOSSES[c.boss].name
-			card[1].add_child(_wrap(sub, 20, MUTED))
-			card[1].add_child(_label("%s FUEL  ·  %d L TANK" % [String(Data.FUEL_GRADES[c.get("fuel", "regular")].name).to_upper(), int(c.get("tank", 45))], 16, AMBER, mono_font))
-			var grid := GridContainer.new()
-			grid.columns = 4
-			grid.add_theme_constant_override("h_separation", 10)
-			card[1].add_child(grid)
-			var specs := [["ACCEL", c.accel / 12.0, "%.1f m/s²" % c.accel], ["TOP", c.top / 85.0, "%d km/h" % roundi(c.top * 3.6)],
-				["GRIP", c.grip / 15.0, "%.1f" % c.grip], ["BRAKE", c.brake / 14.0, "%.1f" % c.brake]]
-			for s in specs:
-				var sv := VBoxContainer.new()
-				sv.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-				sv.add_theme_constant_override("separation", 2)
-				sv.add_child(_label(s[0], 13, MUTED, mono_font))
-				sv.add_child(_label(s[2], 15, LINE, mono_font))
-				var bar := _bar(_fill_white, 7)
-				bar.value = clampf(s[1], 0.0, 1.0)
-				sv.add_child(bar)
-				grid.add_child(sv)
-	elif garage_tab == "paint":
+	if garage_tab == "paint":
 		var lk: Dictionary = Save.data.get("looks", {}).get(sel_car.id, {})
 		var cur: String = lk.get("color", "")
-		list.add_child(_wrap("Paint for your %s. The colour shows on the car straight away and is free." % sel_car.name, 20, MUTED))
+		var cur_name := "Factory"
+		for pnt in Data.PAINTS:
+			if pnt[1] == cur:
+				cur_name = pnt[0]
+		list.add_child(_wrap("Paint for your %s: %s. The colour shows on the car straight away and is free." % [sel_car.name, cur_name], 19, MUTED))
 		var grid := GridContainer.new()
-		grid.columns = 4
-		grid.add_theme_constant_override("h_separation", 10)
-		grid.add_theme_constant_override("v_separation", 10)
+		grid.columns = 5
+		grid.add_theme_constant_override("h_separation", 4)
+		grid.add_theme_constant_override("v_separation", 4)
 		list.add_child(grid)
 		for pnt in Data.PAINTS:
 			var hex: String = pnt[1]
@@ -1332,8 +1500,8 @@ func render_garage() -> void:
 		list.add_child(_eyebrow("Wheel finish"))
 		var cg := GridContainer.new()
 		cg.columns = 3
-		cg.add_theme_constant_override("h_separation", 10)
-		cg.add_theme_constant_override("v_separation", 10)
+		cg.add_theme_constant_override("h_separation", 4)
+		cg.add_theme_constant_override("v_separation", 4)
 		list.add_child(cg)
 		for rc in Data.RIM_COLORS:
 			cg.add_child(_swatch(Color(rc[1]), String(rc[0]).to_upper(), String(rc[1]).to_lower() == cur_col.to_lower(), "rim_color", rc[1]))
@@ -1347,7 +1515,7 @@ func render_garage() -> void:
 			list.add_child(card[0])
 			var top := _row(12)
 			card[1].add_child(top)
-			var nm := _label(String(p.name).to_upper(), 36, LINE, display_font)
+			var nm := _label(String(p.name).to_upper(), 32, LINE, display_font)
 			nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			top.add_child(nm)
 			var btn: Button
@@ -1360,7 +1528,7 @@ func render_garage() -> void:
 			btn.size_flags_horizontal = Control.SIZE_SHRINK_END
 			btn.add_theme_font_size_override("font_size", 26)
 			top.add_child(btn)
-			card[1].add_child(_wrap(p.desc, 20, MUTED))
+			card[1].add_child(_wrap(p.desc, 19, MUTED))
 			var pips := _row(6)
 			for i in p.max:
 				var r := ColorRect.new()
@@ -1368,7 +1536,13 @@ func render_garage() -> void:
 				r.color = AMBER if i < lv else Color(1, 1, 1, 0.18)
 				pips.add_child(r)
 			card[1].add_child(pips)
-		list.add_child(_wrap("Upgrades are fitted to your %s only. Every car is upgraded separately." % sel_car.name, 20, MUTED))
+		list.add_child(_wrap("Upgrades are fitted to your %s only. Every car is upgraded separately." % sel_car.name, 19, MUTED))
+	# the new page fades in
+	list.modulate.a = 0.0
+	if list.is_visible_in_tree():
+		list.create_tween().tween_property(list, "modulate:a", 1.0, 0.2)
+	else:
+		list.modulate.a = 1.0
 
 
 func _build_boss() -> void:
@@ -2193,7 +2367,7 @@ func _scroll_at(pos: Vector2) -> ScrollContainer:
 	for k in screens:
 		var scr: Control = screens[k]
 		if scr.visible:
-			if k == "garage" and (_garage.scroll as ScrollContainer).get_global_rect().has_point(pos):
+			if k == "garage" and (_garage.scroll as ScrollContainer).is_visible_in_tree() and (_garage.scroll as ScrollContainer).get_global_rect().has_point(pos):
 				return _garage.scroll
 			if scr.has_meta("sheet"):
 				return null

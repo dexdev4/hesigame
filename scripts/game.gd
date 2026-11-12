@@ -34,6 +34,7 @@ class Vehicle:
 	var is_cop := false
 	var id := 0
 	var yielding := false  # pulling over for the police
+	var hold_t := 0.0      # how long it has waited at the lane line for the lane it is moving into to clear
 	var shape_id := "sedan"  # which outline its hit box has (Data.SHAPES, HitShape)
 	var wreck: Wreck = null  # once it has been hit: a rigid body that slides and spins by itself (no longer driven)
 	var reach_h := 0.9       # how far it reaches sideways of its x right now, and where its rearmost point is along
@@ -109,6 +110,7 @@ class Run:
 	var b_next := 1.0
 	var b_info := {}
 	var b_skill := 0.0
+	var b_edge := 1.25     # how generously this boss's driving is scored (Data.boss_edge)
 	var b_combo := 0
 	var b_combo_t := 0.0
 	var b_speed_acc := 0.0
@@ -208,6 +210,7 @@ var _blur := 0.0
 var _blur_set := -1.0  # the speed blur last given to the shader
 var _test_crash := -1.0
 var _test_stage := 0
+var _test_boss_sk := -99.0  # --boss-sk=X: the skill every boss races at (below -50: not set)
 var _test_fuel := 1.0
 var _test_first_station := -1.0
 var station := {}       # the next fuel stop: {z, name, color, prices: {regular, mid, premium}}
@@ -276,6 +279,8 @@ func _ready() -> void:
 			_test_fuel = float(a.substr(7))
 		if a.begins_with("--start-stage="):  # begin runs at this stage (test aid)
 			_test_stage = int(a.substr(14))
+		if a.begins_with("--boss-sk="):  # every boss races at this skill, whatever the highway and stage (test aid)
+			_test_boss_sk = float(a.substr(10))
 		if a == "--godmode":  # infinite lives without saving it (test aid)
 			godmode = true
 		if a == "--hitboxes":  # draw every car's hit box (test aid)
@@ -356,6 +361,7 @@ func _ready() -> void:
 	hud = Hud.new()
 	add_child(hud)
 	hud.act.connect(_on_act)
+	garage.free_rect_fn = hud.garage_free_rect  # the garage camera frames the car in the part of the screen the menus leave free
 	_flash = ColorRect.new()
 	_flash.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_flash.color = Color(1, 0.24, 0.16, 0.0)
@@ -392,7 +398,7 @@ func _ready() -> void:
 		if a.begins_with("--open="):  # e.g. --open=garage or --open=garage:up
 			var parts := a.substr(7).split(":")
 			_on_act(parts[0], parts[1] if parts.size() > 1 else "")
-			if parts.size() > 1:
+			if parts.size() > 1 and parts[0] == "garage":
 				_on_act("tab", parts[1])
 
 
@@ -834,13 +840,21 @@ func _paint_id(c: Vehicle) -> void:
 			stack.append(ch)
 
 
-func _lane_open_for(c: Vehicle, nl: int) -> bool:
+## Is there room for c in lane nl? `tight`: making way for the police, which asks for less room than an
+## ordinary lane change (more only for a faster car coming up behind, or a slower one ahead).
+func _lane_open_for(c: Vehicle, nl: int, tight := false) -> bool:
 	var lx: float = Data.LANES[nl]
 	for o in traffic:
 		if o == c:
 			continue
-		if (absf(o.x - lx) < 2.6 or o.tlane == nl) and o.z + o.l > c.z - 14.0 and o.z < c.z + c.l + 16.0:
-			return false
+		if absf(o.x - lx) < 2.6 or o.tlane == nl:
+			var rear := 14.0
+			var front := 16.0
+			if tight:
+				rear = 5.0 + clampf((o.v - c.v) * 0.6, 0.0, 9.0)
+				front = 6.0 + clampf((c.v - o.v) * 0.5, 0.0, 8.0)
+			if o.z + o.l > c.z - rear and o.z < c.z + c.l + front:
+				return false
 	var others: Array[Vehicle] = [player]
 	if boss:
 		others.append(boss)
@@ -848,6 +862,95 @@ func _lane_open_for(c: Vehicle, nl: int) -> bool:
 		if absf(o.x - lx) < 2.6 and o.z + o.l > c.z - 24.0 and o.z < c.z + c.l + 14.0:
 			return false
 	return true
+
+
+## Test aid: count the cars that are driving through one another.
+func _count_overlaps() -> void:
+	for i in traffic.size():
+		var a := traffic[i]
+		if a.wreck:
+			continue
+		for j in range(i + 1, traffic.size()):
+			var b := traffic[j]
+			if not b.wreck and absf(a.x - b.x) < (a.w + b.w) / 2.0 - 0.3 and a.z < b.z + b.l - 0.3 and b.z < a.z + a.l - 0.3:
+				_overlaps += 1
+
+
+# ---------------------------------------------------------------- making way for the police
+
+const YIELD_ETA := 7.0   # a car starts to make way when the police car will be on it in this many seconds
+const YIELD_NEAR := 60.0 # ...or is this close behind it
+
+## Seconds until the police car behind reaches c, or 99 when it is not coming for it: c is in the lane
+## the police car is in, or the one it is moving to.
+func _cop_eta(c: Vehicle) -> float:
+	var dz := c.z - (boss.z + boss.l)
+	if dz < -1.0 or dz > 320.0:
+		return 99.0
+	if absf(c.x - boss.x) > 2.4 and absf(c.x - Data.LANES[boss.tlane]) > 2.4:
+		return 99.0
+	if dz < YIELD_NEAR:
+		return 0.0  # right behind it, whatever the speeds
+	return dz / maxf(boss.v - c.v, 1.5)
+
+
+## Is lane nl where the police car is, or where it is going?
+func _cop_claims(nl: int) -> bool:
+	return nl == boss.tlane or absf(Data.LANES[nl] - boss.x) < 2.4
+
+
+## Would a lane change of c into lane nl put it in front of the police car coming up behind?
+func _cop_coming_in(c: Vehicle, nl: int) -> bool:
+	var dz := c.z - (boss.z + boss.l)
+	return dz > -c.l - 1.0 and dz < 320.0 and _cop_claims(nl)
+
+
+## c is in the police car's way: move over (to the right if there is room, the way drivers do, else to the
+## left), and if no lane has room just now, line up with a gap in the next lane by speed. Returns the speed
+## c should go for to make that gap, or -1 when it should simply carry on.
+func _make_way(c: Vehicle) -> float:
+	var dirs := [1, -1] if c.lane < 3 else [-1, 1]
+	var lanes: Array[int] = []
+	for dl in dirs:
+		var nl: int = c.lane + dl
+		if nl >= 0 and nl < 4 and not (c.truck and nl < 2) and not _cop_claims(nl):
+			lanes.append(nl)
+			if _lane_open_for(c, nl, true):
+				c.tlane = nl
+				c.sig_t = 0.2
+				c.yielding = true
+				if autotest:
+					_yields += 1
+				return -1.0
+	# no room yet: which gap in a side lane is nearest to where c is, and how fast to go to meet it
+	var best_rel := 1e9
+	var best_v := -1.0
+	for nl in lanes:
+		var lx: float = Data.LANES[nl]
+		var cars: Array[Vehicle] = []
+		for o in traffic:
+			if o != c and (absf(o.x - lx) < 2.6 or o.tlane == nl) and o.z > c.z - 70.0 and o.z < c.z + 90.0:
+				cars.append(o)
+		cars.sort_custom(func(a: Vehicle, b: Vehicle) -> bool: return a.z < b.z)
+		for k in cars.size() + 1:
+			var lo := -1e9  # c's rear may go no further back than this (behind the car A before the gap)...
+			var hi := 1e9   # ...and no further forward than this (ahead of the car B after it)
+			var flow := c.v
+			if k > 0:
+				var a := cars[k - 1]
+				lo = a.z + a.l + 5.0 + clampf((a.v - c.v) * 0.6, 0.0, 9.0)
+				flow = a.v
+			if k < cars.size():
+				var b := cars[k]
+				hi = b.z - c.l - 6.0 - clampf((c.v - b.v) * 0.5, 0.0, 8.0)
+				flow = b.v if k == 0 else (flow + b.v) * 0.5
+			if hi < lo:
+				continue  # too small a gap for it
+			var rel := clampf(c.z, lo, hi) - c.z
+			if absf(rel) < absf(best_rel):
+				best_rel = rel
+				best_v = flow + clampf(rel / 2.0, -6.0, 4.0)
+	return best_v
 
 
 var _everyone: Array[Vehicle] = []  # every vehicle on the road, rebuilt by _update_traffic
@@ -905,6 +1008,10 @@ func _update_traffic(dt: float) -> void:
 						gap = g
 						lead = o
 		var want := c.cruise
+		if cop_on and c.tlane == c.lane and _cop_eta(c) < YIELD_ETA:
+			var yv := _make_way(c)  # (moves it over if it can, else the speed that lines it up with a gap)
+			if yv >= 0.0:
+				want = clampf(yv, 0.0, c.cruise * 1.2)
 		if lead and gap < 45.0:
 			want = minf(want, lead.v + (gap - 9.0) * 0.35)
 		var dv := want - c.v
@@ -915,27 +1022,13 @@ func _update_traffic(dt: float) -> void:
 		c.braking = dv < -0.6
 		c.z += c.v * dt
 		c.vx = 0.0
-		if c.tlane == c.lane and cop_on and _cop_behind(c):
-			# siren behind: get out of the way, to the right if there is room, else the left
-			var dirs := [1, -1] if c.lane < 3 else [-1, 1]
-			for dl in dirs:
-				var nl: int = c.lane + dl
-				if nl >= 0 and nl < 4 and not (c.truck and nl < 2) and _lane_open_for(c, nl):
-					c.tlane = nl
-					c.sig_t = 0.2
-					c.yielding = true
-					if autotest:
-						_yields += 1
-					break
-			if c.tlane == c.lane:
-				c.v = maxf(c.v - 2.0 * dt, c.cruise * 0.8)  # boxed in: ease off and let it squeeze by
 		if c.tlane == c.lane:
 			var stuck := lead != null and gap < 30.0 and lead.v < c.cruise - 2.0
 			c.lc_t -= dt * (1.0 + stage * 0.12) * (3.0 if stuck else 1.0)
 			if c.lc_t <= 0.0:
 				c.lc_t = randf_range(4.0, 11.0)
 				var nl := c.lane + (-1 if randf() < 0.5 else 1)
-				if nl >= 0 and nl < 4 and not (c.truck and nl < 2) and _lane_open_for(c, nl):
+				if nl >= 0 and nl < 4 and not (c.truck and nl < 2) and not (cop_on and _cop_coming_in(c, nl)) and _lane_open_for(c, nl):
 					c.tlane = nl
 					c.sig_t = 1.15
 		elif c.sig_t > 0.0:
@@ -943,18 +1036,31 @@ func _update_traffic(dt: float) -> void:
 		else:
 			var tx: float = Data.LANES[c.tlane]
 			var d := tx - c.x
-			var lat := 3.2 if c.yielding else 1.9  # quicker when moving over for the police
-			lat = minf(lat, c.v * 0.14)  # it can only drift over as fast as it rolls forward
-			var step := lat * dt * signf(d)
-			c.vx = lat * signf(d)
-			if absf(d) <= absf(step):
-				c.x = tx
-				c.lane = c.tlane
-				c.yielding = false
-			else:
-				c.x += step
+			var may_move := true
+			if absf(c.x - Data.LANES[c.lane]) < 1.7 and not _lane_open_for(c, c.tlane, true):
+				# the lane it is moving into has filled up while it signalled: wait at the line, or give up
+				c.hold_t += dt
+				if c.hold_t > 1.2:
+					c.tlane = c.lane
+					c.yielding = false
+					c.hold_t = 0.0
+				may_move = false
+			if may_move:
+				c.hold_t = 0.0
+				var lat := 3.2 if c.yielding else 1.9  # quicker when moving over for the police
+				lat = minf(lat, c.v * 0.14)  # it can only drift over as fast as it rolls forward
+				var step := lat * dt * signf(d)
+				c.vx = lat * signf(d)
+				if absf(d) <= absf(step):
+					c.x = tx
+					c.lane = c.tlane
+					c.yielding = false
+				else:
+					c.x += step
 	if wrecks > 0:
 		_wreck_contacts()
+	if autotest:
+		_count_overlaps()
 	for i in range(traffic.size() - 1, -1, -1):
 		var c := traffic[i]
 		var tail_z := player.z
@@ -1255,7 +1361,8 @@ func _start_boss() -> void:
 	run.b_total = Data.boss_total(run.stage)
 	run.b_next = 1.2
 	run.b_info = bi
-	run.b_skill = Data.boss_skill(run.stage)
+	run.b_skill = Data.boss_skill(run.stage) if _test_boss_sk < -50.0 else _test_boss_sk
+	run.b_edge = Data.boss_edge(run.stage)
 	run.b_combo = 0
 	run.b_combo_t = 0.0
 	run.b_speed_acc = 0.0
@@ -1438,7 +1545,7 @@ func _boss_score(b: Vehicle, dt: float, sk: float) -> void:
 	var mult := _boss_mult(sk)
 	# style points; scaled so the harder-driving bosses keep the same targets
 	# (about 6k for the first boss up to about 20k for the last over 2 km)
-	var flair := (lerpf(0.85, 1.25, minf(sk, 1.0)) + maxf(0.0, sk - 1.0) * 0.4) * lerpf(0.8, 0.55, minf(sk, 1.0)) * BOSS_EDGE
+	var flair := (lerpf(0.85, 1.25, minf(sk, 1.0)) + maxf(0.0, sk - 1.0) * 0.4) * lerpf(0.8, 0.55, minf(sk, 1.0)) * run.b_edge
 	if b.v > 33.0:
 		run.b_speed_acc += (b.v - 33.0) * 1.3 * dt * mult * flair
 		if run.b_speed_acc >= 1.0:
@@ -1510,7 +1617,7 @@ func _end_battle() -> void:
 	_boss_mood_end(6.0)
 	finish_z = -1.0
 	if autotest:
-		print("[autotest] boss race stage %d skill %.2f: you %d, %s %d %s" % [run.stage, run.b_skill, run.b_score, bi.full, run.b_rival, _bdbg])
+		print("[autotest] boss race route %d stage %d skill %.2f edge %.2f: you %d, %s %d %s" % [Data.route, run.stage, run.b_skill, run.b_edge, run.b_score, bi.full, run.b_rival, _bdbg])
 		_bdbg = {}
 	if run.b_score > run.b_rival:
 		run.bosses += 1
@@ -2362,12 +2469,17 @@ func _apply_boon(id: String) -> void:
 var _cop_aim := 0.0
 var _cop_think := 0.0
 var _yields := 0
+var _overlaps := 0      # test aid: frames in which two cars on the road were more than 30 cm inside each other
+var _cop_reach := -1.0  # test aid: seconds into the pursuit when the cop first came within 12 m
+var _cop_held := 0.0    # test aid: seconds the cop had a car in its way less than 25 m ahead
 const COP_CHANCE := 0.3   # chance that a boss trigger is a police pursuit instead
 const COP_TIME := 40.0    # seconds to survive to escape
+const COP_CLOSE := 9.0    # the most the police car gains on you, m/s (it was 16: on an open road it was on you in 4 s)
+const COP_ACCEL := 6.0    # how hard it accelerates, m/s² (was 10.5)
+const COP_GAP := 80.0     # how far behind you it starts, m
 const BOSS_WARN := 10.0   # seconds of warning before the boss or police arrives
 const MUSIC_START := 50.0  # seconds into the boss theme where it fades in
 const MUSIC_DB := -1.5      # boss theme volume
-const BOSS_EDGE := 1.25   # bosses score this much more than their driving alone earns (harder to beat)
 
 
 ## Police pursuit: a cop car comes up from behind and tries to ram you.
@@ -2381,8 +2493,8 @@ func _start_cop() -> void:
 	boss.lane = Data.nearest_lane(player.x)
 	boss.tlane = boss.lane
 	boss.x = Data.LANES[boss.lane]
-	boss.z = player.z - 70.0
-	boss.v = player.v + 6.0
+	boss.z = player.z - COP_GAP
+	boss.v = player.v + 5.0
 	boss.w = sh.w
 	boss.l = sh.l
 	boss.shape_id = "sedan"
@@ -2409,6 +2521,9 @@ func _start_cop() -> void:
 	run.phase = "cop"
 	run.cop_t = 0.0
 	run.siren_t = 0.0
+	_cop_reach = -1.0
+	_cop_held = 0.0
+	_yields = 0
 	run.cop_due = true
 	hud.banner("POLICE PURSUIT", "DON'T GET RAMMED FOR %d S · ESCAPE FOR +1 LIFE" % int(COP_TIME))
 	if autotest:
@@ -2418,6 +2533,8 @@ func _start_cop() -> void:
 ## Pursuit over (escaped or rammed): back to cruising, stage progress resets
 ## and the next trigger is the real boss.
 func _end_cop() -> void:
+	if autotest and run:
+		print("[autotest] cop pursuit: reached you after %s s, held up by traffic %.1f s, %d cars pulled over, over after %.1f s, cars overlapped %d frames" % ["%.1f" % _cop_reach if _cop_reach >= 0.0 else "never", _cop_held, _yields, run.cop_t, _overlaps])
 	_remove_boss()
 	_boss_mood_end(6.0)
 	run.phase = "cruise"
@@ -2433,13 +2550,18 @@ func _update_cop(dt: float) -> void:
 		tag.modulate.a = clampf((gap_to_player - 8.0) / 10.0, 0.0, 1.0)
 		tag.outline_modulate.a = tag.modulate.a
 	# close in fast, then match speed and push for contact
-	var want := player.v + clampf(gap_to_player * 0.45 + 2.5, -8.0, 16.0)  # keeps pushing at contact
+	var want := player.v + clampf(gap_to_player * 0.3 + 2.0, -8.0, COP_CLOSE)  # keeps pushing at contact
 	var lg := _boss_leader(b)
 	var lead: Vehicle = lg[0]
 	var gap: float = lg[1]
+	if autotest:
+		if lead and lead != player and gap < 25.0:
+			_cop_held += dt
+		if _cop_reach < 0.0 and gap_to_player < 12.0 and run:
+			_cop_reach = run.cop_t
 	if lead and lead != player and gap < 30.0:
 		want = minf(want, lead.v + (gap - 3.0) * 0.6)  # traffic in the way: brakes late behind it
-	b.v += clampf(want - b.v, -12.0 * dt, 10.5 * dt)
+	b.v += clampf(want - b.v, -12.0 * dt, COP_ACCEL * dt)
 	b.v = clampf(b.v, 0.0, 90.0)
 	b.z += b.v * dt
 	if lead and lead != player and b.z + b.l > lead.z - 0.3 and absf(lead.x - b.x) < (lead.w + b.w) / 2.0:
@@ -3679,13 +3801,16 @@ func _enter_garage(view_id := "") -> void:
 	if garage.car == null or garage.get_meta("car", "") != c.id + str(Save.car_color(c)) + str(Save.car_style(c)):
 		garage.set_car(c, Save.car_color(c), Save.car_style(c))
 		garage.set_meta("car", c.id + str(Save.car_color(c)) + str(Save.car_style(c)))
+	garage.focus(hud.garage_tab if state == S.GARAGE else "cars")
 	garage.set_active(true)
+	_sun.shadow_enabled = false  # the sun does not light the garage, but its shadow maps would still draw the car (twice)
 	sound.set_enabled(false)  # no engine drone in the garage
 
 
 func _leave_garage() -> void:
 	if garage.active:
 		garage.set_active(false)
+		_sun.shadow_enabled = Save.setting("gfx") != "low"
 		cam.current = true
 		sound.set_enabled(Save.data.sound)
 
@@ -3756,6 +3881,7 @@ func _on_act(action: String, arg: String) -> void:
 			_end_crash()
 			_free_retired()
 			state = S.GARAGE
+			hud.garage_view = ""  # it opens on the car you drive
 			if arg != "":
 				hud.garage_tab = arg
 			hud.render_garage()
@@ -3783,6 +3909,8 @@ func _on_act(action: String, arg: String) -> void:
 			_start_run()
 		"preview":
 			_enter_garage(arg)
+		"browse":
+			hud.browse(int(arg))  # the next (1) or the previous (-1) car in the garage
 		"paint", "rim", "rim_color", "rim_reset":
 			var key: String = {"paint": "color", "rim": "rim", "rim_color": "rim_color"}.get(action, "")
 			if action == "rim_reset":
@@ -4704,14 +4832,6 @@ func _pay_and_go() -> void:
 	hud.set_play_visible(true)
 	run.pit.step = "out"
 	run.dry_t = 0.0
-
-
-## The police are coming up behind this car in its lane, lights flashing.
-func _cop_behind(c: Vehicle) -> bool:
-	if boss == null or not boss.is_cop or run == null or run.phase != "cop":
-		return false
-	var dz := c.z - (boss.z + boss.l)
-	return dz > -1.0 and dz < 75.0 and absf(c.x - boss.x) < 2.4
 
 
 ## Open road ahead of b in a lane: distance to the first car there that is

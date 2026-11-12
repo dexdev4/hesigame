@@ -247,19 +247,43 @@ func boss_total(stage: int) -> int:
 	return int(roundi(5000.0 * pow(1.55, stage - 1) * route_scale() / 100.0) * 100 * target_scale)
 
 
-## How good a boss is at scoring, 0 (first boss) to about 1 (last boss).
-## Every lap of the four bosses adds more on top.
-func boss_skill(stage: int) -> float:
+## How far along the map a highway is: 0 for the first, 1 for the last.
+func route_t(r := -1) -> float:
+	return clampf(float(route if r < 0 else r) / float(ROUTES.size() - 1), 0.0, 1.0)
+
+
+## How good a boss is at scoring: 0 is a rookie, 1 an expert, more than that a legend. It climbs with the
+## highway (the bosses of the first highways are easy, those of the last are the hardest there are) and
+## from boss to boss along each highway, a little at first and more and more steeply further on. Every
+## lap of the four bosses (a highway goes on after its fourth) adds more on top.
+func boss_skill(stage: int, r := -1) -> float:
 	var i := (stage - 1) % BOSSES.size()
 	var tier := (stage - 1) / BOSSES.size()
-	return minf(0.2 + 0.3 * i + 0.28 * tier + 0.05 * route, 1.9)
+	var rt := route_t(r)
+	return minf(lerpf(0.0, 0.85, rt) + i * lerpf(0.1, 0.3, rt) + 0.28 * tier, 1.9)
+
+
+## How generously a boss's driving is scored (bosses score more than their driving alone earns, as a rival
+## that was just as good as you would be a coin toss). Low on the first highways, and 1.25 on the last.
+func boss_edge(stage: int, r := -1) -> float:
+	var tier := (stage - 1) / BOSSES.size()
+	return minf(lerpf(0.62, 1.25, pow(route_t(r), 0.8)) + 0.04 * tier, 1.25)
+
+
+const DIFFICULTY_NAMES := ["EASY", "EASY", "EASY", "MODERATE", "MODERATE", "MODERATE", "HARD", "HARD", "HARD",
+	"VERY HARD", "VERY HARD", "VERY HARD", "BRUTAL", "BRUTAL"]
+
+
+## What to call the bosses of highway i on the map.
+func route_difficulty(i: int) -> String:
+	return DIFFICULTY_NAMES[clampi(i, 0, DIFFICULTY_NAMES.size() - 1)]
 
 
 const SKILL_NAMES := ["ROOKIE", "SKILLED", "EXPERT", "LEGEND", "UNTOUCHABLE"]
 
 
 func boss_skill_name(stage: int) -> String:
-	return SKILL_NAMES[mini(int(boss_skill(stage) / 0.3), SKILL_NAMES.size() - 1)]
+	return SKILL_NAMES[clampi(int(boss_skill(stage) / 0.3), 0, SKILL_NAMES.size() - 1)]
 
 
 func boss_info(stage: int) -> Dictionary:

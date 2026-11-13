@@ -195,8 +195,8 @@ var _env: Environment
 var _hour := 14.0        # time of day in the game world (0..24); 1 real minute = 2 hours
 var _hour_lock := -1.0   # --hour test aid: hold the clock here
 var _lights := 0.0       # how much the cars' lights are on (0 day .. 1 night)
-var _music: AudioStreamPlayer
-var _music_tween: Tween
+var music: BossMusic        # the boss and police chase songs
+var _forced_song := -1      # --music=: always this song (test aid)
 var _head_spots: Array[SpotLight3D] = []
 var _sky: Sky
 var _sun: DirectionalLight3D
@@ -252,6 +252,8 @@ func _ready() -> void:
 	for a in args:
 		if a.begins_with("--quit-after="):
 			auto_quit = float(a.split("=")[1])
+		if a.begins_with("--music="):  # always this chase song: its number or part of its name (test aid)
+			_forced_song = BossMusic.find(a.substr(8))
 		if a.begins_with("--showroom"):
 			showroom = a.substr(11) if a.length() > 11 else "rear"
 		if a.begins_with("--inspect="):  # one car, camera orbiting it: ID:YAW:PITCH:DIST[:FOV] (test aid)
@@ -374,14 +376,13 @@ func _ready() -> void:
 		DirAccess.make_dir_recursive_absolute(_save_sfx_dir)
 		for k in sound._sfx:
 			(sound._sfx[k] as AudioStreamWAV).save_to_wav("%s/%s.wav" % [_save_sfx_dir, k])
-	_music = AudioStreamPlayer.new()
-	var ms: Variant = load("res://assets/audio/cold_iron_street.mp3")
-	if ms is AudioStreamMP3:
-		(ms as AudioStreamMP3).loop = true
-		(ms as AudioStreamMP3).loop_offset = MUSIC_START  # loops back to the same point
-	_music.stream = ms
-	_music.volume_db = -60.0
-	add_child(_music)
+	music = BossMusic.new()
+	music.enabled = Save.data.sound
+	music.forced = _forced_song
+	add_child(music)
+	if autotest:
+		music.started.connect(func(i: int) -> void:
+			print("[autotest] chase music: %s (song %d of %d, from %.1f s)" % [BossMusic.SONGS[i].name, i + 1, BossMusic.SONGS.size(), float(BossMusic.SONGS[i].start)]))
 
 	hud = Hud.new()
 	add_child(hud)
@@ -2053,7 +2054,7 @@ func _damage_work(delta: float) -> void:
 		var roll: float = pt.w * delta
 		pt.w = float(pt.w) * (1.0 - minf(1.0, 0.5 * delta))
 		node.position = Vector3(pos.x, pos.y, -(pos.z - player.z))
-		node.basis = node.basis.rotated(node.basis.x, -roll)
+		node.basis = node.basis.rotated(node.basis.x.normalized(), -roll)  # (the wheel has a scale: its own axis is not of unit length)
 		if pt.t > 7.0 or pos.z < player.z - 150.0 or pos.z > player.z + 400.0:
 			node.queue_free()
 			_parts.remove_at(k)
@@ -2721,8 +2722,6 @@ const COP_CLOSE := 9.0    # the most the police car gains on you, m/s (it was 16
 const COP_ACCEL := 6.0    # how hard it accelerates, m/s² (was 10.5)
 const COP_GAP := 80.0     # how far behind you it starts, m
 const BOSS_WARN := 10.0   # seconds of warning before the boss or police arrives
-const MUSIC_START := 50.0  # seconds into the boss theme where it fades in
-const MUSIC_DB := -1.5      # boss theme volume
 
 
 ## Police pursuit: a cop car comes up from behind and tries to ram you.
@@ -2859,24 +2858,14 @@ func _update_cop(dt: float) -> void:
 
 # ---------------------------------------------------------------- boss mood
 
-## Boss music in (a short fade) or out (over `fade` seconds).
+## The chase music in (one of the songs, at random, fading in) or out (over `fade` seconds).
 func _boss_music(on: bool, fade := 6.0) -> void:
-	if _music == null or _music.stream == null:
+	if music == null:
 		return
-	if _music_tween:
-		_music_tween.kill()
 	if on:
-		if not Save.data.sound:
-			return
-		if not _music.playing:
-			_music.volume_db = -40.0
-			_music.play(MUSIC_START)
-		_music_tween = create_tween()
-		_music_tween.tween_property(_music, "volume_db", MUSIC_DB, 2.5)
-	elif _music.playing:
-		_music_tween = create_tween()  # (a tween with nothing to do only draws a warning, so one is made only when there is a fade)
-		_music_tween.tween_property(_music, "volume_db", -60.0, fade).set_trans(Tween.TRANS_SINE)
-		_music_tween.tween_callback(_music.stop)
+		music.play()
+	else:
+		music.stop(fade)
 
 
 ## Afternoon (0) to dusk (1): the sun sinks and reddens, the sky darkens to a
@@ -4082,8 +4071,7 @@ func _pause() -> void:
 	if state != S.PLAY:
 		return
 	state = S.PAUSED
-	if _music:
-		_music.stream_paused = true
+	music.set_paused(true)
 	touches.clear()
 	key_gas = false
 	key_brake = false
@@ -4096,8 +4084,7 @@ func _resume() -> void:
 	if state != S.PAUSED:
 		return
 	state = S.PLAY
-	if _music:
-		_music.stream_paused = false
+	music.set_paused(false)
 	hud.show_screen("")
 	_calibrate_tilt()
 
@@ -4260,8 +4247,7 @@ func _on_act(action: String, arg: String) -> void:
 				"sound":
 					Save.data.sound = not Save.data.sound
 					sound.set_enabled(Save.data.sound)
-					if not Save.data.sound and _music:
-						_music.stop()
+					music.enabled = Save.data.sound  # (off: silence at once)
 				"assist":
 					Save.data.assist = not Save.data.assist
 				"steer_feel":

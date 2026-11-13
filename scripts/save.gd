@@ -14,7 +14,7 @@ func _ready() -> void:
 func defaults() -> Dictionary:
 	return {
 		"cash": 0, "best": 0, "runs": 0,
-		"owned": ["pulse"], "selected": "pulse", "unlocked": [],
+		"owned": ["pulse"], "selected": "pulse", "unlocked": [], "finishes": [],
 		"perm": {"accel": 0, "brake": 0, "handling": 0, "top": 0, "lives": 0},  # old shared upgrades (moved to perm_cars)
 		"perm_cars": {},  # car id -> {upgrade id: level}: each car is upgraded on its own
 		"sound": true, "assist": false, "free_steer": true, "looks": {},
@@ -112,6 +112,7 @@ func load_data() -> void:
 	if not parsed.has("free_steer"):
 		data.assist = false
 		data["free_steer"] = true
+	unlock_for_routes()  # (saves from before cars went on sale by highway)
 	# the starter car is always in the garage (older saves started with another car, which they keep)
 	if data.owned is Array and not data.owned.has("pulse"):
 		data.owned.insert(0, "pulse")
@@ -177,10 +178,30 @@ func car_color(c: Dictionary) -> Color:
 func car_style(c: Dictionary) -> Dictionary:
 	var st: Dictionary = (c.style as Dictionary).duplicate()
 	var lk: Dictionary = data.get("looks", {}).get(c.id, {})
-	for k in ["rim", "rim_color"]:
+	for k in ["rim", "rim_color", "finish"]:
 		if lk.has(k):
 			st[k] = lk[k]
 	return st
+
+
+## Has this paint finish been bought? (Gloss, the factory finish, always is.) A finish can go on any car.
+func finish_owned(id: String) -> bool:
+	return id == "" or int(Data.finish_by_id(id).price) <= 0 or (data.get("finishes") is Array and (data.finishes as Array).has(id))
+
+
+## Buy a finish for what it costs; false (and nothing taken) if there is not enough cash.
+func buy_finish(id: String) -> bool:
+	var f := Data.finish_by_id(id)
+	if finish_owned(id):
+		return true
+	if int(data.cash) < int(f.price):
+		return false
+	data.cash = int(data.cash) - int(f.price)
+	if not data.get("finishes") is Array:
+		data["finishes"] = []
+	(data.finishes as Array).append(id)
+	persist()
+	return true
 
 
 func set_look(id: String, key: String, value: String) -> void:
@@ -244,3 +265,16 @@ func owns(id: String) -> bool:
 
 func is_unlocked(id: String) -> bool:
 	return data.unlocked.has(id)
+
+
+## Put on sale every car whose highway has been cleared (Data.car_unlock_route): clearing highway r opens r + 1, so
+## `routes` (the highways open) is at least r + 2. Returns the cars that are new. A car already unlocked stays so.
+func unlock_for_routes() -> Array:
+	var fresh: Array = []
+	var open := int(data.get("routes", 1))
+	for c in Data.CARS:
+		var r: int = Data.car_unlock_route(c)
+		if r >= 0 and open >= r + 2 and not data.unlocked.has(c.id):
+			data.unlocked.append(c.id)
+			fresh.append(c.id)
+	return fresh

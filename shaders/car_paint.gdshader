@@ -18,6 +18,11 @@ uniform float reflect_f0 : hint_range(0.0, 1.0) = 0.04;  // reflectance head-on:
 uniform float metal_tint : hint_range(0.0, 1.0) = 0.0;   // reflections take the base colour (chrome, gold rims)
 uniform float flake : hint_range(0.0, 2.0) = 0.0;        // metallic flake glints
 uniform float flake_scale = 190.0;                       // flakes per metre
+uniform float flake_far = 3.2;                           // how far away the flakes still show (metres)
+uniform vec4 pearl_color : source_color = vec4(1.0, 1.0, 1.0, 1.0);  // pearlescent: the colour it turns to at a glancing view
+uniform float pearl : hint_range(0.0, 1.0) = 0.0;
+uniform float candy : hint_range(0.0, 1.0) = 0.0;        // candy: a deep tinted lacquer over bright metal
+uniform float sheen : hint_range(0.0, 1.0) = 0.0;        // matte and satin: a soft glow at glancing angles instead of reflections
 
 varying vec3 obj_p;
 
@@ -34,7 +39,17 @@ void vertex() {
 void fragment() {
 	vec3 ao = COLOR.rgb;
 	float occ = (ao.r + ao.g + ao.b) / 3.0;
-	ALBEDO = base_color.rgb * ao;
+	vec3 albedo = base_color.rgb;
+	float ndv0 = clamp(dot(NORMAL, VIEW), 0.0, 1.0);
+	if (pearl > 0.0) {
+		// a fine pearl layer in the paint: the colour turns towards the pearl hue as the panel turns away from the eye
+		float turn = pow(1.0 - ndv0, 2.6);
+		albedo = mix(albedo, pearl_color.rgb, clamp(turn * 0.75, 0.0, 1.0) * pearl);
+	}
+	if (candy > 0.0) {
+		albedo = mix(albedo, albedo * albedo * 1.7, candy);  // deeper and richer than the same colour in plain paint
+	}
+	ALBEDO = albedo * ao;
 	METALLIC = metallic;
 	ROUGHNESS = roughness;
 	CLEARCOAT = coat;
@@ -48,14 +63,21 @@ void fragment() {
 	float f = car_fresnel(reflect_f0, ndv);
 	float aa = clamp(fwidth(r_w.y) * 1.2, 0.002, 0.08) + roughness * roughness * 0.25;
 	vec3 env = car_environment(r_w, aa);
-	vec3 tint = mix(vec3(1.0), base_color.rgb, metal_tint);
+	vec3 tint = mix(vec3(1.0), albedo, metal_tint);
 	// less of the surroundings reaches surfaces deep in the arches and low down
 	EMISSION = env * tint * f * reflect_amount * mix(1.0, occ, 0.85);
+	if (candy > 0.0) {
+		// the bright metal under the lacquer glows through it in the middle of each panel, in the lacquer's colour
+		EMISSION += albedo * candy * 0.3 * pow(ndv0, 1.5) * occ;
+	}
+	if (sheen > 0.0) {
+		EMISSION += mix(env, vec3(1.0), 0.4) * albedo * sheen * pow(1.0 - ndv0, 3.0) * 0.3 * occ;
+	}
 
 	if (flake > 0.0) {
 		float dist = length(VERTEX);
 		// only up close: further away the flakes are smaller than a pixel and turn to noise
-		float fade = 1.0 - smoothstep(0.8, 3.2, dist);
+		float fade = 1.0 - smoothstep(flake_far * 0.25, flake_far, dist);
 		if (fade > 0.0) {
 			vec3 cell = floor(obj_p * flake_scale);
 			vec3 tilt = vec3(hash13(cell), hash13(cell + 19.19), hash13(cell + 47.7)) * 2.0 - 1.0;

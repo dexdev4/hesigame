@@ -125,6 +125,7 @@ func _ready() -> void:
 	_sfx["whoosh"] = _make_whoosh()
 	_sfx["crash"] = _make_crash()
 	_sfx["ding"] = _make_ding()
+	_sfx["tick"] = _make_tick()
 	_sfx["chime"] = _make_chime()
 	_sfx["blowoff"] = _make_blowoff()
 	_sfx["siren"] = _make_siren()
@@ -554,6 +555,16 @@ func _level(buf: PackedFloat32Array, peak: float) -> PackedFloat32Array:
 
 
 ## The scoring sound: one soft, glassy bell (G5; the game plays it higher up the pentatonic scale as the combo grows).
+## The sound of a menu button going down: a short, soft, dry tick.
+func _make_tick() -> AudioStreamWAV:
+	var buf := PackedFloat32Array()
+	buf.resize(int(SFX_RATE * 0.06))
+	for i in buf.size():
+		var t := float(i) / SFX_RATE
+		buf[i] = (sin(TAU * 1750.0 * t) * 0.7 + sin(TAU * 2630.0 * t) * 0.3) * exp(-t * 110.0) * minf(1.0, t * 900.0)
+	return _wav(_level(buf, 0.2), SFX_RATE)
+
+
 func _make_ding() -> AudioStreamWAV:
 	var buf := PackedFloat32Array()
 	buf.resize(int(SFX_RATE * 0.5))

@@ -209,7 +209,18 @@ func _button(text: String, kind: String, action: String, arg := "") -> Button:
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	if action != "":
 		b.pressed.connect(func() -> void: act.emit(action, arg))
+	_juice(b)
 	return b
+
+
+## A button gives a little under the finger and springs back, and ticks.
+func _juice(b: Button) -> void:
+	b.button_down.connect(func() -> void:
+		b.pivot_offset = b.size / 2.0
+		b.create_tween().tween_property(b, "scale", Vector2(0.955, 0.955), 0.05)
+		act.emit("_tick", ""))
+	b.button_up.connect(func() -> void:
+		b.create_tween().tween_property(b, "scale", Vector2.ONE, 0.18).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT))
 
 
 func _stat(value: String, caption: String, value_color := LINE) -> Array:
@@ -272,7 +283,7 @@ func _screen(name: String, bg := SIGN, width := 660.0) -> VBoxContainer:
 	margin.set_meta("max_w", width)
 	scroll.add_child(margin)
 	var column := VBoxContainer.new()
-	column.alignment = BoxContainer.ALIGNMENT_CENTER
+	column.alignment = BoxContainer.ALIGNMENT_BEGIN if name == "settings" else BoxContainer.ALIGNMENT_CENTER  # (settings: the title does not jump between tabs of different lengths)
 	margin.add_child(column)
 	var panel := PanelContainer.new()
 	panel.add_theme_stylebox_override("panel", _sign_style(bg))
@@ -288,8 +299,23 @@ func _screen(name: String, bg := SIGN, width := 660.0) -> VBoxContainer:
 
 func show_screen(name: String) -> void:
 	for k in screens:
-		screens[k].visible = k == name
+		var scr: Control = screens[k]
+		if k == name and not scr.visible:
+			_screen_in(scr)
+		scr.visible = k == name
 	get_viewport().disable_3d = name == "map"  # the map covers the whole screen: nothing to draw behind it
+
+
+## A menu screen that opens fades in, and its panel settles from a touch smaller.
+func _screen_in(scr: Control) -> void:
+	scr.modulate.a = 0.0
+	var tw := scr.create_tween().set_parallel(true)
+	tw.tween_property(scr, "modulate:a", 1.0, 0.2)
+	if scr.has_meta("panel"):
+		var panel: Control = scr.get_meta("panel")
+		panel.pivot_offset = Vector2(panel.size.x / 2.0, panel.size.y)
+		panel.scale = Vector2(0.975, 0.975)
+		tw.tween_property(panel, "scale", Vector2.ONE, 0.26).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 
 
 func _apply_safe_area() -> void:
@@ -1270,6 +1296,20 @@ const GOOD := Color("#8be58b")
 const BAD := Color("#ff8a7a")
 
 var garage_view := ""  # the car being looked at on the cars tab ("" = the one you drive)
+var browse_dir := 0    # which way the last browse went (1 next, -1 previous): the garage slides the car in from that side
+var _swipe := {}       # a finger that may be swiping across the cars page
+var _garage_msg := ""  # a line shown once at the top of the paint tab ("need $110 more")
+
+
+## Test aid (--open=scroll:PIXELS): scroll the workshop's list.
+func scroll_garage(px: int) -> void:
+	get_tree().create_timer(0.6).timeout.connect(func() -> void: (_garage.scroll as ScrollContainer).scroll_vertical = px)  # (once the page has its size)
+
+
+## Say something once on the paint tab (a finish that could not be bought).
+func garage_say(text: String) -> void:
+	_garage_msg = text
+	render_garage()
 
 
 func _build_garage() -> void:
@@ -1344,6 +1384,17 @@ func _build_cars_page() -> VBoxContainer:
 	nv.add_child(_garage.name)
 	top.add_child(nv)
 	top.add_child(_nav_button("›", 1))
+	var dots := HBoxContainer.new()  # one dot for every car: where you are in the list, and what you have
+	dots.alignment = BoxContainer.ALIGNMENT_CENTER
+	dots.add_theme_constant_override("separation", 7)
+	dots.custom_minimum_size.y = 14
+	for i in Data.CARS.size():
+		var dot := Panel.new()
+		dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		dots.add_child(dot)
+	_garage["dots"] = dots
+	page.add_child(dots)
 	_garage["blurb"] = _wrap("", 19, MUTED)
 	_garage.blurb.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_garage.blurb.max_lines_visible = 2
@@ -1404,14 +1455,193 @@ func browse(dir: int) -> void:
 	var cur: String = garage_view if garage_view != "" else String(Save.data.selected)
 	var i := ids.find(cur)
 	garage_view = ids[(i + dir + ids.size()) % ids.size()]
+	browse_dir = dir
 	act.emit("preview", garage_view)
 	render_garage()
 
 
-## A colour chip button for the paint and wheel tabs.
-func _swatch(col: Color, caption: String, on: bool, action: String, arg: String) -> Button:
+## A swipe sideways across the cars page (that does not start on a button) goes to the next car, or the previous
+## one: the car follows the finger, so a swipe to the left brings the next one in from the right.
+func _swipe_event(event: InputEvent) -> void:
+	if garage_tab != "cars" or not screens.has("garage") or not (screens.garage as Control).visible or not _garage.has("page_cars"):
+		_swipe = {}
+		return
+	if event is InputEventScreenTouch:
+		var e := event as InputEventScreenTouch
+		var page := _garage.page_cars as Control
+		if e.pressed:
+			if page.visible and page.get_global_rect().has_point(e.position) and not _over_button(page, e.position):
+				_swipe = {"i": e.index, "x": e.position.x, "y": e.position.y, "t": Time.get_ticks_msec()}
+		elif not _swipe.is_empty() and e.index == _swipe.i:
+			var dx: float = e.position.x - float(_swipe.x)
+			var dy: float = e.position.y - float(_swipe.y)
+			var quick := Time.get_ticks_msec() - int(_swipe.t) < 900
+			_swipe = {}
+			if quick and absf(dx) > 70.0 and absf(dx) > absf(dy) * 1.5:
+				browse(1 if dx < 0.0 else -1)
+
+
+## Test aid (--open-at=SECONDS:swipe:-1 or 1): a finger swipes across the car's name on the cars page, to the left (-1) or right.
+func test_swipe(dir: int) -> void:
+	var r := (_garage.name as Control).get_global_rect()
+	var y := r.get_center().y
+	var x0 := r.get_center().x - float(dir) * 110.0
+	var to_window := get_viewport().get_final_transform()  # (an event is given in the window's pixels, and arrives in the menu's)
+	for pe in [[x0, true], [x0 + float(dir) * 220.0, false]]:
+		var t := InputEventScreenTouch.new()
+		t.index = 0
+		t.position = to_window * Vector2(float(pe[0]), y)
+		t.pressed = bool(pe[1])
+		Input.parse_input_event(t)
+
+
+func _over_button(n: Node, pos: Vector2) -> bool:
+	for ch in n.get_children():
+		if ch is Button and (ch as Button).is_visible_in_tree() and (ch as Button).get_global_rect().has_point(pos):
+			return true
+		if _over_button(ch, pos):
+			return true
+	return false
+
+
+## A little drawing of a wheel design, for the buttons of the Wheels tab.
+class WheelIcon extends Control:
+	var design := "5spoke"
+	var rim := Color("#c3c8ce")
+	var ring := Color(1, 1, 1, 0.26)  # the ring round it
+	var ring_width := 2.0
+	## n spokes of w0 wide at the hub and w1 at the rim (a fraction of the wheel's radius), swept by `twist` on the way.
+	const SPOKES := {
+		"5spoke": {"n": 5, "w0": 0.16, "w1": 0.3}, "multi": {"n": 10, "w0": 0.08, "w1": 0.11}, "mesh": {"n": 10, "w0": 0.06, "w1": 0.07, "pair": 0.34},
+		"turbine": {"n": 14, "w0": 0.08, "w1": 0.17, "twist": 0.42}, "double": {"n": 5, "w0": 0.08, "w1": 0.1, "pair": 0.11},
+		"blade": {"n": 7, "w0": 0.09, "w1": 0.26, "twist": 0.75}, "tri": {"n": 3, "w0": 0.3, "w1": 0.55}, "star": {"n": 8, "w0": 0.09, "w1": 0.24},
+		"deep": {"n": 6, "w0": 0.17, "w1": 0.27},
+	}
+
+	func _spoke(c: Vector2, rad: float, ang: float, twist: float, r0: float, r1: float, w0: float, w1: float, col: Color) -> void:
+		var a0 := ang - PI / 2.0  # (angle 0 is straight up)
+		var a1 := a0 + twist
+		var u0 := Vector2(cos(a0), sin(a0))
+		var u1 := Vector2(cos(a1), sin(a1))
+		var t0 := Vector2(-u0.y, u0.x)
+		var t1 := Vector2(-u1.y, u1.x)
+		var p0 := c + u0 * rad * r0
+		var p1 := c + u1 * rad * r1
+		draw_colored_polygon(PackedVector2Array([p0 - t0 * rad * w0 / 2.0, p0 + t0 * rad * w0 / 2.0, p1 + t1 * rad * w1 / 2.0, p1 - t1 * rad * w1 / 2.0]), col)
+
+	func _draw() -> void:
+		var c := size / 2.0
+		var rad := minf(size.x, size.y) / 2.0 - 4.0
+		var dark := Color("#0c0d0f")
+		var metal := rim.lerp(Color.WHITE, 0.08) if rim.get_luminance() > 0.12 else rim.lightened(0.45)
+		draw_circle(c, rad, Color("#16171a"))                  # the tyre
+		draw_circle(c, rad * 0.74, dark)                       # the dark behind the spokes
+		match design:
+			"steel":
+				draw_circle(c, rad * 0.72, metal.darkened(0.3))
+				for k in 6:
+					draw_circle(c + Vector2.from_angle(TAU * k / 6.0) * rad * 0.46, rad * 0.06, dark)
+			"aero":
+				draw_circle(c, rad * 0.72, metal.darkened(0.12))
+				for k in 8:
+					_spoke(c, rad, TAU * k / 8.0, 0.0, 0.46, 0.7, 0.12, 0.12, dark)
+			"vent":
+				draw_circle(c, rad * 0.72, metal.darkened(0.12))
+				for k in 12:
+					draw_circle(c + Vector2.from_angle(TAU * k / 12.0) * rad * 0.58, rad * 0.055, dark)
+				for k in 6:
+					draw_circle(c + Vector2.from_angle(TAU * k / 6.0 + 0.26) * rad * 0.34, rad * 0.045, dark)
+			"wire":
+				for k in 28:
+					_spoke(c, rad, TAU * k / 28.0, 0.5 if k % 2 == 0 else -0.5, 0.12, 0.7, 0.025, 0.03, metal)
+			"split":
+				for k in 5:
+					var a := TAU * k / 5.0
+					_spoke(c, rad, a, 0.0, 0.1, 0.42, 0.17, 0.12, metal)
+					for tw in [-0.3, 0.3]:
+						_spoke(c, rad, a, tw, 0.4, 0.7, 0.1, 0.14, metal)
+			_:
+				var sp: Dictionary = SPOKES.get(design, SPOKES["5spoke"])
+				var n := int(sp.n)
+				for k in n:
+					var base := TAU * k / n
+					if sp.has("pair"):
+						for tw in [-float(sp.pair), float(sp.pair)]:
+							_spoke(c, rad, base + tw * 0.4, tw * 0.6, 0.12, 0.7, float(sp.w0), float(sp.w1), metal)
+					else:
+						_spoke(c, rad, base, float(sp.get("twist", 0.0)), 0.12, 0.7, float(sp.w0), float(sp.w1), metal)
+		draw_arc(c, rad * 0.72, 0.0, TAU, 48, metal, maxf(2.0, rad * 0.075))  # the lip of the rim
+		draw_circle(c, rad * 0.14, metal.lightened(0.1))                      # the hub
+		draw_circle(c, rad * 0.06, dark)
+		draw_arc(c, rad + 2.0, 0.0, TAU, 48, ring, ring_width)
+
+
+static var _ball_shader: Shader
+
+
+## A little ball in a colour and a finish (shaders/finish_ball.gdshader, finish as an index into Data.FINISHES, 7 for an
+## alloy wheel): the picture on a swatch. `dim`: a finish that has not been bought yet.
+func _ball(col: Color, finish: int, on: bool, size := 76.0, dim := false) -> Control:
+	if _ball_shader == null:
+		_ball_shader = load("res://shaders/finish_ball.gdshader")
+	var rect := ColorRect.new()
+	rect.custom_minimum_size = Vector2(size, size)
+	rect.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var m := ShaderMaterial.new()
+	m.shader = _ball_shader
+	m.set_shader_parameter("base", col)
+	m.set_shader_parameter("finish", finish)
+	m.set_shader_parameter("ring", AMBER if on else Color(1, 1, 1, 0.26))
+	m.set_shader_parameter("ring_width", 0.1 if on else 0.045)
+	m.set_shader_parameter("dim", 1.0 if dim else 0.0)
+	rect.material = m
+	return rect
+
+
+## A wheel design button: a drawing of the wheel (in the rim colour) and its name.
+func _wheel_btn(design: String, caption: String, on: bool, rim: Color) -> Button:
 	var b := Button.new()
 	b.custom_minimum_size = Vector2(0, 112)
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var clear := _flat(Color(1, 1, 1, 0.1) if on else Color(0, 0, 0, 0), 14)
+	b.add_theme_stylebox_override("normal", clear)
+	b.add_theme_stylebox_override("hover", clear)
+	b.add_theme_stylebox_override("pressed", _flat(Color(1, 1, 1, 0.16), 14))
+	b.add_theme_stylebox_override("focus", _flat(Color.TRANSPARENT, 14))
+	var vb := VBoxContainer.new()
+	vb.set_anchors_preset(Control.PRESET_FULL_RECT)
+	vb.offset_left = 4
+	vb.offset_right = -4
+	vb.offset_top = 8
+	vb.offset_bottom = -6
+	vb.add_theme_constant_override("separation", 8)
+	vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	b.add_child(vb)
+	var icon := WheelIcon.new()
+	icon.design = design
+	icon.rim = rim
+	icon.ring = AMBER if on else Color(1, 1, 1, 0.26)
+	icon.ring_width = 4.0 if on else 2.0
+	icon.custom_minimum_size = Vector2(76, 76)
+	icon.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vb.add_child(icon)
+	var l := _label(caption, 13, LINE if on else MUTED, mono_font)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.clip_text = true
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	vb.add_child(l)
+	b.pressed.connect(func() -> void: act.emit("rim", design))
+	_juice(b)
+	return b
+
+
+## A colour chip button for the paint and wheel tabs: a ball in the colour (in `finish`), its name and, if there is
+## one, a line under it (the price of a finish, say).
+func _swatch(col: Color, caption: String, on: bool, action: String, arg: String, finish := 7, sub := "", sub_color := MUTED, dim := false) -> Button:
+	var b := Button.new()
+	b.custom_minimum_size = Vector2(0, 124 if sub != "" else 112)
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var clear := _flat(Color(1, 1, 1, 0.1) if on else Color(0, 0, 0, 0), 14)
 	var press := _flat(Color(1, 1, 1, 0.16), 14)
@@ -1428,18 +1658,19 @@ func _swatch(col: Color, caption: String, on: bool, action: String, arg: String)
 	vb.add_theme_constant_override("separation", 8)
 	vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	b.add_child(vb)
-	var chip := Panel.new()
-	chip.custom_minimum_size = Vector2(64, 64)
-	chip.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	chip.add_theme_stylebox_override("panel", _flat(col, 32, AMBER if on else Color(1, 1, 1, 0.3), 5 if on else 2))
-	chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	vb.add_child(chip)
+	vb.add_child(_ball(col, finish, on, 76.0, dim))
 	var l := _label(caption, 13, LINE if on else MUTED, mono_font)
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	l.clip_text = true
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vb.add_child(l)
+	if sub != "":
+		var sl := _label(sub, 14, sub_color, mono_font)
+		sl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		sl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		vb.add_child(sl)
 	b.pressed.connect(func() -> void: act.emit(action, arg))
+	_juice(b)
 	return b
 
 
@@ -1510,7 +1741,26 @@ func _render_cars_page(cur: Dictionary) -> void:
 	var vw := Save.wear(String(vc.id))
 	_garage.meta.text = "%d / %d  ·  %s%s" % [idx + 1, Data.CARS.size(), CAR_TAGS.get(vc.id, ""), ("  ·  DAMAGED %d%%" % roundi(vw * 100.0)) if vw >= 0.02 else ""]
 	_garage.name.text = String(vc.name).to_upper()
-	_garage.blurb.text = vc.blurb if not locked else "Beat %s to put this car up for sale." % Data.BOSSES[vc.boss].name
+	var dot_row := _garage.dots as HBoxContainer
+	for i in dot_row.get_child_count():
+		var dc: Dictionary = Data.CARS[i]
+		var here: bool = i == idx
+		var d_owned := Save.owns(dc.id)
+		var d_locked: bool = dc.boss >= 0 and not Save.is_unlocked(dc.id)
+		var sz := 12.0 if here else 8.0
+		var col := AMBER if here else (Color(LINE, 0.9) if d_owned else (Color(1, 1, 1, 0.16) if d_locked else Color(1, 1, 1, 0.42)))
+		var dsb := _flat(col, 6)
+		if d_locked and not here:
+			dsb = _flat(Color.TRANSPARENT, 6, Color(1, 1, 1, 0.3), 1)
+		(dot_row.get_child(i) as Panel).custom_minimum_size = Vector2(sz, sz)
+		(dot_row.get_child(i) as Panel).add_theme_stylebox_override("panel", dsb)
+	var gate := Data.car_unlock_route(vc)
+	if not locked:
+		_garage.blurb.text = vc.blurb
+	elif gate >= 0:
+		_garage.blurb.text = "Clear highway %d, %s, to put this car up for sale." % [gate + 1, Data.route_info(gate).title]
+	else:
+		_garage.blurb.text = "Beat %s to put this car up for sale." % Data.BOSSES[vc.boss].name
 	_garage.fuel.text = "%s FUEL  ·  %d L TANK" % [String(Data.FUEL_GRADES[vc.get("fuel", "regular")].name).to_upper(), int(vc.get("tank", 45))]
 	for sk in STAT_KEYS:
 		var key: String = sk[0]
@@ -1569,43 +1819,72 @@ func _render_garage_list(sel_car: Dictionary) -> void:
 	if garage_tab == "paint":
 		var lk: Dictionary = Save.data.get("looks", {}).get(sel_car.id, {})
 		var cur: String = lk.get("color", "")
+		var cur_fin: String = lk.get("finish", "gloss") if lk.get("finish", "") != "" else "gloss"
 		var cur_name := "Factory"
 		for pnt in Data.PAINTS:
 			if pnt[1] == cur:
 				cur_name = pnt[0]
-		list.add_child(_wrap("Paint for your %s: %s. The colour shows on the car straight away and is free." % [sel_car.name, cur_name], 19, MUTED))
+		var cur_col := Color(sel_car.color) if cur == "" else Color(cur)
+		if _garage_msg != "":
+			list.add_child(_wrap(_garage_msg, 21, AMBER))
+			_garage_msg = ""
+		list.add_child(_eyebrow("Finish · %s" % Data.finish_by_id(cur_fin).name))
+		list.add_child(_wrap(String(Data.finish_by_id(cur_fin).blurb) + " A finish is bought once and goes on any of your cars.", 18, MUTED))
+		var fg := GridContainer.new()
+		fg.columns = 4
+		fg.add_theme_constant_override("h_separation", 4)
+		fg.add_theme_constant_override("v_separation", 4)
+		list.add_child(fg)
+		for fi in Data.FINISHES.size():
+			var fin: Dictionary = Data.FINISHES[fi]
+			var owned := Save.finish_owned(String(fin.id))
+			var afford: bool = int(Save.data.cash) >= int(fin.price)
+			var sub := "ON" if fin.id == cur_fin else ("OWNED" if owned else "$" + Fmt.num(fin.price))
+			var sub_col: Color = LINE if fin.id == cur_fin else (MUTED if owned or not afford else AMBER)
+			fg.add_child(_swatch(cur_col, String(fin.name).to_upper(), fin.id == cur_fin, "finish", String(fin.id), fi, sub, sub_col, not owned))
+		list.add_child(_eyebrow("Colour · %s" % cur_name))
+		list.add_child(_wrap("Colours are free. They show on the car straight away, in the finish you have chosen.", 18, MUTED))
 		var grid := GridContainer.new()
 		grid.columns = 5
 		grid.add_theme_constant_override("h_separation", 4)
 		grid.add_theme_constant_override("v_separation", 4)
 		list.add_child(grid)
+		var fin_idx := 0
+		for fi in Data.FINISHES.size():
+			if Data.FINISHES[fi].id == cur_fin:
+				fin_idx = fi
 		for pnt in Data.PAINTS:
 			var hex: String = pnt[1]
 			var col := Color(sel_car.color) if hex == "" else Color(hex)
-			grid.add_child(_swatch(col, String(pnt[0]).to_upper(), hex == cur, "paint", hex))
+			grid.add_child(_swatch(col, String(pnt[0]).to_upper(), hex == cur, "paint", hex, fin_idx))
 	elif garage_tab == "wheels":
 		var stl := Save.car_style(sel_car)
 		var cur_rim: String = stl.get("rim", "5spoke")
 		var cur_col: String = stl.get("rim_color", "#c3c8ce")
-		list.add_child(_eyebrow("Wheel design"))
+		var rim_name := ""
+		for rm in Data.RIMS:
+			if rm[0] == cur_rim:
+				rim_name = rm[1]
+		var col_name := ""
+		for rc in Data.RIM_COLORS:
+			if String(rc[1]).to_lower() == cur_col.to_lower():
+				col_name = rc[0]
+		list.add_child(_eyebrow("Wheel design · %s" % rim_name))
 		var rg := GridContainer.new()
-		rg.columns = 3
-		rg.add_theme_constant_override("h_separation", 10)
-		rg.add_theme_constant_override("v_separation", 10)
+		rg.columns = 4
+		rg.add_theme_constant_override("h_separation", 4)
+		rg.add_theme_constant_override("v_separation", 4)
 		list.add_child(rg)
 		for rm in Data.RIMS:
-			var on: bool = rm[0] == cur_rim
-			var rb := _button(String(rm[1]).to_upper(), "amber" if on else "ghost", "rim", rm[0])
-			rb.add_theme_font_size_override("font_size", 22)
-			rg.add_child(rb)
-		list.add_child(_eyebrow("Wheel finish"))
+			rg.add_child(_wheel_btn(String(rm[0]), String(rm[1]).to_upper(), rm[0] == cur_rim, Color(cur_col)))
+		list.add_child(_eyebrow("Wheel finish · %s" % col_name))
 		var cg := GridContainer.new()
-		cg.columns = 3
+		cg.columns = 4
 		cg.add_theme_constant_override("h_separation", 4)
 		cg.add_theme_constant_override("v_separation", 4)
 		list.add_child(cg)
 		for rc in Data.RIM_COLORS:
-			cg.add_child(_swatch(Color(rc[1]), String(rc[0]).to_upper(), String(rc[1]).to_lower() == cur_col.to_lower(), "rim_color", rc[1]))
+			cg.add_child(_swatch(Color(rc[1]), String(rc[0]).to_upper(), String(rc[1]).to_lower() == cur_col.to_lower(), "rim_color", rc[1], 6 if rc[1] == Data.RIM_CHROME else 7))
 		list.add_child(_button("FACTORY WHEELS", "ghost", "rim_reset"))
 	elif garage_tab == "repair":
 		_render_repair(list, sel_car)
@@ -2527,6 +2806,7 @@ func _over_slider(pos: Vector2) -> bool:
 ## Drag anywhere on a menu to scroll it, including over buttons. Drags that
 ## start on a slider move the slider instead.
 func _menu_scroll(event: InputEvent) -> void:
+	_swipe_event(event)
 	if event is InputEventScreenTouch:
 		var e := event as InputEventScreenTouch
 		if e.pressed:

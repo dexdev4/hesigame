@@ -85,20 +85,50 @@ const CARS := [
 		"blurb": "Stage 2 boss car. A four-door that hunts supercars: high-revving V8, quad exhausts, power-dome bonnet."},
 	{"id": "static", "fuel": "premium", "tank": 48, "style": {"rim": "mesh", "rim_color": "#f3f5ef", "stripes": true, "accent": "#f3f5ef", "intakes": true, "vents": true, "splitter": true, "caliper": "#1fa3ff", "badge": "BLUE STATIC", "plate": "BOSS 03"},
 		"engine": {"cyl": 6, "idle": 900, "redline": 8200, "res": 2.5, "decay": 2.2, "var": 0.05, "uneven": 0.02, "rasp": 0.3, "pops": 0.5, "turbo": true},
-		"name": "Blue Static", "shape": "static", "color": "#1fa3ff", "accel": 10.2, "brake": 12.0, "grip": 13.0, "lat": 5.6, "top": 75.0, "price": 18000, "boss": 2,
-		"blurb": "Stage 3 boss car. Twitchy and very fast."},
+		"name": "Blue Static", "shape": "static", "color": "#1fa3ff", "accel": 10.2, "brake": 12.0, "grip": 13.0, "lat": 5.6, "top": 75.0, "price": 18000, "boss": 2, "route": 4,
+		"blurb": "Blue Static's own car, on sale once you have cleared the fifth highway. Twitchy and very fast."},
 	{"id": "lastexit", "fuel": "premium", "tank": 58, "style": {"rim": "turbine", "rim_color": "#c9a227", "stripes": true, "accent": "#1b1e23", "intakes": true, "vents": true, "splitter": true, "lightbar": true, "caliper": "#c62828", "badge": "LAST EXIT", "plate": "BOSS 04"},
 		"engine": {"cyl": 12, "idle": 1000, "redline": 9200, "res": 2.8, "decay": 1.9, "var": 0.05, "uneven": 0.02, "rasp": 0.25, "pops": 0.5, "turbo": false},
-		"name": "Last Exit", "shape": "lastexit", "color": "#b0122a", "accel": 11.0, "brake": 13.0, "grip": 14.0, "lat": 6.0, "top": 81.0, "price": 30000, "boss": 3,
-		"blurb": "Stage 4 boss car. The fastest thing on the interstate."},
+		"name": "Last Exit", "shape": "lastexit", "color": "#b0122a", "accel": 11.0, "brake": 13.0, "grip": 14.0, "lat": 6.0, "top": 81.0, "price": 30000, "boss": 3, "route": 7,
+		"blurb": "Last Exit's own car, on sale once you have cleared the eighth highway. The fastest thing on the interstate."},
 ]
 
 # Workshop paint and wheel options ("" = the car's factory colour).
-const PAINTS := [["Factory", ""], ["Arctic white", "#eef0f2"], ["Silver", "#b9bec4"], ["Graphite", "#3a3d42"], ["Midnight black", "#121316"],
-	["Race red", "#c4161c"], ["Sunburst orange", "#e86a12"], ["Taxi yellow", "#e8b10f"], ["Lime", "#7cc242"], ["Racing green", "#1f4d2e"],
-	["Electric blue", "#1f6fe0"], ["Deep navy", "#14254f"], ["Royal purple", "#5b2a86"], ["Copper", "#b8622f"]]
-const RIMS := [["steel", "Steel"], ["5spoke", "5-spoke"], ["multi", "Multi-spoke"], ["mesh", "Mesh"], ["turbine", "Turbine"], ["double", "Double-spoke"]]
-const RIM_COLORS := [["Silver", "#c3c8ce"], ["Gunmetal", "#5b5f64"], ["Black", "#2a2c30"], ["White", "#f3f5ef"], ["Gold", "#c9a227"], ["Bronze", "#8c6a3e"]]
+const PAINTS := [["Factory", ""],
+	["Arctic white", "#eef0f2"], ["Pearl white", "#f5f1e6"], ["Champagne", "#d8c8a8"], ["Silver", "#b9bec4"],
+	["Gunmetal", "#52575e"], ["Graphite", "#3a3d42"], ["Charcoal", "#2a2d31"], ["Midnight black", "#121316"], ["Chocolate", "#4a2f20"],
+	["Race red", "#c4161c"], ["Crimson", "#9d1127"], ["Burgundy", "#5a0f1e"], ["Hot pink", "#e6338a"], ["Magenta", "#a3187d"],
+	["Sunburst orange", "#e86a12"], ["Sunset", "#ff5a3c"], ["Copper", "#b8622f"], ["Bronze", "#8a5a2b"], ["Rose gold", "#c98a7a"],
+	["Taxi yellow", "#e8b10f"], ["Gold", "#d6a229"], ["Mustard", "#b88a14"], ["Sand", "#c9b48a"], ["Olive", "#5b6130"],
+	["Lime", "#7cc242"], ["Mint", "#7fd1b0"], ["Racing green", "#1f4d2e"], ["Emerald", "#0d7a4a"], ["Teal", "#0e8a8a"],
+	["Sky blue", "#4aa3e0"], ["Electric blue", "#1f6fe0"], ["Cobalt", "#1946b8"], ["Deep navy", "#14254f"], ["Indigo", "#35247a"],
+	["Royal purple", "#5b2a86"], ["Violet", "#7a2fc0"], ["Lavender", "#9a86d6"], ["Ice blue", "#bcd9ee"], ["Peach", "#ffb38a"]]
+
+## Paint finishes the workshop sells (CarModel.FINISH_LOOKS is how each one looks). A finish is bought once, for $price,
+## and can then be put on any car; gloss is the factory finish and costs nothing.
+const FINISHES := [
+	{"id": "gloss", "name": "Gloss", "price": 0, "blurb": "The factory finish: deep and shiny."},
+	{"id": "semigloss", "name": "Semi-gloss", "price": 150, "blurb": "Satin lacquer: a soft sheen, no mirror."},
+	{"id": "matte", "name": "Matte", "price": 250, "blurb": "Flat and dark. Nothing reflects."},
+	{"id": "metallic", "name": "Metallic", "price": 400, "blurb": "Heavy metal flake that glitters in the sun."},
+	{"id": "pearl", "name": "Pearlescent", "price": 800, "blurb": "The colour turns to another as the light moves over it."},
+	{"id": "candy", "name": "Candy", "price": 1200, "blurb": "A deep tinted lacquer over bright metal."},
+	{"id": "chrome", "name": "Chrome", "price": 3500, "blurb": "A mirror finish. Costs what it looks like."},
+]
+
+
+func finish_by_id(id: String) -> Dictionary:
+	for f in FINISHES:
+		if f.id == id:
+			return f
+	return FINISHES[0]
+const RIMS := [["steel", "Steel"], ["5spoke", "5-spoke"], ["multi", "Multi-spoke"], ["mesh", "Mesh"], ["turbine", "Turbine"], ["double", "Double-spoke"],
+	["split", "Split-spoke"], ["blade", "Blade"], ["aero", "Aero"], ["wire", "Wire"], ["tri", "Tri-spoke"], ["star", "Star"], ["vent", "Vented disc"], ["deep", "Deep dish"]]
+const RIM_CHROME := "#e6eaee"  # (the wheel colour that is polished chrome)
+const RIM_COLORS := [["Silver", "#c3c8ce"], ["Chrome", "#e6eaee"], ["Gunmetal", "#5b5f64"], ["Anthracite", "#34373c"],
+	["Black", "#2a2c30"], ["Gloss black", "#0d0e10"], ["White", "#f3f5ef"], ["Gold", "#c9a227"],
+	["Bronze", "#8c6a3e"], ["Copper", "#b8622f"], ["Red", "#c4161c"], ["Orange", "#e86a12"],
+	["Lime", "#7cc242"], ["Blue", "#1f6fe0"], ["Purple", "#6a2fb0"], ["Pink", "#e6338a"]]
 
 const BOSSES := [
 	{"name": "Copperhead", "car": "copperhead", "line": "Lives in the left lane and never signals. Beat his score before the gantry."},
@@ -227,6 +257,12 @@ func route_info(i: int) -> Dictionary:
 ## Each highway further along asks for more: score targets and boss skill rise.
 func route_scale() -> float:
 	return 1.0 + 0.14 * route
+
+
+## The highway (0 is the first) that has to be cleared before a car goes on sale: -1 for a car that goes on sale as
+## soon as its boss is beaten (Copperhead, Night Marshal); Blue Static comes with the fifth highway, Last Exit with the eighth.
+func car_unlock_route(c: Dictionary) -> int:
+	return int(c.get("route", -1))
 
 
 func car_by_id(id: String) -> Dictionary:

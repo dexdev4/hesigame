@@ -36,8 +36,11 @@ var active := false
 var free_rect_fn := Callable()
 
 var _holder: Node3D                  # the car and its reflection, which slide in and out together
-var _leaving: Array = []             # [[holder, seconds left]] for the cars sliding out
+var _leaving: Array = []             # [[holder, seconds left, the direction it slides off in]] for the cars sliding out
 var _slide := 0.0                    # seconds of the slide-in left
+var _slide_dir := Vector3.RIGHT      # the way the car coming in sets out from (the screen's right for the next car)
+var locked := false                  # the next car shown is one that is not on sale yet: it stands under a dark cover
+static var _cover: StandardMaterial3D
 var _view := "cars"
 var _yaw := 2.55
 var _pitch := 0.14
@@ -106,13 +109,19 @@ func set_active(on: bool) -> void:
 			_flash = 0.9
 
 
-## Show this car (a Data.CARS entry) with the given paint and style. A different car slides in from the side;
-## the same car with new paint or wheels is just swapped.
-func set_car(c: Dictionary, color: Color, style: Dictionary) -> void:
+## Show this car (a Data.CARS entry) with the given paint and style. A different car slides in from the side the
+## way the list is going: `dir` 1 (the next car, the default) brings it in from the right of the screen and sends the
+## old one off to the left, -1 (the previous car) the other way round. The same car with new paint or wheels is just swapped.
+func set_car(c: Dictionary, color: Color, style: Dictionary, dir := 1) -> void:
 	var fresh: bool = c.id != _car_id and _holder != null
 	if _holder:
 		if fresh:
-			_leaving.append([_holder, 0.45])
+			# along the screen's own sideways direction, whichever way the camera is turned round the car
+			var rt := cam.transform.basis.x
+			rt.y = 0.0
+			rt = rt.normalized() if rt.length() > 0.01 else Vector3.RIGHT
+			_slide_dir = rt * (1.0 if dir >= 0 else -1.0)
+			_leaving.append([_holder, 0.45, -_slide_dir])
 		else:
 			_holder.queue_free()
 	_car_id = c.id
@@ -135,10 +144,31 @@ func set_car(c: Dictionary, color: Color, style: Dictionary) -> void:
 			car.dmg.done.connect(_remirror, CONNECT_ONE_SHOT)  # (the reflection in the floor shows the dents too, once they are in)
 	_set_layers(car)
 	_mirror_car()
+	if locked:
+		_cover_up(car)
+		if _mirror_root != null:
+			_cover_up(_mirror_root)
 	_slide = 0.55 if fresh else 0.0
 	_flash = 1.0 if fresh else 1.4
-	_holder.position.x = 7.0 if fresh else 0.0
+	_holder.position = _slide_dir * 7.0 if fresh else Vector3.ZERO
 	_aim_t = _view_aim()
+
+
+## A dark, see-through cover over every surface of a car (a car you cannot buy yet).
+func _cover_up(n: Node) -> void:
+	if _cover == null:
+		_cover = StandardMaterial3D.new()
+		_cover.albedo_color = Color(0.015, 0.02, 0.03, 0.74)
+		_cover.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		_cover.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		_cover.cull_mode = BaseMaterial3D.CULL_BACK
+	var stack: Array[Node] = [n]
+	while not stack.is_empty():
+		var x: Node = stack.pop_back()
+		if x is MeshInstance3D and not x is Label3D:
+			(x as MeshInstance3D).material_overlay = _cover
+		for ch in x.get_children():
+			stack.append(ch)
 
 
 ## Which view the camera takes: "cars", "up", "paint" or "wheels".
@@ -181,12 +211,12 @@ func _process(delta: float) -> void:
 	if _slide > 0.0 and _holder:
 		_slide = maxf(0.0, _slide - delta)
 		var k := _slide / 0.55
-		_holder.position.x = 7.0 * k * k * k
+		_holder.position = _slide_dir * (7.0 * k * k * k)
 	for lv in _leaving:
 		lv[1] -= delta
 		var h: Node3D = lv[0]
 		var kk := 1.0 - maxf(lv[1], 0.0) / 0.45
-		h.position.x = -8.0 * kk * kk
+		h.position = (lv[2] as Vector3) * (8.0 * kk * kk)
 		if lv[1] <= 0.0:
 			h.queue_free()
 	_leaving = _leaving.filter(func(lv: Array) -> bool: return lv[1] > 0.0)

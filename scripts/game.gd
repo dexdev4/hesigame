@@ -173,6 +173,7 @@ var shots: Array = []
 var burst: Array = []  # --burst=START:COUNT:DIR saves COUNT consecutive frames (test aid)
 var _burst_i := 0
 var force_cop := false
+var _test_block := ""       # --cop-block=KIND: the player sits still behind a stopped car, the police car behind that (test aid)
 var auto_speed := 46.0  # --autospeed=M/S: how fast the test driver goes
 var idcolor := false   # --idcolor: flat unique colour per traffic car, no fog or scenery (flicker test)
 var _id_next := 1
@@ -275,6 +276,9 @@ func _ready() -> void:
 		if a.begins_with("--car="):  # test drive another car (not saved)
 			Save.data.selected = a.substr(6)
 		if a == "--cop":  # every boss trigger is a police pursuit (test aid)
+			force_cop = true
+		if a.begins_with("--cop-block="):  # the blocking exploit, as it was played (test aid; implies --cop)
+			_test_block = a.substr(12)
 			force_cop = true
 		if a.begins_with("--stations="):  # a fuel stop every KM km, tank range scaled to match (test aid)
 			Data.station_scale = float(a.substr(11)) / Data.STATION_EVERY_KM
@@ -426,6 +430,10 @@ func _ready() -> void:
 			_on_act(parts[0], parts[1] if parts.size() > 1 else "")
 			if parts.size() > 1 and parts[0] == "garage":
 				_on_act("tab", parts[1])
+		if a.begins_with("--open-at="):  # SECONDS:ACTION[:ARG]: the same, once that many seconds have passed (test aid)
+			var at := a.substr(10).split(":")
+			if at.size() > 1:
+				get_tree().create_timer(float(at[0])).timeout.connect(func() -> void: _on_act(at[1], at[2] if at.size() > 2 else ""))
 
 
 func _build_showroom() -> void:
@@ -938,6 +946,8 @@ func _cop_coming_in(c: Vehicle, nl: int) -> bool:
 ## left), and if no lane has room just now, line up with a gap in the next lane by speed. Returns the speed
 ## c should go for to make that gap, or -1 when it should simply carry on.
 func _make_way(c: Vehicle) -> float:
+	if c.v < 1.0:
+		return -1.0  # (stopped: it cannot drift over, and must not claim a lane it will never reach)
 	var dirs := [1, -1] if c.lane < 3 else [-1, 1]
 	var lanes: Array[int] = []
 	for dl in dirs:
@@ -1293,7 +1303,7 @@ func _wreck_contacts() -> void:
 func _lane_blocked(b: Vehicle, lane: int, ahead: float, behind := 6.0) -> bool:
 	var lx: float = Data.LANES[lane]
 	for c in traffic:
-		if (absf(c.x - lx) < 2.4 or c.tlane == lane) and c.z + c.l > b.z - behind and c.z < b.z + b.l + ahead:
+		if (absf(c.x - lx) < 2.4 or (c.tlane == lane and c.v > 1.0)) and c.z + c.l > b.z - behind and c.z < b.z + b.l + ahead:
 			return true
 	if absf(player.x - lx) < 2.4 and player.z + player.l > b.z - behind - 4.0 and player.z < b.z + b.l + ahead:
 		return true
@@ -1639,6 +1649,10 @@ func _route_cleared() -> void:
 		var nxt: String = Data.CITIES[r + 2].name
 		_notify("HIGHWAY TO %s OPEN" % nxt.to_upper(), "hot")
 		hud.banner("NEW HIGHWAY OPEN", "%s → %s ON THE WORLD MAP" % [String(Data.CITIES[r + 1].name).to_upper(), nxt.to_upper()], "good")
+	for id in Save.unlock_for_routes():  # the car that comes with this highway
+		_notify("%s NOW FOR SALE IN THE GARAGE" % String(Data.car_by_id(id).name).to_upper(), "hot")
+		if autotest:
+			print("[autotest] %s is for sale now (highway %d cleared)" % [id, r + 1])
 	Save.persist()
 	if autotest:
 		print("[autotest] route %d cleared, %d highways open" % [r, int(Save.data.get("routes", 1))])
@@ -1658,7 +1672,7 @@ func _end_battle() -> void:
 			_route_cleared()
 		run.cash_bonus += 200 * run.stage
 		var unlocked_new := false
-		if not Save.is_unlocked(bi.car):
+		if not Save.is_unlocked(bi.car) and Data.car_unlock_route(Data.car_by_id(bi.car)) < 0:
 			Save.data.unlocked.append(bi.car)
 			Save.persist()
 			unlocked_new = true
@@ -1731,6 +1745,11 @@ func _live() -> bool:
 
 
 func _autopilot(dt: float) -> void:
+	if _test_block != "" and run and run.phase == "cop":
+		ap_gas = false  # (--cop-block: sit still in this lane for the whole pursuit)
+		ap_brake = true
+		target_x = Data.LANES[Data.nearest_lane(player.x)]
+		return
 	if _test_hold:
 		ap_gas = true
 		ap_brake = false
@@ -2521,7 +2540,7 @@ func _collisions() -> void:
 				_hit("CONTACT", c, ct)
 	if boss == null or run.invuln > 0.0:
 		return
-	var rammed: bool = boss.is_cop and absf(p.x - boss.x) < (p.w + boss.w) / 2.0 - 0.15 \
+	var rammed: bool = boss.is_cop and absf(p.x - boss.x) < (p.w + boss.w) / 2.0 - 0.02 \
 		and p.z - (boss.z + boss.l) < 0.15 and boss.z < p.z + p.l
 	var bct := {}
 	if p.z < boss.z + boss.l + 12.0 and p.z + p.l > boss.z - 12.0 and absf(p.x - boss.x) < boss.reach_h + 4.0:
@@ -2650,8 +2669,11 @@ func _show_pick(bi: Dictionary, unlocked_new: bool) -> void:
 	pool.shuffle()
 	var opts := pool.slice(0, 3)
 	var line := "Choose one upgrade for the rest of this run."
+	var boss_car := Data.car_by_id(bi.car)
 	if unlocked_new:
-		line = "The %s is now for sale in the Garage. " % Data.car_by_id(bi.car).name + line
+		line = "The %s is now for sale in the Garage. " % boss_car.name + line
+	elif not Save.is_unlocked(bi.car) and Data.car_unlock_route(boss_car) >= 0:
+		line = "The %s goes on sale when you clear %s. " % [boss_car.name, Data.route_info(Data.car_unlock_route(boss_car)).title] + line
 	hud.show_pick("%s beaten · +$%s prize" % [bi.full, Fmt.num(200 * run.stage)], line, opts)
 	if autotest:
 		print("[autotest] beat %s, picking %s" % [bi.full, opts[0].id])
@@ -2765,11 +2787,68 @@ func _start_cop() -> void:
 	run.siren_t = 0.0
 	_cop_reach = -1.0
 	_cop_held = 0.0
+	_cop_pass_tx = INF
+	_cop_held_t = 0.0
 	_yields = 0
 	run.cop_due = true
 	hud.banner("POLICE PURSUIT", "DON'T GET RAMMED FOR %d S · ESCAPE FOR +1 LIFE" % int(COP_TIME), "alert")
 	if autotest:
 		print("[autotest] police pursuit stage %d" % run.stage)
+	if _test_block != "":
+		_cop_block_setup()
+
+
+## Test aid (--cop-block=KIND): the exploit as it was played. The player sits still in its lane, a stopped car
+## right behind it and the police car right behind that. KIND: queue (one car behind the player), queue2 (two),
+## truck (a truck), side (another stopped car beside the first, so one way round is shut), wall (a stopped car in
+## every lane beside it: no way round at all, so the police car has to wait), edge (the player in the outermost lane),
+## far (the player brakes to a stop from its speed with one car following it in, the police car coming up from where it started),
+## overshoot (the player stops dead, the police car comes up at full speed and shoots past, and has to back up to it).
+func _cop_block_setup() -> void:
+	for i in range(traffic.size() - 1, -1, -1):
+		if absf(traffic[i].z - player.z) < 200.0:
+			_retire(traffic[i])
+			traffic.remove_at(i)
+	var lane := 3 if _test_block == "edge" else Data.nearest_lane(player.x)
+	player.x = Data.LANES[lane]
+	target_x = player.x
+	var far := _test_block == "far"
+	if not far:
+		player.v = 0.0
+	var fast_cop := far or _test_block == "overshoot"
+	var shape := "truck" if _test_block == "truck" else "sedan"
+	var rear := player.z
+	var first: Vehicle = null
+	for k in (2 if _test_block == "queue2" else 1):
+		var sh: Dictionary = Data.SHAPES[shape]
+		var c := _spawn_car(shape, lane, rear - (14.0 if far else 7.0 if k == 0 else 3.0) - float(sh.l), maxf(player.v, 0.5))
+		c.v = player.v if far else 0.0
+		c.cruise = player.v if far else 0.0
+		c.lc_t = 1e9
+		rear = c.z
+		if first == null:
+			first = c
+	var beside: Array[int] = []
+	if _test_block == "side":
+		beside = [lane - 1 if lane > 0 else lane + 1]
+	elif _test_block == "wall":
+		for l in 4:
+			if l != lane:
+				beside.append(l)
+	for l in beside:
+		var c := _spawn_car("sedan", l, first.z, 0.5)
+		c.v = 0.0
+		c.cruise = 0.0
+		c.lc_t = 1e9
+	boss.lane = lane
+	boss.tlane = lane
+	boss.x = Data.LANES[lane]
+	_cop_aim = boss.x
+	if not fast_cop:  # (far, overshoot: the police car comes up from where it started, at speed)
+		boss.z = rear - boss.l - 2.0
+		boss.v = 0.0
+	if autotest:
+		print("[autotest] cop blockade '%s': player stopped in lane %d, the police car %.1f m behind it at %.1f m/s" % [_test_block, lane, player.z - boss.z - boss.l, boss.v])
 
 
 ## Pursuit over (escaped or rammed): back to cruising, stage progress resets
@@ -2782,6 +2861,71 @@ func _end_cop() -> void:
 	run.phase = "cruise"
 	run.stage_dist = 0.0
 	run.stage_score = 0
+
+
+## Where the police car can drive: the four lanes, and a strip beside each outer lane to pass on.
+const COP_XS: Array[float] = [-7.7, -5.4, -1.8, 1.8, 5.4, 7.7]
+var _cop_pass_tx := INF     # while it goes round a car in its way: the x it is heading for (INF: not going round one)
+var _cop_held_t := 0.0      # how long a car has held it up
+
+
+## The nearest car (not the player) between the police car and the player in the player's lane (at x), or null.
+func _cop_corridor(b: Vehicle, x: float) -> Vehicle:
+	var best: Vehicle = null
+	for c in traffic:
+		if c.z + c.l > b.z and c.z < player.z and absf(c.x - x) < c.reach_h + b.w / 2.0 + 0.25 and (best == null or c.z < best.z):
+			best = c
+	return best
+
+
+## Is the way along x clear for the police car, from just behind it to z1?
+func _cop_way_clear(b: Vehicle, x: float, z1: float) -> bool:
+	var hw := b.w / 2.0 + 0.2
+	for c in traffic:
+		if absf(c.x - x) < c.reach_h + hw and c.z + c.l > b.z - 3.0 and minf(c.z, c.reach_z) < z1:
+			return false
+	if absf(player.x - x) < player.w / 2.0 + hw and player.z + player.l > b.z - 3.0 and player.z < z1:
+		return false
+	return true
+
+
+## The open road ahead of the police car along x: distance to the first car there that is not pulling away.
+func _cop_road_ahead(b: Vehicle, x: float) -> float:
+	var free := 150.0
+	for c in traffic:
+		if absf(c.x - x) < c.reach_h + b.w / 2.0 + 0.2 and c.z + c.l > b.z and c.v < b.v + 1.0:
+			free = minf(free, c.z - (b.z + b.l))
+	return free
+
+
+## Where the police car should be to get past `blocker` (a car between it and the player): where it is if that
+## is clear all the way past, else the free lane beside it (or the strip on the outside) with the most road
+## open ahead; it holds where it is, looking every frame, while there is none.
+func _cop_go_around(b: Vehicle, blocker: Vehicle) -> float:
+	var z1 := minf(blocker.z + blocker.l + 9.0, b.z + b.l + 14.0)  # (a lane need only be clear for the next few metres: it can go on to another)
+	var k := 0
+	for i in COP_XS.size():
+		if absf(COP_XS[i] - b.x) < absf(COP_XS[k] - b.x):
+			k = i
+	var best := -1
+	var best_val := -1e9
+	for nk in [k, k - 1, k + 1]:
+		if nk < 0 or nk >= COP_XS.size():
+			continue
+		if nk == COP_XS.size() - 1 and not station.is_empty() and absf(b.z - float(station.z)) < 250.0:
+			continue  # (the strip on the right is the fuel stop's exit lane there)
+		var x: float = COP_XS[nk]
+		if not _cop_way_clear(b, x, z1):
+			continue
+		var val := _cop_road_ahead(b, x) - (40.0 if nk == 0 or nk == COP_XS.size() - 1 else 0.0) + (12.0 if nk == k else 0.0)
+		if val > best_val:
+			best_val = val
+			best = nk
+	if best >= 0:
+		_cop_pass_tx = COP_XS[best]
+	elif _cop_pass_tx == INF:
+		return b.x
+	return _cop_pass_tx
 
 
 func _update_cop(dt: float) -> void:
@@ -2801,10 +2945,14 @@ func _update_cop(dt: float) -> void:
 			_cop_held += dt
 		if _cop_reach < 0.0 and gap_to_player < 12.0 and run:
 			_cop_reach = run.cop_t
-	if lead and lead != player and gap < 30.0:
+	# gone past a player who has stopped (it was quicker than the player's braking): back up to him
+	var reversing := b.z > player.z + player.l - 0.3 and player.v < 4.0
+	if reversing:
+		want = -8.0
+	elif lead and lead != player and gap < 30.0:
 		want = minf(want, lead.v + (gap - 3.0) * 0.6)  # traffic in the way: brakes late behind it
 	b.v += clampf(want - b.v, -12.0 * dt, COP_ACCEL * dt)
-	b.v = clampf(b.v, 0.0, 90.0)
+	b.v = clampf(b.v, -8.0 if reversing else 0.0, 90.0)
 	b.z += b.v * dt
 	if lead and lead != player and b.z + b.l > lead.z - 0.3 and absf(lead.x - b.x) < (lead.w + b.w) / 2.0:
 		b.z = lead.z - b.l - 0.3
@@ -2815,14 +2963,29 @@ func _update_cop(dt: float) -> void:
 		if b.z > limit:
 			b.z = limit
 			b.v = minf(b.v, player.v)
-	# steer: at where it thinks the player is (it reacts with a delay, so a late
-	# lane change can shake it off), otherwise lane by lane through gaps
+	# steer: at where it thinks the player is (it reacts with a delay, so a late lane change can shake it off),
+	# otherwise lane by lane through gaps. A car in its way to the player that is stopped or crawling it drives
+	# round, near the player as well: it never sits behind one.
 	_cop_aim = lerpf(_cop_aim, player.x, minf(1.0, dt * 1.6))
 	b.vx = 0.0
+	if lead != null and lead != player and gap < 10.0:
+		_cop_held_t += dt
+	else:
+		_cop_held_t = maxf(0.0, _cop_held_t - dt * 2.0)
 	var tx: float
-	if absf(gap_to_player) < 20.0:
+	var near := absf(gap_to_player) < 20.0
+	var blocker: Vehicle = _cop_corridor(b, _cop_aim) if (near or _cop_pass_tx != INF) else null
+	var passing := false
+	if blocker != null and (_cop_pass_tx != INF or blocker.v < 5.0 or _cop_held_t > 1.0):
+		tx = _cop_go_around(b, blocker)
+		passing = true
+		b.tlane = Data.nearest_lane(tx)
+		b.lane = Data.nearest_lane(b.x)
+	elif near:
+		_cop_pass_tx = INF
 		tx = _cop_aim
 	else:
+		_cop_pass_tx = INF
 		_cop_think -= dt
 		if b.tlane == b.lane and _cop_think <= 0.0:
 			# hunt for the gap: the lane with the most open road, leaning towards the player
@@ -2840,7 +3003,9 @@ func _update_cop(dt: float) -> void:
 			b.tlane = best
 		tx = Data.LANES[b.tlane]
 	var lat := 5.2 if absf(gap_to_player) >= 20.0 else 3.6  # darts into gaps; near you it reacts with a lag
-	lat = minf(lat, b.v * 0.2)
+	lat = minf(lat, absf(b.v) * 0.2)
+	if passing or near or _cop_held_t > 0.5:
+		lat = maxf(lat, 1.5)  # (pulling out round a stopped car, and then in on a player who has stopped, it may have to do it from a crawl)
 	var step := clampf(tx - b.x, -lat * dt, lat * dt)
 	var nx := b.x + step
 	var clear := true
@@ -4049,10 +4214,13 @@ func _enter_garage(view_id := "") -> void:
 	if showroom != "" or _inspect.size() > 0:
 		return
 	var c := Data.car_by_id(view_id if view_id != "" else Save.data.selected)
-	var shown: String = c.id + str(Save.car_color(c)) + str(Save.car_style(c)) + str(Save.damage_of(String(c.id)).hash())
+	var locked: bool = c.boss >= 0 and not Save.is_unlocked(c.id)  # (a car not on sale yet stands under a dark cover)
+	var shown: String = c.id + str(Save.car_color(c)) + str(Save.car_style(c)) + str(Save.damage_of(String(c.id)).hash()) + str(locked)
 	if garage.car == null or garage.get_meta("car", "") != shown:
-		garage.set_car(c, Save.car_color(c), Save.car_style(c))
+		garage.locked = locked
+		garage.set_car(c, Save.car_color(c), Save.car_style(c), hud.browse_dir if hud.browse_dir != 0 else 1)
 		garage.set_meta("car", shown)
+	hud.browse_dir = 0
 	garage.focus(hud.garage_tab if state == S.GARAGE else "cars")
 	garage.set_active(true)
 	_sun.shadow_enabled = false  # the sun does not light the garage, but its shadow maps would still draw the car (twice)
@@ -4161,6 +4329,24 @@ func _on_act(action: String, arg: String) -> void:
 			_enter_garage(arg)
 		"browse":
 			hud.browse(int(arg))  # the next (1) or the previous (-1) car in the garage
+		"_tick":
+			sound.play("tick", randf_range(0.96, 1.04), -9.0)  # (a menu button going down)
+		"scroll":
+			hud.scroll_garage(int(arg))  # (test aid)
+		"swipe":
+			hud.test_swipe(int(arg))  # (test aid: -1 swipes to the left)
+		"finish":
+			var fin := Data.finish_by_id(arg)
+			if Save.finish_owned(arg) or Save.buy_finish(arg):
+				Save.set_look(Save.data.selected, "finish", "" if arg == "gloss" else arg)
+				sound.play("ding", 1.5, -8.0)
+				_enter_garage()
+				hud.render_garage()
+				if autotest:
+					print("[autotest] finish %s on the %s (cash $%d)" % [arg, Save.data.selected, int(Save.data.cash)])
+			else:
+				hud.garage_say("%s costs $%s: you need $%s more." % [fin.name, Fmt.num(fin.price), Fmt.num(int(fin.price) - int(Save.data.cash))])
+				sound.play("ding", 0.6, -8.0)
 		"paint", "rim", "rim_color", "rim_reset":
 			var key: String = {"paint": "color", "rim": "rim", "rim_color": "rim_color"}.get(action, "")
 			if action == "rim_reset":
@@ -5142,6 +5328,6 @@ func _free_ahead(b: Vehicle, lane: int) -> float:
 	var lx: float = Data.LANES[lane]
 	var free := 150.0
 	for c in traffic:
-		if (absf(c.x - lx) < 1.9 or c.tlane == lane) and c.z + c.l > b.z and c.v < b.v + 1.0:
+		if (absf(c.x - lx) < 1.9 or (c.tlane == lane and c.v > 1.0)) and c.z + c.l > b.z and c.v < b.v + 1.0:
 			free = minf(free, c.z - (b.z + b.l))
 	return free

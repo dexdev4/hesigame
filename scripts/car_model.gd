@@ -374,10 +374,45 @@ static func _car_shader_mat(key: String, params: Dictionary) -> ShaderMaterial:
 	return m
 
 
-## Glossy metallic paint under a clear coat, with flake that glints in the sun.
-static func paint(c: Color) -> Material:
-	return _car_shader_mat("paint|%s" % c.to_html(), {"base_color": c.darkened(0.04), "metallic": 0.32, "roughness": 0.36,
-		"coat": 0.6, "coat_roughness": 0.05, "reflect_amount": 1.0, "reflect_f0": 0.045, "flake": 0.7})
+## What each paint finish asks of the paint shader (Data.FINISHES are the ones the workshop sells). "gloss" is the
+## factory finish: a glossy metallic paint under a clear coat, with a little flake that glints in the sun.
+const FINISH_LOOKS := {
+	"gloss": {"metallic": 0.32, "roughness": 0.36, "coat": 0.6, "coat_roughness": 0.05, "reflect_amount": 1.0, "reflect_f0": 0.045, "flake": 0.7},
+	"semigloss": {"metallic": 0.08, "roughness": 0.56, "coat": 0.2, "coat_roughness": 0.38, "reflect_amount": 0.4, "reflect_f0": 0.04, "flake": 0.0, "sheen": 0.3},
+	"matte": {"metallic": 0.0, "roughness": 0.93, "coat": 0.0, "coat_roughness": 0.5, "reflect_amount": 0.05, "reflect_f0": 0.03, "flake": 0.0, "sheen": 0.6},
+	"metallic": {"metallic": 0.5, "roughness": 0.3, "coat": 0.85, "coat_roughness": 0.05, "reflect_amount": 1.0, "reflect_f0": 0.06, "metal_tint": 0.35,
+		"flake": 1.15, "flake_scale": 140.0, "flake_far": 10.0},
+	"pearl": {"metallic": 0.3, "roughness": 0.32, "coat": 1.0, "coat_roughness": 0.04, "reflect_amount": 1.0, "reflect_f0": 0.05,
+		"flake": 0.45, "flake_scale": 170.0, "flake_far": 6.0, "pearl": 1.0},
+	"candy": {"metallic": 0.85, "roughness": 0.2, "coat": 1.0, "coat_roughness": 0.03, "reflect_amount": 1.2, "reflect_f0": 0.12, "metal_tint": 0.95, "flake": 0.9, "candy": 1.0},
+	"chrome": {"metallic": 1.0, "roughness": 0.05, "coat": 0.0, "coat_roughness": 0.05, "reflect_amount": 1.15, "reflect_f0": 0.78, "metal_tint": 0.8, "flake": 0.0},
+}
+
+
+## The colour a pearlescent paint turns to at a glancing view: another hue, lighter (whites go warm, darks go blue-violet).
+static func pearl_shift(c: Color) -> Color:
+	if c.s < 0.14:
+		return Color.from_hsv(0.07, 0.38, minf(1.0, c.v + 0.2)) if c.v > 0.45 else Color.from_hsv(0.72, 0.55, 0.5)
+	return Color.from_hsv(fposmod(c.h + 0.08, 1.0), clampf(c.s * 0.85 + 0.05, 0.0, 1.0), clampf(c.v + 0.2, 0.0, 1.0))
+
+
+## Paint in a colour and a finish (FINISH_LOOKS): gloss, semi-gloss, matte, metallic, pearlescent, candy or chrome.
+static func paint(c: Color, finish := "gloss") -> Material:
+	var look: Dictionary = FINISH_LOOKS.get(finish, FINISH_LOOKS.gloss)
+	var params := {"base_color": c.darkened(0.04)}
+	params.merge(look)
+	if finish == "pearl":
+		params["pearl_color"] = pearl_shift(c)
+		params["base_color"] = c.lerp(Color("#f4efe8"), 0.1)  # (the pearl layer lifts the colour a little)
+	elif finish == "chrome":
+		params["base_color"] = c.lerp(Color("#e9edf0"), 0.45)  # (a mirror: the colour only tints what it reflects)
+	elif finish == "candy":
+		params["base_color"] = c
+	elif finish == "metallic":
+		params["base_color"] = c.lightened(0.08)  # (the metal in the paint takes some of the body colour out of it)
+	elif finish == "matte":
+		params["base_color"] = c.darkened(0.14)  # (flat paint is duller than the same colour with a gloss over it)
+	return _car_shader_mat("paint|%s|%s" % [c.to_html(), finish if FINISH_LOOKS.has(finish) else "gloss"], params)
 
 
 ## Polished chrome: a mirror of the surroundings.
@@ -388,6 +423,9 @@ static func _chrome() -> Material:
 
 ## Alloy wheel finish in the rim colour: bright metal, or painted and lacquered.
 static func _alloy(c: Color) -> Material:
+	if c.to_html(false) == Data.RIM_CHROME.trim_prefix("#"):  # polished chrome: a mirror
+		return _car_shader_mat("alloy|chrome", {"base_color": c, "metallic": 1.0, "roughness": 0.06, "coat": 0.0, "reflect_amount": 1.15,
+			"reflect_f0": 0.8, "metal_tint": 0.3})
 	var dark := c.get_luminance() < 0.3
 	return _car_shader_mat("alloy|%s" % c.to_html(), {"base_color": c, "metallic": 0.55 if dark else 0.85, "roughness": 0.3 if dark else 0.24,
 		"coat": 0.5 if dark else 0.0, "reflect_amount": 0.9, "reflect_f0": 0.06 if dark else 0.55, "metal_tint": 0.0 if dark else 1.0, "flake": 0.3})
@@ -593,7 +631,7 @@ static func _lathe(st: SurfaceTool, profile: Array, segs: int) -> void:
 			_tri(st, pa, pc, pd, n0, n1, n0)
 
 
-const RIM_STYLES := ["steel", "5spoke", "multi", "mesh", "turbine", "double"]
+const RIM_STYLES := ["steel", "5spoke", "multi", "mesh", "turbine", "double", "split", "blade", "aero", "wire", "tri", "star", "vent", "deep"]
 
 
 ## A tapered spoke on the wheel face: from the hub (deeper, so the face is
@@ -687,6 +725,43 @@ static func _wheel_mesh(r: float, width: float, style := "5spoke", rim_col := Co
 				for k in 5:
 					for tw in [-0.11, 0.11]:
 						_spoke(rim, side, TAU * k / 5.0 + tw * 0.4, tw * 0.6, hub, rr - 0.018, x_in, x_out, 0.026, 0.036, 0.034)
+			"split":  # five Y spokes: a stem that forks near the rim
+				var x_mid: float = lerpf(x_in, x_out, 0.55)
+				for k in 5:
+					var a := TAU * k / 5.0
+					_spoke(rim, side, a, 0.0, hub, rr * 0.56, x_in, x_mid, 0.06, 0.044, 0.034)
+					for tw in [-0.3, 0.3]:
+						_spoke(rim, side, a, tw, rr * 0.54, rr - 0.018, x_mid, x_out, 0.034, 0.05, 0.03)
+			"blade":  # seven swept blades
+				for k in 7:
+					_spoke(rim, side, TAU * k / 7.0, 0.75, hub, rr - 0.018, x_in, x_out, 0.03, 0.085, 0.03)
+			"aero":  # a smooth dished disc with radial vents, like a wheel for an electric car
+				_lathe(rim, [Vector2(rr - 0.012, face - side * 0.012), Vector2(rr * 0.72, face - side * 0.028), Vector2(rr * 0.3, face - side * 0.045), Vector2(0.001, face - side * 0.05)], 24)
+				for k in 8:
+					var ba := Basis(Vector3.RIGHT, TAU * k / 8.0)
+					_box(dark, Vector3(face - side * 0.026, 0, 0) + ba.y * rr * 0.6, Vector3(0.012, rr * 0.3, rr * 0.075), ba)
+			"wire":  # a laced wire wheel
+				for k in 28:
+					_spoke(rim, side, TAU * k / 28.0, 0.5 if k % 2 == 0 else -0.5, hub * 0.85, rr - 0.012, x_in, x_out, 0.011, 0.012, 0.012)
+			"tri":  # three chunky spokes
+				for k in 3:
+					_spoke(rim, side, TAU * k / 3.0, 0.0, hub, rr - 0.018, x_in, x_out, 0.11, 0.2, 0.04)
+			"star":  # eight straight spokes that widen towards the rim
+				for k in 8:
+					_spoke(rim, side, TAU * k / 8.0, 0.0, hub, rr - 0.018, x_in, x_out, 0.03, 0.08, 0.03)
+			"vent":  # a plain disc drilled through with holes
+				_lathe(rim, [Vector2(rr - 0.012, face - side * 0.014), Vector2(rr * 0.7, face - side * 0.03), Vector2(rr * 0.3, face - side * 0.04), Vector2(0.001, face - side * 0.045)], 24)
+				for k in 12:
+					var bo := Basis(Vector3.RIGHT, TAU * k / 12.0)
+					_cyl(dark, Vector3(face - side * 0.03, 0, 0) + bo.y * rr * 0.72, rr * 0.075, 0.014, Vector3.RIGHT, 8)
+				for k in 6:
+					var bi := Basis(Vector3.RIGHT, TAU * k / 6.0 + 0.26)
+					_cyl(dark, Vector3(face - side * 0.036, 0, 0) + bi.y * rr * 0.42, rr * 0.06, 0.014, Vector3.RIGHT, 8)
+			"deep":  # deep dish: six spokes set well back inside a wide lip
+				var x_back: float = face - side * 0.1
+				for k in 6:
+					_spoke(rim, side, TAU * k / 6.0, 0.0, hub, rr - 0.018, x_back, x_out, 0.06, 0.09, 0.05)
+				_lathe(rim, [Vector2(rr - 0.01, face - side * 0.012), Vector2(rr - 0.01, face - side * 0.11)], 30)
 			_:  # 5spoke
 				for k in 5:
 					_spoke(rim, side, TAU * k / 5.0, 0.0, hub, rr - 0.018, x_in, x_out, 0.05, 0.088, 0.036)
@@ -1553,7 +1628,7 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a"), style 
 	var M := {}
 	if kit.has("surfaces"):
 		M = {
-			"paint": paint(color), "glass": _glass(), "glass_solid": _glass_solid(),
+			"paint": paint(color, String(style.get("finish", "gloss"))), "glass": _glass(), "glass_solid": _glass_solid(),
 			"dark": mat(Color("#18191b"), 0.0, 0.6), "gloss": _gloss(), "under": mat(Color("#0b0c0e"), 0.0, 0.95),
 			"chrome": _chrome(), "plate": mat(Color("#e8e6dc"), 0.0, 0.6),
 			"head": lamp(Color("#fff6d8"), 2.0), "headlens": _headlens_mat(style.get("halo", false)), "grille": _grille_mat(),

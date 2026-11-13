@@ -355,6 +355,7 @@ static func lamp(c: Color, glow: float) -> StandardMaterial3D:
 
 static var _paint_shader: Shader
 static var _glass_shader: Shader
+static var _glass_cracked_shader: Shader
 
 
 ## A material from shaders/car_paint.gdshader: glossy paint, trim, chrome or
@@ -1479,6 +1480,8 @@ var _plate_label: Label3D
 var _calipers: Array = []         # by wheel: its brake caliper (or null)
 var _gone: Array[bool] = []       # by wheel: it has come off
 var _cracks := 0
+var _glass_cracked: ShaderMaterial   # this car's own glass once a window of it has cracked (see crack_glass)
+var _glass_cracked_key := ""
 var _lamps_out := false
 var _smoke_fx: CPUParticles3D
 var _fire_fx: CPUParticles3D
@@ -1742,7 +1745,7 @@ static var _env_horizon: Color = DAY_ENV.env_horizon
 
 
 static func _dusk_params(m: ShaderMaterial) -> void:
-	if m.shader != _paint_shader and m.shader != _glass_shader:
+	if m.shader != _paint_shader and m.shader != _glass_shader and m.shader != _glass_cracked_shader:
 		return
 	m.set_shader_parameter("env_zenith", _env_zenith)
 	m.set_shader_parameter("env_horizon", _env_horizon)
@@ -2232,13 +2235,39 @@ func glass_spot(which: String, side := 1.0) -> Vector3:
 			return Vector3(side * w * 0.5, t * 0.75, -l * 0.28)
 
 
-## A window cracks round `p` (0.2 a star, 1 shattered). Two can be cracked at once (the glass shader draws both).
+## A window cracks round `p` (0.2 a star, 1 shattered). Two can be cracked at once (the cracked-glass shader draws
+## both). The first crack gives this car glass of its own, with the cracked-glass shader; until then every car's glass
+## is the one plain shared material, with no per-car parameters in it.
 func crack_glass(p: Vector3, amount: float) -> void:
+	if _glass_cracked == null:
+		if _glass_cracked_shader == null:
+			_glass_cracked_shader = load("res://shaders/car_glass_cracked.gdshader")
+		_glass_cracked = ShaderMaterial.new()
+		_glass_cracked.shader = _glass_cracked_shader
+		_dusk_params(_glass_cracked)  # (the sky it reflects is the one the shared glass reflects now)
+		_glass_cracked_key = "glass_cracked|%d" % get_instance_id()
+		_mats[_glass_cracked_key] = _glass_cracked  # (so set_night keeps its sky up to date)
+		for pair in [[_body_mi, _surface_names], [_far_mi, _surface_names_far]]:
+			var mi: MeshInstance3D = pair[0]
+			if mi == null:
+				continue
+			var names: Array = pair[1]
+			for i in names.size():
+				if String(names[i]) == "glass":
+					mi.set_surface_override_material(i, _glass_cracked)
 	var slot := "crack_a" if _cracks % 2 == 0 else "crack_b"
 	_cracks += 1
-	for mi in [_body_mi, _far_mi]:
-		if mi != null:
-			mi.set_instance_shader_parameter(slot, Vector4(p.x, p.y, p.z, clampf(amount, 0.0, 1.0)))
+	_glass_cracked.set_shader_parameter(slot, Vector4(p.x, p.y, p.z, clampf(amount, 0.0, 1.0)))
+
+
+func _exit_tree() -> void:
+	if _glass_cracked_key != "":
+		_mats.erase(_glass_cracked_key)
+
+
+func _enter_tree() -> void:
+	if _glass_cracked_key != "":
+		_mats[_glass_cracked_key] = _glass_cracked
 
 
 ## A smashed front: the headlamps and the tail lamps go dark and dull.

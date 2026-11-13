@@ -195,6 +195,16 @@ func _rebuild() -> void:
 			continue
 		tg.dirty = false
 		var mesh: ArrayMesh = tg.mesh
+		var mi: MeshInstance3D = tg.mi
+		# a MeshInstance3D forgets the materials it overrides as soon as its mesh loses its surfaces: keep them
+		var keep: Array = []
+		if is_instance_valid(mi):
+			for s in mi.get_surface_override_material_count():
+				keep.append(mi.get_surface_override_material(s))
 		mesh.clear_surfaces()
 		for sf in tg.surfs:
 			mesh.add_surface_from_arrays(sf.prim, sf.arrays)
+		if is_instance_valid(mi):
+			for s in mini(keep.size(), mi.get_surface_override_material_count()):
+				if keep[s] != null:
+					mi.set_surface_override_material(s, keep[s])

@@ -431,19 +431,12 @@ func _mat(c: Color, rough := 0.7, metal := 0.0, glow := 0.0) -> StandardMaterial
 	return m
 
 
-func _label(parent: Node3D, text: String, pos: Vector3, size: int, c: Color, rot := Vector3.ZERO, px := 0.01) -> void:
-	var l := Label3D.new()
-	l.text = text
-	l.font_size = size
-	l.pixel_size = px
-	l.modulate = c
-	l.outline_size = 0
-	l.position = pos
-	l.rotation = rot
+## A line of lettering made by SignKit, put in this room (its own render layer, seen from the front only).
+func _sign_line(l: Label3D) -> void:
 	l.layers = LAYER
 	l.shaded = false
 	l.double_sided = false
-	parent.add_child(l)
+	add_child(l)
 
 
 ## A soft glow lying on the floor (additive), brightest `peak` of the way out from the middle.
@@ -537,16 +530,21 @@ func _build_room() -> void:
 		b.box("white", Vector3(x, H - 0.19, 0), Vector3(0.4, 0.03, 12.0))
 	for z in [-7.0, 7.0]:
 		b.box("cool", Vector3(0, H - 0.19, z), Vector3(11.0, 0.03, 0.12))
-	# ---- the brand wall (behind the car in the showroom shot): a green guide sign between two light posts
+	# ---- the brand wall (behind the car in the showroom shot): a green guide sign between two light posts, lettered like a
+	# road sign (a white line inset from the edge; the exit number over the services, both centred on the panel)
 	var sz := D / 2.0 - 0.3
 	var sx := 6.5  # (off to one side: out of the showroom shot, but there as the camera walks round)
-	b.box("paper", Vector3(sx, 3.0, sz), Vector3(6.2, 1.7, 0.08))
-	b.box("green", Vector3(sx, 3.0, sz - 0.03), Vector3(6.0, 1.5, 0.08))
+	b.box("green", Vector3(sx, 3.0, sz), Vector3(6.2, 1.7, 0.08))
+	for edge in [[0.0, 0.7, 5.8, 0.05], [0.0, -0.7, 5.8, 0.05], [-2.875, 0.0, 0.05, 1.4], [2.875, 0.0, 0.05, 1.4]]:
+		b.box("paper", Vector3(sx + edge[0], 3.0 + edge[1], sz - 0.045), Vector3(edge[2], edge[3], 0.016))
 	for x in [sx - 3.6, sx + 3.6]:
 		b.box("steel", Vector3(x, 2.4, sz), Vector3(0.14, 3.0, 0.14))
 		b.box("white", Vector3(x, 2.4, sz - 0.09), Vector3(0.07, 2.6, 0.03))
-	_label(self, "EXIT 12", Vector3(sx, 3.3, sz - 0.1), 110, Color("#f3f5ef"), Vector3(0, PI, 0), 0.008)
-	_label(self, "SERVICE AREA  ·  TUNING  ·  PAINT", Vector3(sx, 2.55, sz - 0.1), 40, Color("#f5b52e"), Vector3(0, PI, 0), 0.006)
+	var cap_a := SignKit.CAP * 0.62
+	var cap_b := SignKit.CAP * 0.3
+	var top := 3.0 + (cap_a + 0.3 + cap_b) / 2.0
+	_sign_line(SignKit.line("EXIT 12", 0.62, SignKit.WHITE, Vector3(sx, top - cap_a / 2.0, sz - 0.07), HORIZONTAL_ALIGNMENT_CENTER, Basis(Vector3.UP, PI)))
+	_sign_line(SignKit.line("SERVICE AREA  ·  TUNING  ·  PAINT", 0.3, Color("#f5b52e"), Vector3(sx, top - cap_a - 0.3 - cap_b / 2.0, sz - 0.07), HORIZONTAL_ALIGNMENT_CENTER, Basis(Vector3.UP, PI)))
 	# ---- the roller door on the opposite wall
 	var dz := -D / 2.0 + 0.3
 	b.box("door", Vector3(0, 2.1, dz), Vector3(6.4, 4.2, 0.06))

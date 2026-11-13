@@ -43,8 +43,8 @@ void fragment() {
 	float ndv0 = clamp(dot(NORMAL, VIEW), 0.0, 1.0);
 	if (pearl > 0.0) {
 		// a fine pearl layer in the paint: the colour turns towards the pearl hue as the panel turns away from the eye
-		float turn = pow(1.0 - ndv0, 2.6);
-		albedo = mix(albedo, pearl_color.rgb, clamp(turn * 0.75, 0.0, 1.0) * pearl);
+		float turn = pow(1.0 - ndv0, 1.7);
+		albedo = mix(albedo, pearl_color.rgb, clamp(turn * 1.2, 0.0, 1.0) * pearl);
 	}
 	if (candy > 0.0) {
 		albedo = mix(albedo, albedo * albedo * 1.7, candy);  // deeper and richer than the same colour in plain paint

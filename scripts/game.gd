@@ -167,6 +167,8 @@ var ap_brake := false
 var autotest := false
 var auto_quit := 0.0
 var showroom := ""  # --showroom=rear|front: every player car parked in a row, simulation frozen (test view)
+var _sc_base := 0.0     # --sc-base=M: the showroom view is of the road M metres in (test aid: signs, stations)
+var _sc_finish := -1.0  # --sc-finish=M: ... with the finish gantry at M metres (test aid)
 var _inspect: PackedStringArray = []
 var _test_win := Vector2i.ZERO
 var shots: Array = []
@@ -226,6 +228,9 @@ var _dmg_unsaved := false   # the player's car has taken knocks that the save fi
 var _test_atlas := 0        # --shadow-atlas=N: the sun's shadow map size, whatever the graphics level (test aid)
 var _test_noglow := false   # --noglow: no bloom, whatever the graphics level (test aid)
 var station := {}       # the next fuel stop: {z, name, color, prices: {regular, mid, premium}}
+var _trk_on := false      # the HUD's fuel stop tracker (made by _fuel_track): shown, metres to the start of the exit lane, metres to the pumps
+var _trk_entry := 0.0
+var _trk_pumps := 0.0
 var last_station := {}  # the one before (still shown in replays)
 var pump := {}          # the refuel screen: {litres, bill, on, auto, t}
 var godmode := false
@@ -257,6 +262,10 @@ func _ready() -> void:
 			_forced_song = BossMusic.find(a.substr(8))
 		if a.begins_with("--showroom"):
 			showroom = a.substr(11) if a.length() > 11 else "rear"
+		if a.begins_with("--sc-base="):
+			_sc_base = float(a.substr(10))
+		if a.begins_with("--sc-finish="):
+			_sc_finish = float(a.substr(12))
 		if a.begins_with("--inspect="):  # one car, camera orbiting it: ID:YAW:PITCH:DIST[:FOV] (test aid)
 			showroom = "inspect"
 			_inspect = a.substr(10).split(":")
@@ -3324,7 +3333,7 @@ func _process(delta: float) -> void:
 	if perf:
 		perf.begin()
 	if showroom != "":
-		scenery.update_view(0.0, -1.0, 0.0)
+		scenery.update_view(_sc_base, _sc_finish, 0.0)
 		var front := showroom == "front"
 		cam.fov = 55.0
 		var views := {"rear": [Vector3(-9.5, 2.4, 6.0), Vector3(-1.0, 0.6, -6.0)], "front": [Vector3(9.0, 2.2, -24.0), Vector3(-1.0, 0.6, -9.0)],
@@ -3335,6 +3344,11 @@ func _process(delta: float) -> void:
 			"trees": [Vector3(9.0, 2.2, -10.0), Vector3(24.0, 4.0, -50.0)],
 			"t_rear": [Vector3(-9.5, 2.4, 6.0), Vector3(-1.0, 0.6, -6.0)], "t_front": [Vector3(9.0, 2.2, -24.0), Vector3(-1.0, 0.6, -9.0)]}
 		var v: Array = views.get(showroom, views.rear)
+		if showroom.begins_with("cam:"):  # a free camera: cam:X,Y,Z,TX,TY,TZ[,FOV] (road space: x right, z = -distance ahead of the start)
+			var cf := showroom.substr(4).split(",")
+			v = [Vector3(float(cf[0]), float(cf[1]), float(cf[2])), Vector3(float(cf[3]), float(cf[4]), float(cf[5]))]
+			if cf.size() > 6:
+				cam.fov = float(cf[6])
 		if showroom == "inspect":
 			# several yaws (comma separated) step every 3 s from 7.5 s, for a set of shots in one run
 			var yaws := (_inspect[1] if _inspect.size() > 1 else "35").split(",")
@@ -3831,6 +3845,7 @@ func _update_hud() -> void:
 		_hud_minute = minute
 		_hud_clock_s = clock_text()
 	var sp := _speed_text()
+	_fuel_track()
 	var d := {
 		"score": _hud_score_s,
 		"mult": _hud_mult_s,
@@ -3848,7 +3863,9 @@ func _update_hud() -> void:
 		"inf": Save.setting("dev_lives") or godmode,
 		"fuel": run.fuel / maxf(st.tank, 1.0),
 		"fuel_l": _hud_fuel_s,
-		"fuel_next": _fuel_next_text(),
+		"trk_on": _trk_on,
+		"trk_entry": _trk_entry,
+		"trk_pumps": _trk_pumps,
 		"clock": _hud_clock_s,
 	}
 	if run.phase == "cop":
@@ -4347,8 +4364,8 @@ func _on_act(action: String, arg: String) -> void:
 			else:
 				hud.garage_say("%s costs $%s: you need $%s more." % [fin.name, Fmt.num(fin.price), Fmt.num(int(fin.price) - int(Save.data.cash))])
 				sound.play("ding", 0.6, -8.0)
-		"paint", "rim", "rim_color", "rim_reset":
-			var key: String = {"paint": "color", "rim": "rim", "rim_color": "rim_color"}.get(action, "")
+		"paint", "pearl", "rim", "rim_color", "rim_reset":
+			var key: String = {"paint": "color", "pearl": "pearl", "rim": "rim", "rim_color": "rim_color"}.get(action, "")
 			if action == "rim_reset":
 				Save.set_look(Save.data.selected, "rim", "")
 				Save.set_look(Save.data.selected, "rim_color", "")
@@ -5089,15 +5106,18 @@ func _funds() -> Dictionary:
 	return {"bank": Save.data.cash, "run": from_run, "total": Save.data.cash + from_run}
 
 
-func _fuel_next_text() -> String:
-	if station.is_empty() or run == null:
-		return ""
-	var ahead := float(station.z) - player.z
-	if ahead < -GasStation.FORE:
-		return ""
-	if ahead > 3000.0 and run.fuel > st.tank * 0.3:
-		return ""
-	return "FUEL %s" % Fmt.km(maxf(ahead, 0.0))
+## What the HUD's fuel stop tracker shows: how far it is to where the next stop's exit lane begins to peel off
+## (negative inside the lane's length) and to its pumps. It is off when there is nothing to head for: the stop is far
+## away and the tank is fine, it is too late to pull in, or the car is pulling in or has chosen to pass.
+func _fuel_track() -> void:
+	_trk_on = false
+	if station.is_empty() or run == null or not run.pit.is_empty() or run.pit_skip == float(station.z):
+		return
+	_trk_pumps = float(station.z) - player.z
+	_trk_entry = _trk_pumps - GasStation.EXIT_START
+	if _trk_pumps < GasStation.FORE - 20.0:  # (a car this close to the pumps can no longer pull in: _pit_ready)
+		return
+	_trk_on = _trk_entry < 3000.0 or run.fuel <= st.tank * 0.3
 
 
 ## Warnings, the heads-up for the next stop, running dry, and moving on to
@@ -5116,13 +5136,12 @@ func _update_fuel(dt: float) -> void:
 		sound.play("ding", 0.6, -2.0)
 	if not station.is_empty():
 		var ahead := float(station.z) - player.z
-		if ahead < 1000.0 and ahead > 600.0 and run.heads_up != float(station.z):
+		# a kilometre from where the exit lane begins: a warning along the top of the screen (it fades by itself)
+		var to_lane := ahead - GasStation.EXIT_START
+		if to_lane < 1000.0 and to_lane > 100.0 and run.heads_up != float(station.z):
 			run.heads_up = float(station.z)
 			var g: String = st.grade
-			hud.pop("%s IN 1 KM · %s $%.2f/L" % [String(station.name).to_upper(), Data.FUEL_GRADES[g].short, station.prices[g]], "small")
-		if ahead < 450.0 and ahead > 250.0 and run.heads_up != -float(station.z) and run.fuel < st.tank * 0.9:
-			run.heads_up = -float(station.z)
-			hud.pop("MOVE RIGHT INTO THE EXIT LANE TO PULL IN", "small")
+			hud.fuel_warning("FUEL STOP IN 1 KM", "%s · %s $%.2f/L" % [String(station.name).to_upper(), Data.FUEL_GRADES[g].short, station.prices[g]])
 		if ahead < -GasStation.MERGE_END - 30.0 and run.pit.is_empty():
 			_new_station(float(station.z))
 	if run.fuel <= 0.0 and run.pit.is_empty():

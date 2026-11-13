@@ -178,7 +178,7 @@ func car_color(c: Dictionary) -> Color:
 func car_style(c: Dictionary) -> Dictionary:
 	var st: Dictionary = (c.style as Dictionary).duplicate()
 	var lk: Dictionary = data.get("looks", {}).get(c.id, {})
-	for k in ["rim", "rim_color", "finish"]:
+	for k in ["rim", "rim_color", "finish", "pearl"]:
 		if lk.has(k):
 			st[k] = lk[k]
 	return st

@@ -794,17 +794,18 @@ func _build_far() -> void:
 			_clouds.add_child(puff)
 
 
+const KM_EM := 0.46      # letter size of the kilometre marker
+const KM_W := 1.9        # its panel
+
+
 func _build_km_sign() -> void:
 	_km_sign = Node3D.new()
 	add_child(_km_sign)
 	var x := Data.RAIL + 1.6
-	_km_sign.add_child(_merged({CarModel.mat(Color("#8a9096")): [[Vector3(x, 1.2, 0), Vector3(0.12, 2.4, 0.12)]],
-		M.white: [[Vector3(x, 2.85, 0.0), Vector3(1.5, 1.0, 0.07)]], M.sign: [[Vector3(x, 2.85, 0.02), Vector3(1.4, 0.9, 0.07)]]}))
-	_km_label = Label3D.new()
-	_km_label.font_size = 64
-	_km_label.pixel_size = 0.006
-	_km_label.modulate = Color("#f3f5ef")
-	_km_label.position = Vector3(x, 2.85, 0.06)
+	var parts := {CarModel.mat(Color("#8a9096")): [[Vector3(x, 1.2, 0), Vector3(0.12, 2.4, 0.12)]], M.white: [], M.sign: []}
+	_add_boxes(parts, SignKit.panel(M.sign, M.white, Vector3(x, 2.85, 0.06), KM_W, 1.1, 0.09, 0.05, 0.07))
+	_km_sign.add_child(_merged(parts))
+	_km_label = SignKit.line("km 1", KM_EM, SignKit.WHITE, Vector3(x, 2.85, 0.06 + SignKit.LETTERS))
 	_km_sign.add_child(_km_label)
 
 
@@ -815,22 +816,13 @@ func _build_gantry() -> void:
 	for s in [-1.0, 1.0]:
 		parts[M.steel_dark].append([Vector3(s * (Data.RAIL + 0.7), 3.6, 0), Vector3(0.4, 7.2, 0.4)])
 	parts[M.steel_dark].append([Vector3(0, 6.95, 0), Vector3(Data.RAIL * 2 + 1.8, 0.5, 0.4)])
-	parts[M.sign].append([Vector3(0, 5.5, 0.1), Vector3(8.6, 2.3, 0.15)])
-	parts[M.white].append([Vector3(0, 5.5, 0.19), Vector3(8.2, 1.9, 0.02)])
-	parts[M.sign].append([Vector3(0, 5.5, 0.21), Vector3(7.9, 1.6, 0.02)])
+	_add_boxes(parts, SignKit.panel(M.sign, M.white, Vector3(0, 5.5, 0.175), 8.6, 2.3, 0.2, 0.1, 0.15))
 	for i in 10:
 		for r in 2:
 			var x := -Data.ROAD_HALF + i * 1.44 + (0.36 if r == 0 else 1.08)
 			parts[M.white].append([Vector3(x, 0.01, -0.36 - r * 0.72), Vector3(0.72, 0.02, 0.72)])
 	_gantry.add_child(_merged(parts))
-	var lbl := Label3D.new()
-	lbl.text = "FINISH"
-	lbl.font_size = 220
-	lbl.pixel_size = 0.0075
-	lbl.modulate = Color("#f3f5ef")
-	lbl.position = Vector3(0, 5.5, 0.24)
-	_fit(lbl, 0.0075, 7.3, 1.4)
-	_gantry.add_child(lbl)
+	_gantry.add_child(SignKit.line("FINISH", 1.2, SignKit.WHITE, Vector3(0, 5.5, 0.175 + SignKit.LETTERS)))
 	_gantry.visible = false
 
 
@@ -851,53 +843,60 @@ func _clear(n: Node3D) -> void:
 		c.queue_free()
 
 
-## Text for a sign. If max_w/max_h are given (metres), the text is shrunk so
-## it always stays inside the sign face.
-func _label(text: String, size: int, px: float, col: Color, pos: Vector3, max_w := 0.0, max_h := 0.0) -> Label3D:
-	var l := Label3D.new()
-	l.text = text
-	l.font_size = size
-	l.pixel_size = px
-	l.modulate = col
-	l.position = pos
-	l.outline_size = 0
-	l.line_spacing = -4
-	if max_w > 0.0:
-		_fit(l, px, max_w, max_h)
-	return l
+## Add boxes made by SignKit.panel (material, centre, size) to a parts dictionary for _merged.
+static func _add_boxes(parts: Dictionary, boxes: Array) -> void:
+	for b in boxes:
+		if not parts.has(b[0]):
+			parts[b[0]] = []
+		parts[b[0]].append([b[1], b[2]])
 
 
-static func _fit(l: Label3D, px: float, max_w: float, max_h: float) -> void:
-	var sz := ThemeDB.fallback_font.get_multiline_string_size(l.text, HORIZONTAL_ALIGNMENT_CENTER, -1, l.font_size, -1, TextServer.BREAK_MANDATORY)
-	var k := 1.0
-	if sz.x * px > max_w:
-		k = minf(k, max_w / (sz.x * px))
-	if max_h > 0.0 and sz.y * px > max_h:
-		k = minf(k, max_h / (sz.y * px))
-	l.pixel_size = px * k
+const GANTRY_EM := 0.7       # letter size on the exit gantry (one size on all its panels, as on a real road)
+const GANTRY_EDGE := 0.55    # from a panel's edge to its lettering
+const GANTRY_GAP := 0.9      # between a name and its distance
 
 
 func _setup_sign_gantry(n: Node3D, k: int) -> void:
 	_clear(n)
 	var exit_no := 10 + posmod(k * 7, 89)
-	var a: String = PLACES[posmod(k * 3, PLACES.size())]
-	var b: String = PLACES[posmod(k * 5 + 2, PLACES.size())]
+	var a: String = PLACES[posmod(k * 3, PLACES.size())]       # the exit's town
+	var b: String = PLACES[posmod(k * 5 + 2, PLACES.size())]   # the towns straight on, and how far
 	var c: String = PLACES[posmod(k * 11 + 5, PLACES.size())]
+	var db := "%d km" % (12 + posmod(k * 13, 60))
+	var dc := "%d km" % (40 + posmod(k * 17, 90))
 	var parts := {M.steel_dark: [], M.white: [], M.sign: []}
 	for x in [Data.RAIL + 1.0, -Data.RAIL - 0.9]:
 		parts[M.steel_dark].append([Vector3(x, 4.0, 0), Vector3(0.45, 8.0, 0.45)])
 	parts[M.steel_dark].append([Vector3(0, 7.9, 0), Vector3(Data.RAIL * 2.0 + 2.4, 0.35, 0.5)])
 	parts[M.steel_dark].append([Vector3(0, 7.5, 0), Vector3(Data.RAIL * 2.0 + 2.4, 0.12, 0.3)])
-	for cx in [3.7, -3.4]:
-		parts[M.white].append([Vector3(cx, 6.5, 0.25), Vector3(6.4, 2.6, 0.06)])
-		parts[M.sign].append([Vector3(cx, 6.5, 0.28), Vector3(6.2, 2.4, 0.06)])
-	parts[M.white].append([Vector3(5.6, 5.0, 0.26), Vector3(2.4, 0.5, 0.05)])
+	# Lettering like a real sign's: names against the left margin, distances against the right in their own column,
+	# every line the same height, and each panel as wide as its longest line needs (within what fits between the posts).
+	var names := maxf(SignKit.width(b, 1.0), SignKit.width(c, 1.0))
+	var dists := maxf(SignKit.width(db, 1.0), SignKit.width(dc, 1.0))
+	var towns := maxf(SignKit.width(a, 1.0), SignKit.width("1 km", 1.0))
+	var em := minf(GANTRY_EM, minf((8.4 - GANTRY_GAP - 2.0 * GANTRY_EDGE) / (names + dists), (6.6 - 2.0 * GANTRY_EDGE) / towns))
+	var w_thru := maxf(5.0, em * (names + dists) + GANTRY_GAP + 2.0 * GANTRY_EDGE)
+	var w_exit := maxf(4.4, em * towns + 2.0 * GANTRY_EDGE)
+	var zf := 0.31                      # the front of the panels
+	var zt := zf + SignKit.LETTERS      # and of the lettering
+	var white := SignKit.WHITE
+	var x_thru := -3.6                  # over the left lanes
+	_add_boxes(parts, SignKit.panel(M.sign, M.white, Vector3(x_thru, 6.5, zf), w_thru, 2.4))
+	var left := x_thru - w_thru / 2.0 + GANTRY_EDGE
+	var right := x_thru + w_thru / 2.0 - GANTRY_EDGE
+	n.add_child(SignKit.block([b, c], em, white, Vector3(left, 7.0, zt), 1.0, HORIZONTAL_ALIGNMENT_LEFT))
+	n.add_child(SignKit.block([db, dc], em, white, Vector3(right, 7.0, zt), 1.0, HORIZONTAL_ALIGNMENT_RIGHT))
+	var x_exit := 4.6                   # over the right lanes, the exit's side
+	_add_boxes(parts, SignKit.panel(M.sign, M.white, Vector3(x_exit, 6.5, zf), w_exit, 2.4))
+	left = x_exit - w_exit / 2.0 + GANTRY_EDGE
+	n.add_child(SignKit.block([a, "1 km"], em, white, Vector3(left, 7.0, zt), 1.0, HORIZONTAL_ALIGNMENT_LEFT))
+	# the exit number on a tab of its own under the right-hand corner
+	var tab_em := 0.42
+	var tab_w := SignKit.width("EXIT %d" % exit_no, tab_em) + 0.7
+	var tab_x := x_exit + w_exit / 2.0 - 0.35 - tab_w / 2.0
+	_add_boxes(parts, SignKit.panel(M.sign, M.white, Vector3(tab_x, 4.95, zf), tab_w, 0.7, 0.06, 0.04))
+	n.add_child(SignKit.line("EXIT %d" % exit_no, tab_em, white, Vector3(tab_x, 4.95, zt)))
 	n.add_child(_merged(parts))
-	var white := Color("#f3f5ef")
-	n.add_child(_label("%s\n%s" % [a, "1 km"], 150, 0.011, white, Vector3(3.7, 6.5, 0.32), 5.6, 2.0))
-	n.add_child(_label("%s   %d\n%s   %d" % [b, 12 + posmod(k * 13, 60), c, 40 + posmod(k * 17, 90)], 130, 0.01, white, Vector3(-3.4, 6.5, 0.32), 5.6, 2.0))
-	var ex := _label("EXIT %d" % exit_no, 90, 0.008, Color("#0d6a42"), Vector3(5.6, 5.0, 0.3), 2.1, 0.4)
-	n.add_child(ex)
 
 
 func _setup_overpass(n: Node3D, _k: int) -> void:
@@ -922,8 +921,8 @@ func _setup_overpass(n: Node3D, _k: int) -> void:
 		parts[M.concrete_dark].append([Vector3(ex, 2.3, 0), Vector3(16.0, 3.0, 14.0), Basis(Vector3.BACK, s * 0.42)])
 		parts[M.concrete].append([Vector3(ex - s * 7.8, 3.8, 0), Vector3(1.4, 7.6, 13.0)])
 	n.add_child(_merged(parts))
-	var stripe := _label("REDLINE COUNTY", 120, 0.012, Color("#5b5953"), Vector3(-2.0, 7.05, 6.02), 14.0, 0.6)
-	n.add_child(stripe)
+	# the name of the county in letters on the deck's edge (centred on it, over the right-hand carriageway)
+	n.add_child(SignKit.line("REDLINE COUNTY", 0.56, Color("#5b5953"), Vector3(-2.0, 7.0, 6.02)))
 
 
 func _setup_billboard(n: Node3D, k: int) -> void:
@@ -933,7 +932,7 @@ func _setup_billboard(n: Node3D, k: int) -> void:
 	var x := Data.RAIL + 13.0 if right else OPP_X - Data.RAIL - 13.0
 	var root := Node3D.new()
 	root.position = Vector3(x, 0, 0)
-	root.rotation.y = 0.35 if right else -0.35
+	root.rotation.y = -0.3 if right else 0.3  # turned a little towards the road, to the drivers coming up to it
 	n.add_child(root)
 	var bg := CarModel.mat(Color(ad[2]), 0.0, 0.6)
 	var parts := {M.steel_dark: [], M.white: [], bg: []}
@@ -943,9 +942,16 @@ func _setup_billboard(n: Node3D, k: int) -> void:
 	parts[M.white].append([Vector3(0, 9.4, 0), Vector3(12.8, 5.0, 0.3)])
 	parts[bg].append([Vector3(0, 9.4, 0.08), Vector3(12.2, 4.4, 0.3)])
 	root.add_child(_merged(parts))
+	# a headline with a line under it, both centred, the pair centred on the board (an ad sets its own letter size, to fill the board)
 	var fg := Color(ad[3])
-	root.add_child(_label(ad[0], 220, 0.02, fg, Vector3(0, 10.2, 0.26), 11.2, 1.9))
-	root.add_child(_label(ad[1], 110, 0.016, fg, Vector3(0, 8.4, 0.26), 11.2, 1.0))
+	var em_h := SignKit.fit_em([ad[0]], 2.0, 10.6)
+	var em_t := SignKit.fit_em([ad[1]], 0.95, 10.6)
+	var cap_h := SignKit.CAP * em_h
+	var cap_t := SignKit.CAP * em_t
+	var gap := 0.55 * cap_h
+	var top := 9.4 + (cap_h + gap + cap_t) / 2.0
+	root.add_child(SignKit.line(ad[0], em_h, fg, Vector3(0, top - cap_h / 2.0, 0.26)))
+	root.add_child(SignKit.line(ad[1], em_t, fg, Vector3(0, top - cap_h - gap - cap_t / 2.0, 0.26)))
 
 
 func _setup_farm(n: Node3D, k: int) -> void:
@@ -1116,8 +1122,7 @@ func update_view(base_z: float, finish_z: float, dt := 0.016) -> void:
 	_km_sign.position.z = -(next_km - base_z)
 	var km_text := "km %d" % int(next_km / 1000.0)
 	if _km_label.text != km_text:
-		_km_label.text = km_text
-		_fit(_km_label, 0.006, 1.25, 0.75)
+		SignKit.set_text(_km_label, km_text, KM_EM, KM_W - 0.58)
 	_km_sign.visible = next_km - base_z < VIEW_AHEAD
 	if finish_z >= 0.0 and finish_z - base_z < VIEW_AHEAD and finish_z - base_z > -VIEW_BEHIND:
 		_gantry.visible = true

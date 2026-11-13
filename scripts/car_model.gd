@@ -397,13 +397,16 @@ static func pearl_shift(c: Color) -> Color:
 
 
 ## Paint in a colour and a finish (FINISH_LOOKS): gloss, semi-gloss, matte, metallic, pearlescent, candy or chrome.
-static func paint(c: Color, finish := "gloss") -> Material:
+## A pearlescent paint has two colours: `c` and the one under it that it turns to (`under`; with no alpha, one is made from c).
+static func paint(c: Color, finish := "gloss", under := Color(0, 0, 0, 0)) -> Material:
 	var look: Dictionary = FINISH_LOOKS.get(finish, FINISH_LOOKS.gloss)
 	var params := {"base_color": c.darkened(0.04)}
 	params.merge(look)
+	var key_under := ""
 	if finish == "pearl":
-		params["pearl_color"] = pearl_shift(c)
-		params["base_color"] = c.lerp(Color("#f4efe8"), 0.1)  # (the pearl layer lifts the colour a little)
+		params["pearl_color"] = under if under.a > 0.0 else pearl_shift(c)
+		key_under = (params["pearl_color"] as Color).to_html(false)
+		params["base_color"] = c.lerp(Color("#f4efe8"), 0.08)  # (the pearl layer lifts the colour a little)
 	elif finish == "chrome":
 		params["base_color"] = c.lerp(Color("#e9edf0"), 0.45)  # (a mirror: the colour only tints what it reflects)
 	elif finish == "candy":
@@ -412,7 +415,7 @@ static func paint(c: Color, finish := "gloss") -> Material:
 		params["base_color"] = c.lightened(0.08)  # (the metal in the paint takes some of the body colour out of it)
 	elif finish == "matte":
 		params["base_color"] = c.darkened(0.14)  # (flat paint is duller than the same colour with a gloss over it)
-	return _car_shader_mat("paint|%s|%s" % [c.to_html(), finish if FINISH_LOOKS.has(finish) else "gloss"], params)
+	return _car_shader_mat("paint|%s|%s|%s" % [c.to_html(), finish if FINISH_LOOKS.has(finish) else "gloss", key_under], params)
 
 
 ## Polished chrome: a mirror of the surroundings.
@@ -1628,7 +1631,8 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a"), style 
 	var M := {}
 	if kit.has("surfaces"):
 		M = {
-			"paint": paint(color, String(style.get("finish", "gloss"))), "glass": _glass(), "glass_solid": _glass_solid(),
+			"paint": paint(color, String(style.get("finish", "gloss")), Color(String(style.pearl)) if String(style.get("pearl", "")) != "" else Color(0, 0, 0, 0)),
+			"glass": _glass(), "glass_solid": _glass_solid(),
 			"dark": mat(Color("#18191b"), 0.0, 0.6), "gloss": _gloss(), "under": mat(Color("#0b0c0e"), 0.0, 0.95),
 			"chrome": _chrome(), "plate": mat(Color("#e8e6dc"), 0.0, 0.6),
 			"head": lamp(Color("#fff6d8"), 2.0), "headlens": _headlens_mat(style.get("halo", false)), "grille": _grille_mat(),

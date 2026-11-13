@@ -14,6 +14,7 @@ const AMBER_INK := Color("#1d1503")
 const TAIL := Color("#ff3b2a")
 const MUTED := Color("#b5c4ba")
 const RED_SIGN := Color("#5a1717")
+const LANE_GREEN := Color("#5bd68b")
 const SCRIM := Color(0.03, 0.04, 0.05, 0.62)
 
 var display_font: SystemFont
@@ -68,7 +69,18 @@ var _solid: Array[Control] = []  # panels on sheet screens (drags elsewhere turn
 var fps_label: Label
 var _fuel_bar: ProgressBar
 var _fuel_val: Label
-var _fuel_next: Label
+var _trk: PanelContainer      # the fuel stop tracker: top right under the buttons, above the notification bands
+var _trk_style: StyleBoxFlat
+var _trk_head: Label
+var _trk_dist: Label
+var _trk_bar: ProgressBar
+var _trk_key := ""            # what its words were last made from
+var _trk_lane := false        # whether it is showing the exit lane (not the way there)
+var _warn: PanelContainer     # the fuel stop warning, along the top of the screen
+var _warn_title: Label
+var _warn_sub: Label
+var _warn_tween: Tween
+var _fill_green: StyleBoxFlat
 var _rf := {}
 var mirror: RearMirror
 var steer_bar: SteerBar
@@ -99,6 +111,7 @@ func _ready() -> void:
 	_fill_white = _flat(LINE, 6)
 	_fill_amber = _flat(AMBER, 6)
 	_fill_red = _flat(TAIL, 6)
+	_fill_green = _flat(LANE_GREEN, 6)
 
 	_build_play()
 	_build_menu()
@@ -551,6 +564,60 @@ func _build_play() -> void:
 	_pops.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	play_layer.add_child(_pops)
 
+	# the fuel stop tracker, top right under the CAM and pause buttons (above where the side bands come in)
+	_trk = PanelContainer.new()
+	_trk_style = _band_style(AMBER, 0.8, 8)
+	_trk_style.corner_radius_top_right = 8
+	_trk_style.corner_radius_bottom_right = 8
+	_trk_style.content_margin_left = 13.0
+	_trk_style.content_margin_right = 12.0
+	_trk_style.content_margin_top = 5.0
+	_trk_style.content_margin_bottom = 8.0
+	_trk.add_theme_stylebox_override("panel", _trk_style)
+	_trk.custom_minimum_size.x = 176.0
+	_trk.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_trk.visible = false
+	play_layer.add_child(_trk)
+	var tv := VBoxContainer.new()
+	tv.add_theme_constant_override("separation", 1)
+	tv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_trk.add_child(tv)
+	_trk_head = _label("FUEL STOP", 15, AMBER, mono_font)
+	tv.add_child(_trk_head)
+	_trk_dist = _label("", 34, LINE, display_font)
+	_trk_dist.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.6))
+	_trk_dist.add_theme_constant_override("shadow_offset_y", 2)
+	tv.add_child(_trk_dist)
+	_trk_bar = _bar(_fill_amber, 6)
+	tv.add_child(_trk_bar)
+
+	# the fuel stop warning, along the top of the screen: it holds for five seconds, then fades
+	_warn = PanelContainer.new()
+	var wsb := _band_style(AMBER, 0.9, 10)
+	wsb.border_width_left = 7
+	wsb.corner_radius_top_right = 10
+	wsb.corner_radius_bottom_right = 10
+	wsb.content_margin_left = 16.0
+	wsb.content_margin_right = 18.0
+	wsb.content_margin_top = 6.0
+	wsb.content_margin_bottom = 8.0
+	wsb.shadow_color = Color(0, 0, 0, 0.35)
+	wsb.shadow_size = 8
+	_warn.add_theme_stylebox_override("panel", wsb)
+	_warn.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_warn.visible = false
+	play_layer.add_child(_warn)
+	var wv := VBoxContainer.new()
+	wv.add_theme_constant_override("separation", 0)
+	wv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_warn.add_child(wv)
+	_warn_title = _label("", 30, LINE, display_font)
+	_warn_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	wv.add_child(_warn_title)
+	_warn_sub = _label("", 15, AMBER, mono_font)
+	_warn_sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	wv.add_child(_warn_sub)
+
 	_hint = _label("Swipe left or right anywhere to steer", 24, LINE, mono_font)
 	_hint.anchor_right = 1.0
 	_hint.anchor_top = 0.56
@@ -589,10 +656,7 @@ func _build_play() -> void:
 	_rpm.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	speedo.add_child(_rpm)
 	speedo.move_child(_rpm, 1)
-	# fuel gauge, with the distance to the next fuel stop when it matters
-	_fuel_next = _label("", 15, AMBER, mono_font)
-	_fuel_next.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	speedo.add_child(_fuel_next)
+	# fuel gauge (the distance to the next fuel stop is the tracker at the top right)
 	var frow := _row(6)
 	frow.alignment = BoxContainer.ALIGNMENT_CENTER
 	frow.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -655,6 +719,11 @@ func set_play_visible(on: bool) -> void:
 	_play_on = on
 	if not _editing:
 		play_layer.visible = on
+	if not on:  # (a warning that is still up does not carry over into the next run)
+		if _warn_tween:
+			_warn_tween.kill()
+		_warn.visible = false
+		_trk.visible = false
 
 
 ## Which on-screen control a touch at `pos` lands on: "gas", "brake", "ui" or "".
@@ -760,7 +829,7 @@ func update_play(d: Dictionary) -> void:
 		_fuel_bar.modulate.a = 0.35 if blink else 1.0
 		_fuel_val.text = d.fuel_l
 		_set_font_color(_fuel_val, TAIL if low else LINE)
-		_fuel_next.text = d.fuel_next
+		_update_tracker(d.trk_on, d.trk_entry, d.trk_pumps)
 	var sign_bg := Color("#173a6e", 0.92) if d.get("cop", false) else (RED_SIGN if d.boss else Color(SIGN, 0.88))
 	if sign_bg != _sign_bg:  # (setting a style's colour redraws everything that uses it, even if it is the same colour)
 		_sign_bg = sign_bg
@@ -775,6 +844,79 @@ func update_play(d: Dictionary) -> void:
 	_g.v2.text = d.v2
 	_set_fill(_g.b1, _fill_amber if d.done1 else _fill_white)
 	_set_fill(_g.b2, _fill_red if d.boss else (_fill_amber if d.done2 else _fill_white))
+
+
+## The fuel stop tracker: how far it is to where the stop's exit lane begins, counting down, with a bar that fills as
+## it comes up; once the lane is there it says so ("MOVE RIGHT") and shows how far the pumps are. `entry` is the
+## distance in metres to the start of the lane (zero or less inside it) and `pumps` the distance to the pumps.
+func _update_tracker(on: bool, entry: float, pumps: float) -> void:
+	if not on:
+		if _trk.visible:
+			_trk.visible = false
+		return
+	var lane := entry <= 0.0
+	var head := "FUEL STOP"
+	var big := ""
+	if lane:
+		head = "PUMPS %d m" % (int(maxf(pumps, 0.0) / 10.0) * 10)
+		big = "MOVE RIGHT"
+	elif entry >= 1000.0:
+		big = "%.1f km" % (entry / 1000.0)
+	else:
+		big = "%d m" % (int(entry / 10.0) * 10)  # (in tens of metres: it is never a blur of digits)
+	var key := head + "|" + big
+	if key != _trk_key:
+		_trk_key = key
+		_trk_head.text = head
+		_trk_dist.text = big
+	if lane != _trk_lane or not _trk.visible:
+		_trk_lane = lane
+		var accent := LANE_GREEN if lane else AMBER
+		_trk_style.border_color = accent
+		_set_font_color(_trk_head, accent)
+		_set_font_color(_trk_dist, LANE_GREEN if lane else LINE)
+		_trk_dist.add_theme_font_size_override("font_size", 28 if lane else 34)
+		_set_fill(_trk_bar, _fill_green if lane else _fill_amber)
+	_trk_bar.value = clampf(1.0 - pumps / GasStation.EXIT_START, 0.0, 1.0) if lane else clampf(1.0 - entry / 3000.0, 0.0, 1.0)
+	_trk.visible = true
+	_place_tracker()
+
+
+## Top right: under the CAM and pause buttons and the stage panel, over the notification bands (and below the
+## mirror if it has been dragged over there).
+func _place_tracker() -> void:
+	var vp := play_layer.size if play_layer.size.x > 10.0 else get_viewport().get_visible_rect().size
+	var w := maxf(_trk.size.x, _trk.custom_minimum_size.x)
+	var x := vp.x - 22.0 - w
+	var y := maxf(cam_btn.global_position.y + cam_btn.size.y, _goal.global_position.y + _goal.size.y) + 6.0
+	if mirror and mirror.is_visible_in_tree():
+		var m := Rect2(mirror.global_position, mirror.size).grow(3.0)
+		if m.intersects(Rect2(Vector2(x, y), Vector2(w, _trk.size.y))):
+			y = m.end.y + 2.0
+	var at := Vector2(x, y) - play_layer.global_position
+	if _trk.position != at:
+		_trk.position = at
+
+
+## A warning across the top of the screen (the fuel stop is 1 km ahead): it comes in, holds for five seconds and fades.
+func fuel_warning(title: String, sub: String) -> void:
+	if _warn_tween:
+		_warn_tween.kill()
+	_warn_title.text = title
+	_warn_sub.text = sub
+	var vp := play_layer.size if play_layer.size.x > 10.0 else get_viewport().get_visible_rect().size
+	_warn.custom_minimum_size.x = minf(vp.x - 44.0, 420.0)  # (between the score and the buttons)
+	_warn.reset_size()
+	var sz := _warn.get_combined_minimum_size()
+	_warn.size = sz
+	_warn.position = Vector2((vp.x - sz.x) / 2.0, float(_top_margin.get_theme_constant("margin_top")) - 8.0)
+	_warn.modulate.a = 0.0
+	_warn.visible = true
+	_warn_tween = create_tween()
+	_warn_tween.tween_property(_warn, "modulate:a", 1.0, 0.25)
+	_warn_tween.tween_interval(5.0)
+	_warn_tween.tween_property(_warn, "modulate:a", 0.0, 0.6)
+	_warn_tween.tween_callback(func() -> void: _warn.visible = false)
 
 
 func pop(text: String, kind := "") -> void:
@@ -1581,7 +1723,7 @@ static var _ball_shader: Shader
 
 ## A little ball in a colour and a finish (shaders/finish_ball.gdshader, finish as an index into Data.FINISHES, 7 for an
 ## alloy wheel): the picture on a swatch. `dim`: a finish that has not been bought yet.
-func _ball(col: Color, finish: int, on: bool, size := 76.0, dim := false) -> Control:
+func _ball(col: Color, finish: int, on: bool, size := 76.0, dim := false, pearl := Color(0, 0, 0, 0)) -> Control:
 	if _ball_shader == null:
 		_ball_shader = load("res://shaders/finish_ball.gdshader")
 	var rect := ColorRect.new()
@@ -1595,6 +1737,8 @@ func _ball(col: Color, finish: int, on: bool, size := 76.0, dim := false) -> Con
 	m.set_shader_parameter("ring", AMBER if on else Color(1, 1, 1, 0.26))
 	m.set_shader_parameter("ring_width", 0.1 if on else 0.045)
 	m.set_shader_parameter("dim", 1.0 if dim else 0.0)
+	m.set_shader_parameter("pearl_col", pearl)  # (a pearlescent ball: the colour it turns to, when one is chosen)
+	m.set_shader_parameter("use_pearl", 1.0 if pearl.a > 0.0 else 0.0)
 	rect.material = m
 	return rect
 
@@ -1639,7 +1783,7 @@ func _wheel_btn(design: String, caption: String, on: bool, rim: Color) -> Button
 
 ## A colour chip button for the paint and wheel tabs: a ball in the colour (in `finish`), its name and, if there is
 ## one, a line under it (the price of a finish, say).
-func _swatch(col: Color, caption: String, on: bool, action: String, arg: String, finish := 7, sub := "", sub_color := MUTED, dim := false) -> Button:
+func _swatch(col: Color, caption: String, on: bool, action: String, arg: String, finish := 7, sub := "", sub_color := MUTED, dim := false, pearl := Color(0, 0, 0, 0)) -> Button:
 	var b := Button.new()
 	b.custom_minimum_size = Vector2(0, 124 if sub != "" else 112)
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1658,7 +1802,7 @@ func _swatch(col: Color, caption: String, on: bool, action: String, arg: String,
 	vb.add_theme_constant_override("separation", 8)
 	vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	b.add_child(vb)
-	vb.add_child(_ball(col, finish, on, 76.0, dim))
+	vb.add_child(_ball(col, finish, on, 76.0, dim, pearl))
 	var l := _label(caption, 13, LINE if on else MUTED, mono_font)
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	l.clip_text = true
@@ -1825,6 +1969,8 @@ func _render_garage_list(sel_car: Dictionary) -> void:
 			if pnt[1] == cur:
 				cur_name = pnt[0]
 		var cur_col := Color(sel_car.color) if cur == "" else Color(cur)
+		var cur_pearl_hex: String = lk.get("pearl", "")  # a pearlescent paint has a second colour: the one it turns to
+		var cur_pearl := Color(cur_pearl_hex) if cur_pearl_hex != "" else Color(0, 0, 0, 0)
 		if _garage_msg != "":
 			list.add_child(_wrap(_garage_msg, 21, AMBER))
 			_garage_msg = ""
@@ -1841,9 +1987,10 @@ func _render_garage_list(sel_car: Dictionary) -> void:
 			var afford: bool = int(Save.data.cash) >= int(fin.price)
 			var sub := "ON" if fin.id == cur_fin else ("OWNED" if owned else "$" + Fmt.num(fin.price))
 			var sub_col: Color = LINE if fin.id == cur_fin else (MUTED if owned or not afford else AMBER)
-			fg.add_child(_swatch(cur_col, String(fin.name).to_upper(), fin.id == cur_fin, "finish", String(fin.id), fi, sub, sub_col, not owned))
-		list.add_child(_eyebrow("Colour · %s" % cur_name))
-		list.add_child(_wrap("Colours are free. They show on the car straight away, in the finish you have chosen.", 18, MUTED))
+			fg.add_child(_swatch(cur_col, String(fin.name).to_upper(), fin.id == cur_fin, "finish", String(fin.id), fi, sub, sub_col, not owned, cur_pearl if fin.id == "pearl" else Color(0, 0, 0, 0)))
+		list.add_child(_eyebrow(("Body colour · %s" if cur_fin == "pearl" else "Colour · %s") % cur_name))
+		list.add_child(_wrap("Colours are free. They show on the car straight away, in the finish you have chosen." if cur_fin != "pearl"
+			else "A pearlescent paint takes two colours. This is the body colour; the one it turns to is below.", 18, MUTED))
 		var grid := GridContainer.new()
 		grid.columns = 5
 		grid.add_theme_constant_override("h_separation", 4)
@@ -1856,7 +2003,24 @@ func _render_garage_list(sel_car: Dictionary) -> void:
 		for pnt in Data.PAINTS:
 			var hex: String = pnt[1]
 			var col := Color(sel_car.color) if hex == "" else Color(hex)
-			grid.add_child(_swatch(col, String(pnt[0]).to_upper(), hex == cur, "paint", hex, fin_idx))
+			grid.add_child(_swatch(col, String(pnt[0]).to_upper(), hex == cur, "paint", hex, fin_idx, "", MUTED, false, cur_pearl if cur_fin == "pearl" else Color(0, 0, 0, 0)))
+		if cur_fin == "pearl":
+			var pname := "Auto"
+			for pnt in Data.PAINTS:
+				if pnt[1] != "" and String(pnt[1]).to_lower() == cur_pearl_hex.to_lower():
+					pname = pnt[0]
+			list.add_child(_eyebrow("Pearl colour · %s" % pname))
+			list.add_child(_wrap("The colour it turns to, showing through the body colour as the light moves over the car. Auto makes one from the body colour.", 18, MUTED))
+			var pg := GridContainer.new()
+			pg.columns = 5
+			pg.add_theme_constant_override("h_separation", 4)
+			pg.add_theme_constant_override("v_separation", 4)
+			list.add_child(pg)
+			pg.add_child(_swatch(cur_col, "AUTO", cur_pearl_hex == "", "pearl", "", 4))
+			for pnt in Data.PAINTS:
+				if pnt[1] == "":
+					continue
+				pg.add_child(_swatch(Color(String(pnt[1])), String(pnt[0]).to_upper(), String(pnt[1]).to_lower() == cur_pearl_hex.to_lower(), "pearl", String(pnt[1]), 0))
 	elif garage_tab == "wheels":
 		var stl := Save.car_style(sel_car)
 		var cur_rim: String = stl.get("rim", "5spoke")

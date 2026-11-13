@@ -17,6 +17,12 @@ const OUTER_X := 11.6       # its outer edge, lined by a guardrail
 const PUMP_X := 17.0        # where a car stops, between the two pump islands
 const PUMPS := [-3.6, 3.6]  # the pumps along each island (rel), nearer one first
 const SIGNS := [600.0, 300.0]  # approach signs, metres before the pumps
+# The lettering (see SignKit): an em is the size of the letters, in metres; names and prices are each set against a margin
+const KIOSK_EM := 0.46
+const PYLON_NAME_EM := 0.56
+const PYLON_EM := 0.38
+const SIGN_W := 4.6
+const SIGN_H := 3.5
 
 
 ## The car's right-hand limit at rel metres from the pumps: the taper into the
@@ -34,8 +40,9 @@ static func right_edge(rel: float) -> float:
 var _flat := {}    # material -> SurfaceTool (ground, markings: no shadows)
 var _solid := {}   # material -> SurfaceTool (structures)
 var _brand: StandardMaterial3D
-var _pylon: Array[Label3D] = []
-var _approach: Array = []  # per sign: [header, name, prices]
+var _pylon_name: Label3D
+var _pylon_prices: Label3D
+var _approach: Array = []  # per sign: {"name": Label3D, "prices": Label3D (the three prices, one under the other)}
 var _kiosk_sign: Label3D
 
 
@@ -120,47 +127,74 @@ func _init() -> void:
 	_box_solid(CarModel._glass_solid(), Vector3(15.58, 1.45, kz), Vector3(0.06, 2.2, 7.5))
 	_box_solid(dark, Vector3(15.55, 1.15, kz + 2.0), Vector3(0.08, 2.3, 1.2))
 	_box_solid(_brand, Vector3(15.52, 3.05, kz), Vector3(0.1, 0.6, 8.0))
-	_kiosk_sign = _label("SUNSET FUEL", 64, 0.012, Color.WHITE, Vector3(15.45, 3.05, kz), Basis(Vector3.UP, -PI / 2.0))
+	_kiosk_sign = SignKit.line("SUNSET FUEL", KIOSK_EM, Color.WHITE, Vector3(15.45, 3.05, kz), HORIZONTAL_ALIGNMENT_CENTER, Basis(Vector3.UP, -PI / 2.0))
+	add_child(_kiosk_sign)
 
-	# --- price pylon before the forecourt, facing the traffic
+	# --- price pylon before the forecourt, facing the traffic: the brand's name over a board of prices (the grade against
+	# the left margin, its price against the right, so the figures line up), the post behind the boards
 	var pz := 46.0
-	_box_solid(steel_dark, Vector3(12.8, 3.0, pz), Vector3(0.45, 6.0, 0.45))
-	_box_solid(_brand, Vector3(12.8, 6.9, pz), Vector3(2.6, 1.0, 0.35))
-	_box_solid(dark, Vector3(12.8, 5.25, pz), Vector3(2.6, 2.3, 0.3))
-	_pylon.append(_label("FUEL", 72, 0.0105, Color.WHITE, Vector3(12.8, 6.9, pz + 0.18)))
-	for k in 3:
-		_pylon.append(_label("", 60, 0.0105, Color("#ffb52e"), Vector3(12.8, 5.95 - k * 0.68, pz + 0.16)))
+	var pw := 3.1
+	var amber := Color("#ffb52e")
+	_box_solid(steel_dark, Vector3(12.8, 3.0, pz - 0.3), Vector3(0.45, 6.0, 0.45))
+	_box_solid(_brand, Vector3(12.8, 6.9, pz), Vector3(pw, 1.0, 0.35))
+	_box_solid(dark, Vector3(12.8, 5.25, pz), Vector3(pw, 2.3, 0.3))
+	_pylon_name = SignKit.line("FUEL", PYLON_NAME_EM, Color.WHITE, Vector3(12.8, 6.9, pz + 0.2))
+	add_child(_pylon_name)
+	add_child(SignKit.block(_grades(), PYLON_EM, amber, Vector3(12.8 - pw / 2.0 + 0.3, 5.87, pz + 0.17), 0.62, HORIZONTAL_ALIGNMENT_LEFT))
+	_pylon_prices = SignKit.block(["0.00", "0.00", "0.00"], PYLON_EM, amber, Vector3(12.8 + pw / 2.0 - 0.3, 5.87, pz + 0.17), 0.62, HORIZONTAL_ALIGNMENT_RIGHT)
+	add_child(_pylon_prices)
 
-	# --- blue service signs on the approach
+	# --- blue service signs on the approach: "FUEL" against the left margin and the distance against the right, a line,
+	# the station's name centred, then the three prices in two columns (grade left, price right)
 	for dist in SIGNS:
 		var sz: float = dist
-		var sx := Data.RAIL + 2.0
-		for px in [-1.2, 1.2]:
-			_box_solid(steel_dark, Vector3(sx + px, 1.6, sz), Vector3(0.12, 3.2, 0.12))
-		_box_solid(blue, Vector3(sx, 3.3, sz), Vector3(3.4, 2.6, 0.12))
-		_box_solid(white, Vector3(sx, 3.3, sz - 0.01), Vector3(3.5, 2.7, 0.1))
-		var head := _label("FUEL  %d m" % int(dist), 64, 0.011, Color.WHITE, Vector3(sx, 4.25, sz + 0.07))
-		var nm := _label("", 52, 0.0095, Color("#ffd54f"), Vector3(sx, 3.6, sz + 0.07))
-		var pr := _label("", 46, 0.009, Color.WHITE, Vector3(sx, 2.75, sz + 0.07))
-		_approach.append([head, nm, pr])
+		var sx := Data.RAIL + 2.4
+		var cy := 3.4
+		var zf := sz + 0.06          # the front of the panel
+		var zt := zf + SignKit.LETTERS
+		var edge := 0.45             # from the panel's edge to its lettering
+		var left := sx - SIGN_W / 2.0 + edge
+		var right := sx + SIGN_W / 2.0 - edge
+		for px in [-1.7, 1.7]:
+			_box_solid(steel_dark, Vector3(sx + px, 1.85, sz - 0.1), Vector3(0.12, 3.7, 0.12))
+		for b in SignKit.panel(blue, white, Vector3(sx, cy, zf), SIGN_W, SIGN_H, 0.12, 0.06, 0.12):
+			_box_solid(b[0], b[1], b[2])
+		_box_solid(white, Vector3(sx, cy + 0.78, zf + 0.008), Vector3(right - left, 0.04, 0.016))
+		add_child(SignKit.line("FUEL", 0.58, Color.WHITE, Vector3(left, cy + 1.15, zt), HORIZONTAL_ALIGNMENT_LEFT))
+		add_child(SignKit.line("%d m" % int(dist), 0.58, Color.WHITE, Vector3(right, cy + 1.15, zt), HORIZONTAL_ALIGNMENT_RIGHT))
+		var nm := SignKit.line("", 0.48, Color("#ffd54f"), Vector3(sx, cy + 0.4, zt))
+		add_child(nm)
+		add_child(SignKit.block(_grades(), 0.42, Color.WHITE, Vector3(left, cy - 0.15, zt), 0.5, HORIZONTAL_ALIGNMENT_LEFT))
+		var prices := SignKit.block(["0.00", "0.00", "0.00"], 0.42, Color.WHITE, Vector3(right, cy - 0.15, zt), 0.5, HORIZONTAL_ALIGNMENT_RIGHT)
+		add_child(prices)
+		_approach.append({"name": nm, "prices": prices})
 
 	_commit(_flat, false)
 	_commit(_solid, true)
+
+
+## The grades' names, one for each row of a price board (REG, MID, PREM).
+static func _grades() -> Array:
+	var out: Array = []
+	for g in Data.FUEL_ORDER:
+		out.append(String(Data.FUEL_GRADES[g].short))
+	return out
 
 
 ## Station name, prices and brand colour (info from game.gd).
 func set_info(info: Dictionary) -> void:
 	_brand.albedo_color = Color(info.color)
 	var nm: String = String(info.name).to_upper()
-	_fit(_kiosk_sign, nm, 0.012, 7.4)
-	_fit(_pylon[0], nm, 0.0105, 2.4)
+	SignKit.set_text(_kiosk_sign, nm, KIOSK_EM, 7.0)
+	SignKit.set_text(_pylon_name, nm, PYLON_NAME_EM, 2.8)
 	var p: Dictionary = info.prices
-	for k in 3:
-		var g: String = Data.FUEL_ORDER[k]
-		_fit(_pylon[k + 1], "%-5s %6.2f" % [Data.FUEL_GRADES[g].short, p[g]], 0.0105, 2.4)
+	var prices := PackedStringArray()
+	for g in Data.FUEL_ORDER:
+		prices.append("%.2f" % p[g])
+	_pylon_prices.text = "\n".join(prices)
 	for s in _approach:
-		_fit(s[1], nm, 0.0095, 3.1)
-		_fit(s[2], "REG %.2f  MID %.2f  PREM %.2f" % [p.regular, p.mid, p.premium], 0.009, 3.1)
+		(s.prices as Label3D).text = "\n".join(prices)
+		SignKit.set_text(s.name, nm, 0.48, SIGN_W - 0.9)
 
 
 # ---------------------------------------------------------------- building helpers
@@ -198,21 +232,3 @@ func _commit(group: Dictionary, shadows: bool) -> void:
 	if not shadows:
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(mi)
-
-
-## Set a label's text, shrinking it to fit max_w metres across.
-func _fit(l: Label3D, text: String, px: float, max_w: float) -> void:
-	l.text = text
-	l.pixel_size = minf(px, max_w / maxf(1.0, text.length() * l.font_size * 0.6))
-
-
-func _label(text: String, size: int, px: float, col: Color, pos: Vector3, basis := Basis()) -> Label3D:
-	var l := Label3D.new()
-	l.text = text
-	l.font_size = size
-	l.pixel_size = px
-	l.modulate = col
-	l.outline_size = 0
-	l.transform = Transform3D(basis, pos)
-	add_child(l)
-	return l

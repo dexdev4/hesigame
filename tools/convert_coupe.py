@@ -3,8 +3,13 @@
 import json,struct,sys
 import numpy as np
 from PIL import Image
-# usage: python3 tools/convert_coupe.py MODEL.glb OUT.mesh [GLASS_MIN_Y] [lines] [gloss]
+# usage: python3 tools/convert_coupe.py MODEL.glb OUT.mesh [GLASS_MIN_Y] [lines] [gloss] [bodyside] [lq] [rearbody]
 #   dark texture above GLASS_MIN_Y (default 0.84 m) is window glass, below it black trim
+#   rearbody: the rear bumper (z = 0) is taken from the body alone, not from every part of the model (the Pulse, Vector,
+#   Kestrel, Bruiser, Copperhead, Halcyon and Blue Static were made that way: it moves the whole car by a centimetre or so)
+#   (the settings the shipped cars were made with: Pulse and Vector `0.92 lines gloss bodyside rearbody`; Kestrel, Bruiser,
+#   Copperhead, Halcyon and Blue Static `0.85 lines gloss bodyside rearbody`; Last Exit `0.85 lines gloss bodyside`;
+#   Vanta and Night Marshal `0.92 lines gloss bodyside`; each again with `lq` in place of `lines` for its light version)
 import io
 src,out=sys.argv[1:3]
 GLASS_Y=float(sys.argv[3]) if len(sys.argv)>3 else 0.84
@@ -68,7 +73,7 @@ def add(kind,P,N,UV=None):
     s=surf.setdefault(kind,{'p':[],'n':[]}); s['p'].append(P); s['n'].append(N)
 p=j['meshes'][0]['primitives'][0]
 _prims=j['meshes'][0]['primitives']
-REAR=-min(float(j['accessors'][q['attributes']['POSITION']]['min'][2]) for q in _prims)  # rear of the whole vehicle to z = 0
+REAR=-min(float(j['accessors'][q['attributes']['POSITION']]['min'][2]) for q in (_prims[:1] if 'rearbody' in FLAGS else _prims))  # rear of the whole vehicle to z = 0
 _ALLMIN=-REAR
 _ALLMAX=max(float(j['accessors'][q['attributes']['POSITION']]['max'][2]) for q in _prims)
 _P0MIN=float(j['accessors'][p['attributes']['POSITION']]['min'][2]); _P0MAX=float(j['accessors'][p['attributes']['POSITION']]['max'][2])
@@ -109,11 +114,15 @@ if LINES:
         _cat[(A[...,0]>0.6)&(A[...,1]>0.6)&(A[...,2]>0.6)]=2
     if not RED_PAINT:
         _cat[(A[...,0]>0.35)&(A[...,1]<0.2)&(A[...,2]<0.2)]=3
+    # the thin lines (shut lines, handles, the fuel flap): darker than the paint but not black. They count as a kind of
+    # texel of their own, so that the mesh is refined along them: without it only the black ones were, and a grey line
+    # came out as a row of dashes wherever a triangle's middle happened to land on it
+    _cat[(_lum>=0.07)&(_lum<PAINT_LUM*0.72)&(_cat==0)]=6
     _Eb=np.asarray(Image.fromarray((E*255).astype(np.uint8)).resize((A.shape[1],A.shape[0])),dtype=np.float32)/255
     _cat[(_Eb[...,0]>0.5)&(_Eb[...,1]>0.5)]=4
     _cat[(_Eb[...,0]>0.3)&(_Eb[...,1]<0.2)]=5
     _sat=[]
-    for ci in range(6):
+    for ci in range(7):
         m=(_cat==ci).astype(np.int32)
         st=np.zeros((m.shape[0]+1,m.shape[1]+1),np.int32)
         st[1:,1:]=m.cumsum(0).cumsum(1)

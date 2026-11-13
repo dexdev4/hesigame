@@ -8,6 +8,8 @@ uniform int finish = 0;  // 0 gloss, 1 semi-gloss, 2 matte, 3 metallic, 4 pearle
 uniform vec4 ring : source_color = vec4(1.0, 1.0, 1.0, 0.0);  // the ring round it (alpha 0: none)
 uniform float ring_width = 0.07;
 uniform float dim = 0.0;  // a finish that is not owned yet is a little dimmer
+uniform vec4 pearl_col : source_color = vec4(0.0);  // for the pearlescent ball: the colour it turns to ...
+uniform float use_pearl = 0.0;                       // ... when one has been chosen (else one is made from the base)
 
 float hash21(vec2 p) {
 	p = fract(p * vec2(123.34, 456.21));
@@ -54,7 +56,7 @@ void fragment() {
 			float fl = step(0.93, hash21(floor(UV * 46.0)));
 			col = c * (0.18 + 0.7 * ndl) + vec3(1.0) * pow(ndh, 50.0) * 0.55 + vec3(1.0) * fl * 0.65 * (0.4 + ndl);
 		} else if (finish == 4) {   // pearlescent: the colour turns to another towards the rim
-			vec3 pc = hue_shift(c, 0.09) * 1.15 + 0.08;
+			vec3 pc = use_pearl > 0.5 ? pearl_col.rgb : hue_shift(c, 0.09) * 1.15 + 0.08;
 			vec3 body = mix(c, pc, clamp(pow(edge, 1.6) * 1.15, 0.0, 1.0));
 			col = body * (0.22 + 0.78 * ndl) + vec3(1.0) * pow(ndh, 80.0) * 0.7 + pc * pow(edge, 2.0) * 0.25;
 		} else if (finish == 5) {   // candy: deep colour, a bright metal glow in the middle, a tinted highlight

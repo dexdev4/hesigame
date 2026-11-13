@@ -219,6 +219,9 @@ var _test_fuel := 1.0
 var _test_first_station := -1.0
 var _pit_test: Array = []   # --pit-test=SPEED:REL:X: start a run at the first fuel stop, SPEED m/s, REL metres from the pumps, x across the road (test aid)
 var _pit_test_done := false
+var _wear_t := -100.0       # when the player's car last took a knock, and how much wear that crash has added so far
+var _wear_sum := 0.0
+var _dmg_unsaved := false   # the player's car has taken knocks that the save file does not know about yet
 var _test_atlas := 0        # --shadow-atlas=N: the sun's shadow map size, whatever the graphics level (test aid)
 var _test_noglow := false   # --noglow: no bloom, whatever the graphics level (test aid)
 var station := {}       # the next fuel stop: {z, name, color, prices: {regular, mid, premium}}
@@ -733,6 +736,7 @@ func _set_player_car() -> void:
 	player.model.force_detail()
 	add_child(player.model)
 	player.model.build_interior()
+	player.model.restore_damage(Save.damage_of(String(c.id)), true)  # (a car keeps its damage until it is repaired at the garage)
 	_add_head_spots()
 	if sound:
 		sound.set_car(c)
@@ -741,14 +745,16 @@ func _set_player_car() -> void:
 func _compute_stats() -> void:
 	var c := Data.car_by_id(Save.data.selected)
 	var m: Dictionary = run.mods if run else {"accel": 1.0, "brake": 1.0, "handling": 1.0, "top": 1.0}
+	var fx := Data.damage_effects(Save.wear(String(c.id)))  # worse damage, worse car
 	st = {
-		"accel": c.accel * (1.0 + 0.06 * Save.perm_level("accel")) * m.accel,
-		"brake": c.brake * (1.0 + 0.06 * Save.perm_level("brake")) * m.brake,
-		"grip": c.grip * (1.0 + 0.06 * Save.perm_level("handling")) * m.handling,
-		"lat": c.lat * (1.0 + 0.04 * Save.perm_level("handling")) * sqrt(m.handling),
-		"top": c.top * (1.0 + 0.04 * Save.perm_level("top")) * m.top,
+		"accel": c.accel * (1.0 + 0.06 * Save.perm_level("accel")) * m.accel * fx.accel,
+		"brake": c.brake * (1.0 + 0.06 * Save.perm_level("brake")) * m.brake * fx.brake,
+		"grip": c.grip * (1.0 + 0.06 * Save.perm_level("handling")) * m.handling * fx.grip,
+		"lat": c.lat * (1.0 + 0.04 * Save.perm_level("handling")) * sqrt(m.handling) * fx.lat,
+		"top": c.top * (1.0 + 0.04 * Save.perm_level("top")) * m.top * fx.top,
 		"tank": float(c.get("tank", 45)),
 		"grade": String(c.get("fuel", "regular")),
+		"fuel_use": fx.fuel,
 	}
 
 
@@ -1871,7 +1877,6 @@ func _debris_at(pos: Vector3, paint: Color, n := 32) -> void:
 
 # ---------------------------------------------------------------- damage
 
-var _dmg_queue: Array[CarDamage] = []  # cars with dents waiting to be pressed into their meshes
 var _parts: Array = []                 # things flying off cars (a wheel): {node, p (road: x, y, z), v, w, t}
 
 
@@ -1909,7 +1914,7 @@ func _damage_rail(c: Vehicle, b: Wreck, blow: float) -> void:
 func _damage_hit(v: Vehicle, b: Wreck, pt: Vector2, push: Vector2, strength: float) -> void:
 	if strength < 2.5 or v.model == null or not is_instance_valid(v.model) or absf(v.z - player.z) > 150.0:
 		return
-	if _dmg_queue.size() >= 5 and v != player and v.model.dmg == null:
+	if CarDamage.active.size() >= 5 and v != player and v.model.dmg == null:
 		return  # (a pile-up: the cars in view first)
 	var p := _model_space(b, v.l, pt, randf_range(0.42, 0.78))
 	p.x = clampf(p.x, -v.w * 0.5, v.w * 0.5)
@@ -1926,9 +1931,7 @@ func _damage_hit(v: Vehicle, b: Wreck, pt: Vector2, push: Vector2, strength: flo
 ## shoved. (`v` is the vehicle it belongs to, when there is one: a wheel needs its speed to fly off.)
 func _damage_model(m: CarModel, p: Vector3, dir: Vector3, strength: float, v: Vehicle = null, push := Vector2.ZERO) -> void:
 	var d := m.damage()
-	d.hit(p, dir, strength)
-	if not _dmg_queue.has(d):
-		_dmg_queue.append(d)
+	d.hit(p, dir, strength)  # (it puts the car on CarDamage.active, which _damage_work steps)
 	var l: float = m.shape.l
 	var w: float = m.shape.w
 	var nose := p.z < -l * 0.72
@@ -1955,6 +1958,21 @@ func _damage_model(m: CarModel, p: Vector3, dir: Vector3, strength: float, v: Ve
 		_throw_wheel(v, m, m.nearest_wheel(p), push, strength)
 	if (d.level >= 0.55 and (d.front >= d.rear or nose)) or strength >= 8.0:
 		m.start_smoke(d.level >= 1.7 and v != player)  # (no flames in the player's face)
+	if m == player.model and run != null:
+		# the player's car keeps what a knock did to it, and is slower for it, until it is repaired at the garage
+		# (one crash is several knocks in a couple of seconds, and wrecks the car only so far: a pile-up adds at most 0.25)
+		var now := Time.get_ticks_msec() / 1000.0
+		if now - _wear_t > 3.0:
+			_wear_sum = 0.0
+		_wear_t = now
+		var add := minf(Data.wear_for_strength(strength), maxf(0.0, 0.25 - _wear_sum))
+		_wear_sum += add
+		Save.record_damage(String(Save.data.selected), add, m.damage_state())
+		_compute_stats()
+		_dmg_unsaved = true  # (written to the save a moment after the crash settles: see _damage_work)
+		if autotest:
+			print("[autotest] player's car: knock of %.1f m/s, wear now %.3f, %d dents, top speed %.0f km/h" % [strength, Save.wear(String(Save.data.selected)),
+				m.dmg.dents.size() if m.dmg else 0, float(st.top) * 3.6])
 
 
 ## Test aid (--dent=KIND:STRENGTH,...): the garage car takes some knocks.
@@ -1996,19 +2014,23 @@ func _throw_wheel(v: Vehicle, m: CarModel, i: int, push: Vector2, strength: floa
 	sound.play("crash", 1.3, -10.0)
 
 
+## Write the damage the player's car has taken to the save, so that it is still there whatever happens to the app.
+func _flush_damage() -> void:
+	if _dmg_unsaved:
+		_dmg_unsaved = false
+		Save.persist()
+
+
 ## Pressing in dents (a few milliseconds a frame) and the parts that have come off.
 func _damage_work(delta: float) -> void:
-	if not _dmg_queue.is_empty():
-		var t0 := Time.get_ticks_usec()
-		var i := 0
-		while i < _dmg_queue.size():
-			var left := 3500 - (Time.get_ticks_usec() - t0)
-			if left <= 0:
-				break
-			if _dmg_queue[i].step(left):
-				i += 1
-			else:
-				_dmg_queue.remove_at(i)
+	if _dmg_unsaved and Time.get_ticks_msec() / 1000.0 - _wear_t > 1.0:
+		_flush_damage()
+	var qi := 0
+	while qi < CarDamage.active.size():  # (each step starts or collects work on the worker threads, and never waits)
+		if CarDamage.active[qi].step():
+			qi += 1
+		else:
+			CarDamage.active.remove_at(qi)
 	var k := _parts.size() - 1
 	while k >= 0:
 		var pt: Dictionary = _parts[k]
@@ -2337,7 +2359,7 @@ func _update_player(dt: float) -> void:
 	if run and state == S.PLAY and run.dying <= 0.0:
 		# fuel: a full tank lasts FUEL_RANGE_KM flat out, longer driven gently
 		var lpm: float = st.tank / (Data.FUEL_RANGE_KM * 1000.0 * Data.station_scale)
-		lpm *= (0.55 + (0.25 if gas else 0.0) + 0.2 * clampf(vr * vr, 0.0, 1.0)) * run.mods.eco
+		lpm *= (0.55 + (0.25 if gas else 0.0) + 0.2 * clampf(vr * vr, 0.0, 1.0)) * run.mods.eco * float(st.get("fuel_use", 1.0))
 		run.fuel = maxf(0.0, run.fuel - lpm * player.v * dt)
 		if live and _pit_ready():
 			_start_pit()
@@ -2554,6 +2576,13 @@ func _start_run() -> void:
 	hud.set_play_visible(true)
 	var ri := Data.route_info(Data.route)
 	hud.banner(ri.name, "%s → %s · STAGE 1" % [String(ri.from).to_upper(), String(ri.to).to_upper()])
+	var wear := Save.wear(String(Save.data.selected))
+	if autotest:
+		print("[autotest] run starts with a %d%% worn %s: top speed %.0f km/h, acceleration %.2f" % [roundi(wear * 100.0), Save.data.selected, float(st.top) * 3.6, float(st.accel)])
+	if wear >= 0.02:
+		var fx := Data.damage_effects(wear)
+		hud.banner("DAMAGED CAR · %d%% WORN" % roundi(wear * 100.0), "TOP SPEED −%d%% · ACCELERATION −%d%% · REPAIR IT AT THE GARAGE" % [
+			roundi((1.0 - float(fx.top)) * 100.0), roundi((1.0 - float(fx.accel)) * 100.0)], "alert")
 	hud.show_hint()
 	_calibrate_tilt()
 
@@ -2579,6 +2608,9 @@ func _end_run(reason: String) -> void:
 		notes.append("Includes $%s in boss prize money." % Fmt.num(run.cash_bonus))
 	if run.fuel_paid > 0:
 		notes.append("Fuel cost $%s this run." % Fmt.num(run.fuel_paid))
+	var wear_now := Save.wear(String(Save.data.selected))
+	if wear_now >= 0.02:
+		notes.append("Your car is %d%% worn: repairs in the Workshop cost $%s." % [roundi(wear_now * 100.0), Fmt.num(Data.repair_cost(Data.car_by_id(Save.data.selected), wear_now))])
 	var next_car := {}
 	for c in Data.CARS:
 		if not Save.owns(c.id) and (c.boss < 0 or Save.is_unlocked(c.id)):
@@ -3976,10 +4008,18 @@ func _input(event: InputEvent) -> void:
 func _notification(what: int) -> void:
 	match what:
 		NOTIFICATION_APPLICATION_PAUSED, NOTIFICATION_APPLICATION_FOCUS_OUT:
+			_flush_damage()  # (the system may close an app that is in the background without a word)
 			if state == S.PLAY and not autotest:
 				_pause()
+		NOTIFICATION_WM_CLOSE_REQUEST:
+			_flush_damage()
 		NOTIFICATION_WM_GO_BACK_REQUEST:
 			_go_back()
+
+
+func _exit_tree() -> void:
+	_flush_damage()
+	CarDamage.finish_all()  # (no batch of dents is left on the worker threads when the game closes)
 
 
 ## The back button, or a swipe in from the edge of the screen.
@@ -4020,9 +4060,10 @@ func _enter_garage(view_id := "") -> void:
 	if showroom != "" or _inspect.size() > 0:
 		return
 	var c := Data.car_by_id(view_id if view_id != "" else Save.data.selected)
-	if garage.car == null or garage.get_meta("car", "") != c.id + str(Save.car_color(c)) + str(Save.car_style(c)):
+	var shown: String = c.id + str(Save.car_color(c)) + str(Save.car_style(c)) + str(Save.damage_of(String(c.id)).hash())
+	if garage.car == null or garage.get_meta("car", "") != shown:
 		garage.set_car(c, Save.car_color(c), Save.car_style(c))
-		garage.set_meta("car", c.id + str(Save.car_color(c)) + str(Save.car_style(c)))
+		garage.set_meta("car", shown)
 	garage.focus(hud.garage_tab if state == S.GARAGE else "cars")
 	garage.set_active(true)
 	_sun.shadow_enabled = false  # the sun does not light the garage, but its shadow maps would still draw the car (twice)
@@ -4169,6 +4210,18 @@ func _on_act(action: String, arg: String) -> void:
 				_set_player_car()
 				_compute_stats()
 				_enter_garage()
+			hud.render_garage()
+		"repair":
+			var rid: String = Save.data.selected
+			var rw := Save.wear(rid)
+			var rcost := Data.repair_cost(Data.car_by_id(rid), rw)
+			if rw > 0.004 and Save.data.cash >= rcost:
+				Save.data.cash -= rcost
+				Save.repair(rid)  # (this saves, too)
+				_set_player_car()
+				_compute_stats()
+				sound.play("ding", 1.4)
+				_enter_garage()  # the car on the turntable is swapped for the repaired one, with a flash of light
 			hud.render_garage()
 		"perm":
 			for p in Data.PERM:

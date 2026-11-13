@@ -26,6 +26,7 @@ const VIEWS := {
 	"up": {"yaw": 0.62, "pitch": 0.2, "fit": 0.96},      # rear three-quarter: the engine end
 	"paint": {"yaw": 2.15, "pitch": 0.3, "fit": 0.92},   # a little higher, to see the roof and bonnet
 	"wheels": {"yaw": 1.5, "pitch": 0.07, "fit": 0.4},   # side on and close, on the front wheel
+	"repair": {"yaw": 2.7, "pitch": 0.12, "fit": 0.9},   # a little nearer the front, where most of it shows
 }
 
 var cam: Camera3D
@@ -127,6 +128,11 @@ func set_car(c: Dictionary, color: Color, style: Dictionary) -> void:
 	car.position = Vector3(0, 0.0, sh.l / 2.0)  # centred on the turntable (cars face -z from the rear bumper)
 	_holder.add_child(car)
 	car.build_interior()
+	var rec: Dictionary = Save.damage_of(String(c.id))  # a car shows its damage until it is repaired in the workshop
+	if not rec.is_empty():
+		car.restore_damage(rec, false)
+		if car.dmg != null:
+			car.dmg.done.connect(_remirror, CONNECT_ONE_SHOT)  # (the reflection in the floor shows the dents too, once they are in)
 	_set_layers(car)
 	_mirror_car()
 	_slide = 0.55 if fresh else 0.0
@@ -251,8 +257,20 @@ func _set_layers(n: Node) -> void:
 
 ## A mirrored copy of every mesh of the car, below the floor: seen through the dark glass of the floor it is
 ## the car's reflection. (Only meshes, no lights; it casts no shadow.)
+var _mirror_root: Node3D
+
+
+## The reflection again, once damage has been pressed into the car.
+func _remirror() -> void:
+	if car != null and is_instance_valid(car) and _holder != null:
+		_mirror_car()
+
+
 func _mirror_car() -> void:
+	if _mirror_root != null and is_instance_valid(_mirror_root):
+		_mirror_root.queue_free()
 	var mirror := Node3D.new()
+	_mirror_root = mirror
 	_holder.add_child(mirror)
 	var flip := Transform3D(Basis.from_scale(Vector3(1.0, -1.0, 1.0)), Vector3.ZERO)
 	var inv := _holder.global_transform.affine_inverse()

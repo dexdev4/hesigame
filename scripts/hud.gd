@@ -1081,6 +1081,8 @@ func _build_menu() -> void:
 	nv.add_child(_eyebrow("On the turntable"))
 	_menu["car"] = _label("", 46, LINE, display_font)
 	nv.add_child(_menu.car)
+	_menu["dmg"] = _label("", 15, BAD, mono_font)
+	nv.add_child(_menu.dmg)
 	nr.add_child(nv)
 	_menu["fuel"] = _label("", 15, AMBER, mono_font)
 	_menu.fuel.size_flags_vertical = Control.SIZE_SHRINK_END
@@ -1134,7 +1136,8 @@ func _build_help() -> void:
 		+ "• Pass cars inside 1 m for a [b][color=#f3f5ef]near miss[/color][/b]. Change lanes right beside a car for a [b][color=#f3f5ef]close cut[/color][/b]. Chains build your multiplier.\n\n"
 		+ "• Cover the distance or hit the points target and the [b][color=#f3f5ef]boss[/color][/b] (or the police) arrives 10 seconds later. Out-score the boss before the finish gantry.\n\n"
 		+ "• Watch the [b][color=#f3f5ef]fuel[/color][/b] gauge and pull into the fuel stops on the right.\n\n"
-		+ "• Spend your winnings in the [b][color=#f3f5ef]garage[/color][/b]: new cars, upgrades, paint and wheels.")
+		+ "• Crashes [b][color=#f3f5ef]damage[/color][/b] your car, and a damaged car is slower until you pay to have it fixed in the garage's Repair tab.\n\n"
+		+ "• Spend your winnings in the [b][color=#f3f5ef]garage[/color][/b]: new cars, upgrades, paint, wheels and repairs.")
 	v.add_child(how)
 	v.add_child(_button("BACK", "light", "menu"))
 
@@ -1161,11 +1164,15 @@ func render_menu() -> void:
 	var c := Data.car_by_id(Save.data.selected)
 	_menu.car.text = String(c.name).to_upper()
 	_menu.fuel.text = "%s · %d L" % [String(Data.FUEL_GRADES[c.get("fuel", "regular")].name).to_upper(), int(c.get("tank", 45))]
-	# with your permanent upgrades applied
-	var accel: float = c.accel * (1.0 + 0.06 * Save.perm_level("accel"))
-	var top: float = c.top * (1.0 + 0.04 * Save.perm_level("top"))
-	var grip: float = c.grip * (1.0 + 0.06 * Save.perm_level("handling"))
-	var brake: float = c.brake * (1.0 + 0.06 * Save.perm_level("brake"))
+	# with your permanent upgrades applied, and what damage has taken off
+	var wear := Save.wear(String(c.id))
+	var fx := Data.damage_effects(wear)
+	_menu.dmg.text = ("DAMAGED · %d%% WORN · REPAIR IT IN THE WORKSHOP" % roundi(wear * 100.0)) if wear >= 0.02 else ""
+	_menu.dmg.visible = wear >= 0.02
+	var accel: float = c.accel * (1.0 + 0.06 * Save.perm_level("accel")) * fx.accel
+	var top: float = c.top * (1.0 + 0.04 * Save.perm_level("top")) * fx.top
+	var grip: float = c.grip * (1.0 + 0.06 * Save.perm_level("handling")) * fx.grip
+	var brake: float = c.brake * (1.0 + 0.06 * Save.perm_level("brake")) * fx.brake
 	var rows := {"accel": ["ACCEL %.1f" % accel, accel / 13.0], "top": ["TOP %d KM/H" % roundi(top * 3.6), top / 95.0],
 		"grip": ["GRIP %.1f" % grip, grip / 16.0], "brake": ["BRAKES %.1f" % brake, brake / 16.0]}
 	for k in rows:
@@ -1254,7 +1261,7 @@ func map_note(text: String) -> void:
 	_map.info.text = text
 
 
-const GARAGE_TABS := [["cars", "CARS"], ["up", "UPGRADES"], ["paint", "PAINT"], ["wheels", "WHEELS"]]
+const GARAGE_TABS := [["cars", "CARS"], ["up", "UPGRADES"], ["paint", "PAINT"], ["wheels", "WHEELS"], ["repair", "REPAIR"]]
 const CAR_TAGS := {"pulse": "HOT HATCH", "vector": "SPORT SALOON", "hornet": "COMPACT", "comet": "COUPE", "kestrel": "HOT HATCH",
 	"vanta": "SPORT SEDAN", "bruiser": "MUSCLE CAR", "halcyon": "SUPERCAR", "copperhead": "BOSS CAR · STAGE 1",
 	"marshal": "BOSS CAR · STAGE 2", "static": "BOSS CAR · STAGE 3", "lastexit": "BOSS CAR · STAGE 4"}
@@ -1294,7 +1301,7 @@ func _build_garage() -> void:
 		var tb := Button.new()
 		tb.text = t[1]
 		tb.add_theme_font_override("font", display_font)
-		tb.add_theme_font_size_override("font_size", 22)
+		tb.add_theme_font_size_override("font_size", 18)
 		tb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		var id: String = t[0]
 		tb.pressed.connect(func() -> void: act.emit("tab", id))
@@ -1500,7 +1507,8 @@ func _render_cars_page(cur: Dictionary) -> void:
 	var owned := Save.owns(vc.id)
 	var sel: bool = cur.id == vc.id
 	var locked: bool = vc.boss >= 0 and not Save.is_unlocked(vc.id)
-	_garage.meta.text = "%d / %d  ·  %s" % [idx + 1, Data.CARS.size(), CAR_TAGS.get(vc.id, "")]
+	var vw := Save.wear(String(vc.id))
+	_garage.meta.text = "%d / %d  ·  %s%s" % [idx + 1, Data.CARS.size(), CAR_TAGS.get(vc.id, ""), ("  ·  DAMAGED %d%%" % roundi(vw * 100.0)) if vw >= 0.02 else ""]
 	_garage.name.text = String(vc.name).to_upper()
 	_garage.blurb.text = vc.blurb if not locked else "Beat %s to put this car up for sale." % Data.BOSSES[vc.boss].name
 	_garage.fuel.text = "%s FUEL  ·  %d L TANK" % [String(Data.FUEL_GRADES[vc.get("fuel", "regular")].name).to_upper(), int(vc.get("tank", 45))]
@@ -1599,6 +1607,8 @@ func _render_garage_list(sel_car: Dictionary) -> void:
 		for rc in Data.RIM_COLORS:
 			cg.add_child(_swatch(Color(rc[1]), String(rc[0]).to_upper(), String(rc[1]).to_lower() == cur_col.to_lower(), "rim_color", rc[1]))
 		list.add_child(_button("FACTORY WHEELS", "ghost", "rim_reset"))
+	elif garage_tab == "repair":
+		_render_repair(list, sel_car)
 	else:
 		for p in Data.PERM:
 			var lv := Save.perm_level(p.id)
@@ -1636,6 +1646,44 @@ func _render_garage_list(sel_car: Dictionary) -> void:
 		list.create_tween().tween_property(list, "modulate:a", 1.0, 0.2)
 	else:
 		list.modulate.a = 1.0
+
+
+## The repair tab: how worn the car is, what that takes off it, and a button to pay to have it fixed.
+func _render_repair(list: VBoxContainer, sel_car: Dictionary) -> void:
+	var wear := Save.wear(String(sel_car.id))
+	var cost := Data.repair_cost(sel_car, wear)
+	var card := _card()
+	list.add_child(card[0])
+	var top := _row(12)
+	card[1].add_child(top)
+	var nm := _label("DAMAGE  %d%%" % roundi(wear * 100.0) if wear >= 0.004 else "NO DAMAGE", 32, LINE if wear < 0.004 else BAD, display_font)
+	nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top.add_child(nm)
+	var bar := _bar(_fill_red if wear >= 0.35 else _fill_amber, 14)
+	bar.value = wear
+	card[1].add_child(bar)
+	if wear < 0.004:
+		card[1].add_child(_wrap("Your %s is straight and sound. Crashes dent it, crack its glass and wear it out, and it stays that way until you pay to have it fixed here." % sel_car.name, 19, MUTED))
+		var none := _button("NOTHING TO REPAIR", "ghost", "")
+		none.disabled = true
+		card[1].add_child(none)
+	else:
+		var fx := Data.damage_effects(wear)
+		var rows := [["TOP SPEED", fx.top], ["ACCELERATION", fx.accel], ["GRIP", fx.grip], ["BRAKES", fx.brake]]
+		for r in rows:
+			var rr := _row(10)
+			var rl := _label(String(r[0]), 19, MUTED, mono_font)
+			rl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			rr.add_child(rl)
+			rr.add_child(_label("−%d%%" % roundi((1.0 - float(r[1])) * 100.0), 19, BAD, mono_font))
+			card[1].add_child(rr)
+		card[1].add_child(_wrap("It also burns %d%% more fuel. The dents and cracks you see on the car are the damage you are paying for." % roundi((float(fx.fuel) - 1.0) * 100.0), 19, MUTED))
+		var afford: bool = Save.data.cash >= cost
+		var rb := _button(("REPAIR  $%s" % Fmt.num(cost)) if afford else ("$%s  ·  NEED $%s MORE" % [Fmt.num(cost), Fmt.num(cost - int(Save.data.cash))]), "amber", "repair")
+		rb.disabled = not afford
+		rb.add_theme_font_size_override("font_size", 28 if afford else 22)
+		card[1].add_child(rb)
+	list.add_child(_wrap("Repairs fix your %s only. Every car keeps its own damage." % sel_car.name, 19, MUTED))
 
 
 func _build_boss() -> void:

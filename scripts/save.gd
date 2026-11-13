@@ -18,6 +18,7 @@ func defaults() -> Dictionary:
 		"perm": {"accel": 0, "brake": 0, "handling": 0, "top": 0, "lives": 0},  # old shared upgrades (moved to perm_cars)
 		"perm_cars": {},  # car id -> {upgrade id: level}: each car is upgraded on its own
 		"sound": true, "assist": false, "free_steer": true, "looks": {},
+		"damage": {},  # car id -> {wear: 0..1, dents, glass, lamps, plate, wheels}: what crashes did to it, until it is repaired
 		"routes": 1, "route_sel": 0, "route_best": {},  # world map: highways open, chosen, best score on each
 		"cam": _cam_defaults(),
 		"settings": SETTING_DEFAULTS.duplicate(true),
@@ -134,6 +135,36 @@ func persist() -> void:
 	var f := FileAccess.open(PATH, FileAccess.WRITE)
 	if f:
 		f.store_string(JSON.stringify(data))
+
+
+## A car's damage record (empty if it has none): wear 0..1 and what shows (see CarModel.damage_state).
+func damage_of(id: String) -> Dictionary:
+	var all: Variant = data.get("damage", {})
+	if all is Dictionary and (all as Dictionary).get(id) is Dictionary:
+		return (all as Dictionary)[id]
+	return {}
+
+
+## How worn a car is by crashes: 0 as new, 1 wrecked. It costs performance (Data.damage_effects) until it is repaired.
+func wear(id: String) -> float:
+	var w: Variant = damage_of(id).get("wear", 0.0)
+	return clampf(float(w) if (w is float or w is int) and is_finite(float(w)) else 0.0, 0.0, 1.0)
+
+
+## A car took a knock: its wear goes up by `wear_add` and `visual` (CarModel.damage_state) is what it looks like now.
+func record_damage(id: String, wear_add: float, visual: Dictionary) -> void:
+	if not data.get("damage") is Dictionary:
+		data["damage"] = {}
+	var rec := {"wear": clampf(wear(id) + wear_add, 0.0, 1.0)}
+	rec.merge(visual)
+	data.damage[id] = rec
+
+
+## Have a car repaired: all its damage is gone (the garage takes the money before calling this).
+func repair(id: String) -> void:
+	if data.get("damage") is Dictionary:
+		(data.damage as Dictionary).erase(id)
+	persist()
 
 
 ## The paint and wheels chosen in the workshop for a car, over its factory look.

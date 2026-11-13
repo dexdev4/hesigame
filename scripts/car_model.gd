@@ -1481,6 +1481,8 @@ var _calipers: Array = []         # by wheel: its brake caliper (or null)
 var _gone: Array[bool] = []       # by wheel: it has come off
 var _cracks := 0
 var _glass_cracked: ShaderMaterial   # this car's own glass once a window of it has cracked (see crack_glass)
+var _crack_vals: Array = [Vector4.ZERO, Vector4.ZERO]  # where the two cracked windows were hit and how badly (see crack_glass)
+var _plate_lost := false
 var _glass_cracked_key := ""
 var _lamps_out := false
 var _smoke_fx: CPUParticles3D
@@ -2256,8 +2258,10 @@ func crack_glass(p: Vector3, amount: float) -> void:
 				if String(names[i]) == "glass":
 					mi.set_surface_override_material(i, _glass_cracked)
 	var slot := "crack_a" if _cracks % 2 == 0 else "crack_b"
+	var cv := Vector4(p.x, p.y, p.z, clampf(amount, 0.0, 1.0))
+	_crack_vals[_cracks % 2] = cv
 	_cracks += 1
-	_glass_cracked.set_shader_parameter(slot, Vector4(p.x, p.y, p.z, clampf(amount, 0.0, 1.0)))
+	_glass_cracked.set_shader_parameter(slot, cv)
 
 
 func _exit_tree() -> void:
@@ -2290,8 +2294,62 @@ func break_lamps() -> void:
 
 ## The number plate comes off with a hard knock.
 func lose_plate() -> void:
+	_plate_lost = true
 	if _plate_label:
 		_plate_label.visible = false
+
+
+## What crashes have done to this car, as plain numbers that can be saved: the dents, the cracked windows, whether
+## the lamps are out and the number plate gone, and which wheels have come off. (Empty: not a mark on it.)
+func damage_state() -> Dictionary:
+	var out := {}
+	if dmg != null and not dmg.dents.is_empty():
+		out["dents"] = dmg.state()
+	var cracks: Array = []
+	for cv: Vector4 in _crack_vals:
+		if cv.w > 0.0:
+			cracks.append([CarDamage._q(cv.x), CarDamage._q(cv.y), CarDamage._q(cv.z), CarDamage._q(cv.w)])
+	if not cracks.is_empty():
+		out["glass"] = cracks
+	if _lamps_out:
+		out["lamps"] = true
+	if _plate_lost:
+		out["plate"] = true
+	var gone: Array = []
+	for i in _gone.size():
+		if _gone[i]:
+			gone.append(i)
+	if not gone.is_empty():
+		out["wheels"] = gone
+	return out
+
+
+## Put saved damage back on a freshly built car (a record as Save keeps it: damage_state's numbers and `wear`). The
+## dents are pressed in on the worker threads, so they show a moment after the car does. `smoke`: a badly damaged
+## car smokes under the bonnet (for a car that is about to drive).
+func restore_damage(rec: Dictionary, smoke := false) -> void:
+	if rec.is_empty():
+		return
+	var wear := clampf(CarDamage.num(rec.get("wear")), 0.0, 1.0)
+	if rec.get("dents") is Array:
+		var d := damage()
+		d.restore(rec.dents as Array)
+		d.level = maxf(d.level, wear * 2.0)
+	if rec.get("glass") is Array:
+		for row in (rec.glass as Array):
+			if row is Array and (row as Array).size() >= 4:
+				var f: Array = row
+				crack_glass(Vector3(CarDamage.num(f[0]), CarDamage.num(f[1]), CarDamage.num(f[2])), clampf(CarDamage.num(f[3]), 0.0, 1.0))
+	if rec.get("lamps", false):
+		break_lamps()
+	if rec.get("plate", false):
+		lose_plate()
+	if rec.get("wheels") is Array:
+		for i in (rec.wheels as Array):
+			if i is float or i is int:
+				set_wheel_gone(int(i))
+	if smoke and wear >= 0.6:
+		start_smoke(false)
 
 
 func wheel_count() -> int:
@@ -2334,6 +2392,21 @@ func detach_wheel(i: int) -> Node3D:
 	_pose_body()
 	wn.transform = xf  # (outside the tree: the game puts it in the world and keeps this transform)
 	return wn
+
+
+## A wheel that came off in an earlier crash (see restore_damage): out of sight, and the car sags at that corner.
+func set_wheel_gone(i: int) -> void:
+	if i < 0 or i >= _wheels.size() or _gone[i]:
+		return
+	var wn := _wheels[i]
+	var gone_front: bool = wn.position.z < -float(shape.l) * 0.5
+	var side := signf(wn.position.x)
+	_gone[i] = true
+	wn.visible = false
+	if _calipers[i]:
+		(_calipers[i] as Node3D).visible = false
+	_droop += Vector2((-0.03 if gone_front else 0.03), side * 0.035)
+	_pose_body()
 
 
 ## Smoke (and, when badly damaged, flames) from under the bonnet.

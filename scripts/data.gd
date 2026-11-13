@@ -299,6 +299,27 @@ func perm_cost(p: Dictionary, level: int) -> int:
 	return roundi(p.base * pow(1.85, level) / 10.0) * 10
 
 
+## How much a car's wear (0 as new .. 1 wrecked, see Save.wear) takes off its performance, as multipliers on its stats
+## (and on its fuel use). Worse damage, worse car: a wrecked one has 40% less acceleration, 35% less braking, a quarter
+## less top speed and a fifth less grip.
+func damage_effects(wear: float) -> Dictionary:
+	var w := clampf(wear, 0.0, 1.0)
+	return {"accel": 1.0 - 0.40 * w, "brake": 1.0 - 0.35 * w, "top": 1.0 - 0.25 * w, "grip": 1.0 - 0.20 * w, "lat": 1.0 - 0.10 * w, "fuel": 1.0 + 0.20 * w}
+
+
+## What the garage charges to repair a car ($): a call-out fee, and more the worse the damage and the dearer the car.
+func repair_cost(car: Dictionary, wear: float) -> int:
+	if wear <= 0.004:
+		return 0
+	return roundi((40.0 + clampf(wear, 0.0, 1.0) * (150.0 + 0.012 * float(car.get("price", 0)))) / 10.0) * 10
+
+
+## How much wear a knock adds to the car that took it (strength: the change of speed it gave the car, m/s): a tap
+## leaves next to none, a hard knock (12 m/s and more) a seventh of the car's life.
+func wear_for_strength(strength: float) -> float:
+	return clampf((strength - 2.0) / 10.0, 0.0, 1.0) * 0.15
+
+
 func nearest_lane(x: float) -> int:
 	var best := 0
 	for i in range(1, 4):

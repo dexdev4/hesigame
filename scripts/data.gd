@@ -41,56 +41,72 @@ const SHAPES := {
 # resonance, decay = pulse length, var/uneven = per-cylinder variation that
 # gives V8s their burble, rasp = exhaust grit, pops = lift-off crackle).
 # style: body kit and details for CarModel (rim design, stripes, scoop, intakes...).
-# accel/brake in m/s^2, grip = lateral accel (m/s^2), lat = max lateral speed (m/s), top in m/s.
+# accel/brake in m/s^2, grip = lateral accel (m/s^2), top in m/s. The rest is what CarStats makes of them:
+# pull (how long the engine keeps pulling towards top speed: low = big torque low down, high = revs on to the top),
+# agility (how readily it answers the steering), stability (how settled it stays: speed, braking, knocks),
+# kg (weight: crash mass), range (km a full tank goes flat out; the tank, in litres, is what a fill costs).
+# A car without them is the reference car: pull 3, agility 1, stability 1, 1,400 kg, 16.5 km.
 const CARS := [
 	{"id": "pulse", "fuel": "regular", "tank": 45, "style": {"rim": "5spoke", "rim_color": "#9aa0a6", "caliper": "#2a2c30", "badge": "PULSE", "plate": "PLS 100"},
 		"engine": {"cyl": 4, "idle": 850, "redline": 6900, "res": 2.4, "decay": 2.3, "var": 0.05, "uneven": 0.03, "rasp": 0.42, "pops": 0.25, "turbo": true},
-		"name": "Pulse Hatch", "shape": "hot_hatch", "color": "#2f62b0", "accel": 5.4, "brake": 9.0, "grip": 9.2, "lat": 4.3, "top": 50.0, "price": 0, "boss": -1,
-		"blurb": "Your starter car. A sharp little hot hatch with a roof spoiler."},
+		"name": "Pulse Hatch", "shape": "hot_hatch", "color": "#2f62b0", "price": 0, "boss": -1,
+		"accel": 5.40, "pull": 3.0, "top": 50.0, "brake": 9.0, "grip": 9.2, "agility": 1.00, "stability": 1.00, "kg": 1400, "range": 16.5,
+		"blurb": "The starter hot hatch. Fair at everything: the car every other one is measured against."},
 	{"id": "vector", "fuel": "regular", "tank": 52, "style": {"rim": "multi", "rim_color": "#2a2c30", "caliper": "#d9a21b", "badge": "VECTOR GS", "plate": "VGS 220"},
 		"engine": {"cyl": 4, "idle": 820, "redline": 7000, "res": 2.2, "decay": 2.5, "var": 0.06, "uneven": 0.04, "rasp": 0.38, "pops": 0.4, "turbo": true},
-		"name": "Vector GS", "shape": "sport_sedan", "color": "#c11a22", "accel": 5.45, "brake": 9.1, "grip": 9.3, "lat": 4.35, "top": 51.0, "price": 600, "boss": -1,
-		"blurb": "A turbocharged sports saloon with a boot spoiler. Room for four, pace for one."},
+		"name": "Vector GS", "shape": "sport_sedan", "color": "#c11a22", "price": 600, "boss": -1,
+		"accel": 5.00, "pull": 4.0, "top": 53.5, "brake": 10.0, "grip": 9.1, "agility": 0.78, "stability": 1.25, "kg": 1560, "range": 21.0,
+		"blurb": "A turbo saloon for the long haul: slow to get going, planted at speed, goes furthest on a tank."},
 	{"id": "hornet", "fuel": "regular", "tank": 40, "style": {"rim": "5spoke", "rim_color": "#2a2c30", "caliper": "#c62828", "badge": "HORNET", "plate": "HRN 115"},
 		"engine": {"cyl": 4, "idle": 880, "redline": 7200, "res": 2.5, "decay": 2.2, "var": 0.05, "uneven": 0.03, "rasp": 0.5, "pops": 0.5, "turbo": true},
-		"name": "Hornet Compact", "shape": "compact", "color": "#e8b10f", "accel": 5.5, "brake": 9.1, "grip": 9.4, "lat": 4.4, "top": 51.0, "price": 800, "boss": -1,
-		"blurb": "A short, turbocharged hatchback coupe. Nimble and cheap to run."},
+		"name": "Hornet Compact", "shape": "compact", "color": "#e8b10f", "price": 800, "boss": -1,
+		"accel": 5.80, "pull": 2.9, "top": 47.5, "brake": 9.2, "grip": 10.2, "agility": 1.40, "stability": 0.90, "kg": 1150, "range": 17.5,
+		"blurb": "Short and light: turns on a coin and sips fuel. Runs out of top speed early, and is nervous there."},
 	{"id": "comet", "fuel": "regular", "tank": 42, "style": {"rim": "multi", "rim_color": "#c3c8ce", "caliper": "#55595e", "badge": "COMET", "plate": "CMT 140"},
 		"engine": {"cyl": 4, "idle": 820, "redline": 7000, "res": 2.4, "decay": 2.3, "var": 0.05, "uneven": 0.03, "rasp": 0.4, "pops": 0.3, "turbo": false},
-		"name": "Comet Coupe", "shape": "coupe", "color": "#123f8c", "accel": 5.55, "brake": 9.1, "grip": 9.4, "lat": 4.4, "top": 51.5, "price": 1000, "boss": -1,
-		"blurb": "A low, light two-door coupe with a long bonnet."},
+		"name": "Comet Coupe", "shape": "coupe", "color": "#123f8c", "price": 1000, "boss": -1,
+		"accel": 5.20, "pull": 4.5, "top": 52.0, "brake": 10.0, "grip": 10.5, "agility": 1.10, "stability": 1.20, "kg": 1230, "range": 15.0,
+		"blurb": "Low and light: it grips and stops harder than its price says. Only average off the line."},
 	{"id": "kestrel", "fuel": "regular", "tank": 40, "style": {"rim": "5spoke", "roofwing": true, "wiper": true, "caliper": "#55595e", "badge": "KESTREL", "plate": "KST 160"},
 		"engine": {"cyl": 4, "idle": 850, "redline": 6800, "res": 2.3, "decay": 2.4, "var": 0.06, "uneven": 0.03, "rasp": 0.45, "pops": 0.2, "turbo": false},
-		"name": "Kestrel 1.6", "shape": "kestrel", "color": "#d5dbe2", "accel": 5.6, "brake": 9.2, "grip": 9.4, "lat": 4.4, "top": 52.0, "price": 1200, "boss": -1,
-		"blurb": "A light, honest hot hatch. A small step up from the Comet."},
+		"name": "Kestrel 1.6", "shape": "kestrel", "color": "#d5dbe2", "price": 1200, "boss": -1,
+		"accel": 6.50, "pull": 3.0, "top": 52.0, "brake": 9.2, "grip": 9.7, "agility": 1.25, "stability": 0.90, "kg": 1080, "range": 13.0,
+		"blurb": "Feather-light and punchy: quick off the line and through the gears. Thirsty, and it brakes like a hatch."},
 	{"id": "vanta", "fuel": "regular", "tank": 45, "style": {"rim": "multi", "lightbar": true, "splitter": true, "caliper": "#c62828", "badge": "VANTA GT", "plate": "VGT 057"},
 		"engine": {"cyl": 6, "idle": 800, "redline": 7000, "res": 2.0, "decay": 2.6, "var": 0.08, "uneven": 0.04, "rasp": 0.35, "pops": 0.4, "turbo": true},
-		"name": "Vanta GT", "shape": "vanta", "color": "#2f6fd6", "accel": 6.4, "brake": 10.0, "grip": 10.0, "lat": 4.6, "top": 57.0, "price": 2500, "boss": -1,
-		"blurb": "A sport sedan with real brakes."},
+		"name": "Vanta GT", "shape": "vanta", "color": "#2f6fd6", "price": 2500, "boss": -1,
+		"accel": 6.40, "pull": 3.4, "top": 57.0, "brake": 10.6, "grip": 10.2, "agility": 1.00, "stability": 1.25, "kg": 1600, "range": 17.0,
+		"blurb": "A sport saloon with real brakes and a settled chassis: the first car that is quick and calm."},
 	{"id": "bruiser", "fuel": "mid", "tank": 55, "style": {"rim": "turbine", "rim_color": "#3a3d42", "stripes": true, "accent": "#1b1e23", "scoop": true, "caliper": "#c62828", "badge": "BRUISER", "plate": "BRZ 570"},
 		"engine": {"cyl": 8, "idle": 700, "redline": 6300, "res": 1.4, "decay": 3.0, "var": 0.3, "uneven": 0.32, "rasp": 0.5, "pops": 0.9, "turbo": false},
-		"name": "Bruiser 5.7", "shape": "bruiser", "color": "#e0a020", "accel": 8.0, "brake": 9.5, "grip": 9.0, "lat": 4.4, "top": 63.0, "price": 6000, "boss": -1,
-		"blurb": "V8 torque, a bit of a handful."},
+		"name": "Bruiser 5.7", "shape": "bruiser", "color": "#e0a020", "price": 3200, "boss": -1,
+		"accel": 8.80, "pull": 2.3, "top": 64.0, "brake": 9.6, "grip": 9.6, "agility": 0.80, "stability": 0.75, "kg": 1900, "range": 15.5,
+		"blurb": "V8 torque and a lot of metal: huge shove, heavy, thirsty and a handful. Brake early, plan your moves."},
 	{"id": "halcyon", "fuel": "premium", "tank": 52, "style": {"rim": "mesh", "intakes": true, "vents": true, "splitter": true, "lightbar": true, "caliper": "#f5b52e", "badge": "HALCYON R", "plate": "HLC 072"},
 		"engine": {"cyl": 10, "idle": 950, "redline": 8700, "res": 2.6, "decay": 2.1, "var": 0.08, "uneven": 0.05, "rasp": 0.3, "pops": 0.6, "turbo": false},
-		"name": "Halcyon R", "shape": "halcyon", "color": "#f1f1ee", "accel": 9.5, "brake": 12.0, "grip": 12.0, "lat": 5.3, "top": 72.0, "price": 15000, "boss": -1,
-		"blurb": "Mid-engine supercar. Everything is sharper."},
+		"name": "Halcyon R", "shape": "halcyon", "color": "#f1f1ee", "price": 15000, "boss": -1,
+		"accel": 9.50, "pull": 4.5, "top": 72.0, "brake": 12.0, "grip": 12.0, "agility": 1.25, "stability": 1.30, "kg": 1450, "range": 16.0,
+		"blurb": "Mid-engine supercar: quick to turn in and planted at speed. Everything is sharper."},
 	{"id": "copperhead", "fuel": "mid", "tank": 50, "style": {"rim": "5spoke", "rim_color": "#2a2c30", "stripes": true, "accent": "#f3f5ef", "scoop": true, "caliper": "#c62828", "badge": "COPPERHEAD", "plate": "BOSS 01"},
 		"engine": {"cyl": 8, "idle": 720, "redline": 6800, "res": 1.5, "decay": 2.8, "var": 0.26, "uneven": 0.28, "rasp": 0.55, "pops": 1.0, "turbo": false},
-		"name": "Copperhead", "shape": "copperhead", "color": "#c9652e", "accel": 7.6, "brake": 10.5, "grip": 11.0, "lat": 5.0, "top": 61.0, "price": 4000, "boss": 0,
-		"blurb": "Stage 1 boss car. Grippier than any muscle car should be."},
+		"name": "Copperhead", "shape": "copperhead", "color": "#c9652e", "price": 4000, "boss": 0,
+		"accel": 7.40, "pull": 2.8, "top": 61.0, "brake": 10.6, "grip": 11.0, "agility": 1.05, "stability": 1.00, "kg": 1750, "range": 15.0,
+		"blurb": "Stage 1 boss car. Muscle with manners: strong, grippy and steady, but hard on fuel."},
 	{"id": "marshal", "fuel": "mid", "tank": 50, "style": {"rim": "double", "rim_color": "#c3c8ce", "dome": true, "gills": true, "split_grille": true, "ltail": true, "halo": true, "lip": true, "crease": true, "m_bumper": true, "quad_diffuser": true, "caliper": "#1fa3ff", "badge": "MARSHAL", "plate": "BOSS 02"},
 		"engine": {"cyl": 8, "idle": 850, "redline": 8400, "res": 2.0, "decay": 2.4, "var": 0.12, "uneven": 0.1, "rasp": 0.42, "pops": 0.8, "turbo": false},
-		"name": "Night Marshal", "shape": "marshal", "color": "#26437c", "accel": 8.6, "brake": 11.5, "grip": 11.5, "lat": 5.2, "top": 66.0, "price": 9000, "boss": 1,
-		"blurb": "Stage 2 boss car. A four-door that hunts supercars: high-revving V8, quad exhausts, power-dome bonnet."},
+		"name": "Night Marshal", "shape": "marshal", "color": "#26437c", "price": 9000, "boss": 1,
+		"accel": 8.60, "pull": 4.0, "top": 66.0, "brake": 11.8, "grip": 11.5, "agility": 1.00, "stability": 1.30, "kg": 1900, "range": 15.5,
+		"blurb": "Stage 2 boss car. A heavy four-door that stays planted and brakes late. High-revving V8."},
 	{"id": "static", "fuel": "premium", "tank": 48, "style": {"rim": "mesh", "rim_color": "#f3f5ef", "stripes": true, "accent": "#f3f5ef", "intakes": true, "vents": true, "splitter": true, "caliper": "#1fa3ff", "badge": "BLUE STATIC", "plate": "BOSS 03"},
 		"engine": {"cyl": 6, "idle": 900, "redline": 8200, "res": 2.5, "decay": 2.2, "var": 0.05, "uneven": 0.02, "rasp": 0.3, "pops": 0.5, "turbo": true},
-		"name": "Blue Static", "shape": "static", "color": "#1fa3ff", "accel": 10.2, "brake": 12.0, "grip": 13.0, "lat": 5.6, "top": 75.0, "price": 18000, "boss": 2, "route": 4,
+		"name": "Blue Static", "shape": "static", "color": "#1fa3ff", "price": 18000, "boss": 2, "route": 4,
+		"accel": 10.20, "pull": 3.2, "top": 75.0, "brake": 12.0, "grip": 13.0, "agility": 1.55, "stability": 0.75, "kg": 1500, "range": 16.0,
 		"blurb": "Blue Static's own car, on sale once you have cleared the fifth highway. Twitchy and very fast."},
 	{"id": "lastexit", "fuel": "premium", "tank": 58, "style": {"rim": "turbine", "rim_color": "#c9a227", "stripes": true, "accent": "#1b1e23", "intakes": true, "vents": true, "splitter": true, "lightbar": true, "caliper": "#c62828", "badge": "LAST EXIT", "plate": "BOSS 04"},
 		"engine": {"cyl": 12, "idle": 1000, "redline": 9200, "res": 2.8, "decay": 1.9, "var": 0.05, "uneven": 0.02, "rasp": 0.25, "pops": 0.5, "turbo": false},
-		"name": "Last Exit", "shape": "lastexit", "color": "#b0122a", "accel": 11.0, "brake": 13.0, "grip": 14.0, "lat": 6.0, "top": 81.0, "price": 30000, "boss": 3, "route": 7,
-		"blurb": "Last Exit's own car, on sale once you have cleared the eighth highway. The fastest thing on the interstate."},
+		"name": "Last Exit", "shape": "lastexit", "color": "#b0122a", "price": 30000, "boss": 3, "route": 7,
+		"accel": 11.00, "pull": 5.0, "top": 81.0, "brake": 13.0, "grip": 14.0, "agility": 1.15, "stability": 1.50, "kg": 1750, "range": 17.0,
+		"blurb": "Last Exit's own car, on sale once you have cleared the eighth highway. The fastest, and the most planted."},
 ]
 
 # Workshop paint and wheel options ("" = the car's factory colour).
@@ -140,7 +156,7 @@ const BOSSES := [
 const PERM := [
 	{"id": "accel", "name": "Engine tune", "desc": "+6% acceleration per level", "max": 5, "base": 300},
 	{"id": "brake", "name": "Brake package", "desc": "+6% braking per level", "max": 5, "base": 250},
-	{"id": "handling", "name": "Tyres & suspension", "desc": "+6% grip, +4% steering speed per level", "max": 5, "base": 300},
+	{"id": "handling", "name": "Tyres & suspension", "desc": "+6% grip per level", "max": 5, "base": 300},
 	{"id": "top", "name": "Gearing", "desc": "+4% top speed per level", "max": 5, "base": 400},
 	{"id": "lives", "name": "Spare chassis", "desc": "+1 life at the start of each run", "max": 2, "base": 1500},
 ]
@@ -149,7 +165,7 @@ const PERM := [
 const BOONS := [
 	{"id": "accel", "name": "Turbo kit", "desc": "+15% acceleration for this run", "tag": "ACCELERATION"},
 	{"id": "brake", "name": "Big brakes", "desc": "+20% braking for this run", "tag": "BRAKING"},
-	{"id": "handling", "name": "Sticky tyres", "desc": "+12% grip and steering speed", "tag": "HANDLING"},
+	{"id": "handling", "name": "Sticky tyres", "desc": "+12% grip for this run", "tag": "HANDLING"},
 	{"id": "top", "name": "Long gears", "desc": "+7% top speed for this run", "tag": "TOP SPEED"},
 	{"id": "life", "name": "Spare wheel", "desc": "+1 life (max 6)", "tag": "EXTRA LIFE"},
 	{"id": "score", "name": "Show-off", "desc": "+15% to every point earned", "tag": "SCORE"},
@@ -171,14 +187,15 @@ const MAX_LIVES := 6
 
 # Fuel. The cheaper cars run on regular, the middle ones on mid-grade and the
 # fastest on premium. Every station sets its own prices; on average mid-grade
-# costs $5 a litre more than regular and premium $15 more.
+# costs $5 a litre more than regular and premium $15 more. How far a full tank
+# goes is the car's own `range` (km, driven flat out, longer driven gently); its
+# `tank` (litres) is what a fill costs.
 const FUEL_GRADES := {
 	"regular": {"name": "Regular", "short": "REG", "add": 0.0},
 	"mid": {"name": "Mid-grade", "short": "MID", "add": 5.0},
 	"premium": {"name": "Premium", "short": "PREM", "add": 15.0},
 }
 const FUEL_ORDER := ["regular", "mid", "premium"]
-const FUEL_RANGE_KM := 16.5    # how far a full tank lasts, driven flat out
 const STATION_EVERY_KM := 10.0 # a fuel stop about every 10 km
 const STATION_NAMES := ["Sunset Fuel", "Pump & Go", "Interstate Oil", "Blue Flame Gas", "Crossroads Fuel",
 	"Mesa Petroleum", "Lucky Stop", "Northstar Gas", "Prairie Pumps", "Redline Fuel", "Last Chance Gas", "Eagle Fuel"]
@@ -357,11 +374,9 @@ func perm_cost(p: Dictionary, level: int) -> int:
 
 
 ## How much a car's wear (0 as new .. 1 wrecked, see Save.wear) takes off its performance, as multipliers on its stats
-## (and on its fuel use). Worse damage, worse car: a wrecked one has 40% less acceleration, 35% less braking, a quarter
-## less top speed and a fifth less grip.
+## (and on its fuel use): see CarStats.damage_effects.
 func damage_effects(wear: float) -> Dictionary:
-	var w := clampf(wear, 0.0, 1.0)
-	return {"accel": 1.0 - 0.40 * w, "brake": 1.0 - 0.35 * w, "top": 1.0 - 0.25 * w, "grip": 1.0 - 0.20 * w, "lat": 1.0 - 0.10 * w, "fuel": 1.0 + 0.20 * w}
+	return CarStats.damage_effects(wear)
 
 
 ## The wear at which a car is a wreck (the garage shows it as 100%). A wreck ends the run it is in at once, whatever

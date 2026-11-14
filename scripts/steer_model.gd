@@ -69,27 +69,43 @@ static func span(grip: float, auth: float, wheelbase: float, v: float) -> float:
 	return minf(LOCK, atan(usable_at(grip, auth, v) * wheelbase / maxf(v * v, 0.01)) * 0.95)
 
 
+## What the car makes of the hand's command: the gain is how much a small movement of the hand counts for (1 is the
+## reference car's; a twitchy car's is over 1, a calm one's under it). A full command is a full command in every
+## car, and the curve is smooth and gentle about the middle (its slope there is the gain, at the ends 1 / gain), so a
+## hand that is not quite still does not set a twitchy car wandering.
+static func shape_cmd(cmd: float, gain: float) -> float:
+	var c := clampf(cmd, -1.0, 1.0)
+	if absf(gain - 1.0) < 0.001:
+		return c
+	var a := absf(c)
+	return signf(c) * gain * a / (1.0 + (gain - 1.0) * a)
+
+
 ## One step of the player's car. `p` is any object with steer, yaw_rate, yaw
 ## and course (radians, radians/s); `grip` is the car's sideways grip right now
-## (after braking, the verge and so on) and `wheelbase` in metres.
-static func drive(p: Object, dt: float, v: float, grip: float, auth: float, wheelbase: float, cmd: float, assist: bool) -> void:
+## (after braking, the verge and so on) and `wheelbase` in metres. `gain` and
+## `quick` are the car's agility (CarStats): the gain of the steering about the
+## middle (see shape_cmd) and how much faster (or slower) than the reference car
+## the wheels, the nose and the direction of travel follow it at speed.
+static func drive(p: Object, dt: float, v: float, grip: float, auth: float, wheelbase: float, cmd: float, assist: bool, gain := 1.0, quick := 1.0) -> void:
 	var sp := span(grip, auth, wheelbase, v)
-	var want := clampf(cmd, -1.0, 1.0) * sp
+	var want := shape_cmd(cmd, gain) * sp
 	if absf(cmd) < 0.001 and assist and v > 3.0:
 		# steering assist: ease the nose back parallel to the road
 		want = clampf(atan(-p.yaw * 1.6 * wheelbase / maxf(v, 0.5)), -sp * 0.5, sp * 0.5)
 	if v < 0.2:
 		want = p.steer if absf(cmd) < 0.001 else clampf(cmd, -1.0, 1.0) * LOCK  # parked: the wheels turn but the car does not
 	var k := blend(v)
-	p.steer = move_toward(p.steer, want, lerpf(SLOW_SLEW, maxf(sp, 0.06) * WHEEL_RATE, smoothstep(SLEW_V0, SLOW_V1 + 2.0, v)) * dt)
+	var q := lerpf(1.0, quick, k)  # (the car's own quickness shows at speed; at a crawl they all steer alike)
+	p.steer = move_toward(p.steer, want, lerpf(SLOW_SLEW, maxf(sp, 0.06) * WHEEL_RATE * quick, smoothstep(SLEW_V0, SLOW_V1 + 2.0, v)) * dt)
 	# the nose: turn rate from the wheel angle, reached with a short lag (the car's weight; longer at a crawl)
 	var r_want: float = v * tan(p.steer) / wheelbase
-	p.yaw_rate = lerpf(p.yaw_rate, r_want, minf(1.0, dt * lerpf(clampf(v * 1.8, 8.0, YAW_GAIN), YAW_GAIN, k)))
+	p.yaw_rate = lerpf(p.yaw_rate, r_want, minf(1.0, dt * lerpf(clampf(v * 1.8, 8.0, YAW_GAIN), YAW_GAIN, k) * q))
 	p.yaw = clampf(p.yaw + p.yaw_rate * dt, -0.7, 0.7)
 	# the direction of travel follows the nose as fast as the tyres can push it
 	# round (sideways force = speed x turn rate); past that the car slides
 	var slip: float = p.yaw - p.course
 	var max_turn := usable_at(grip, auth, v) / maxf(v, 1.0)
-	var course_gain := lerpf(clampf(v * 2.2, 8.0, COURSE_GAIN), COURSE_GAIN, k)
+	var course_gain := lerpf(clampf(v * 2.2, 8.0, COURSE_GAIN), COURSE_GAIN, k) * q
 	p.course += clampf(slip * course_gain, -max_turn * TYRE_PEAK, max_turn * TYRE_PEAK) * dt
 	p.course = clampf(p.course, -0.7, 0.7)

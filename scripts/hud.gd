@@ -1335,17 +1335,17 @@ func render_menu() -> void:
 	_menu.fuel.text = "%s · %d L" % [String(Data.FUEL_GRADES[c.get("fuel", "regular")].name).to_upper(), int(c.get("tank", 45))]
 	# with your permanent upgrades applied, and what damage has taken off
 	var wear := Save.wear(String(c.id))
-	var fx := Data.damage_effects(wear)
 	var wrecked := Data.is_wrecked(wear)
 	_menu.dmg.text = "WRECKED · 100% · REPAIR IT TO DRIVE" if wrecked else (("DAMAGED · %d%% WORN · REPAIR IT IN THE WORKSHOP" % roundi(wear * 100.0)) if wear >= 0.02 else "")
 	_menu.dmg.visible = wear >= 0.02
 	(_menu.start as Button).text = "REPAIR YOUR CAR  →" if wrecked else "START RUN  →"
-	var accel: float = c.accel * (1.0 + 0.06 * Save.perm_level("accel")) * fx.accel
-	var top: float = c.top * (1.0 + 0.04 * Save.perm_level("top")) * fx.top
-	var grip: float = c.grip * (1.0 + 0.06 * Save.perm_level("handling")) * fx.grip
-	var brake: float = c.brake * (1.0 + 0.06 * Save.perm_level("brake")) * fx.brake
-	var rows := {"accel": ["ACCEL %.1f" % accel, accel / 13.0], "top": ["TOP %d KM/H" % roundi(top * 3.6), top / 95.0],
-		"grip": ["GRIP %.1f" % grip, grip / 16.0], "brake": ["BRAKES %.1f" % brake, brake / 16.0]}
+	var levels := {}
+	for k in CarStats.PERM_KEYS:
+		levels[k] = Save.perm_level(k)
+	var cst := CarStats.compute(c, levels, {}, wear)
+	var sh := CarStats.sheet(cst)
+	var rows := {"accel": ["0-100 %.1f S" % sh.t100, 2.4 / sh.t100], "top": ["TOP %d KM/H" % roundi(sh.top_kmh), sh.top_kmh / 290.0],
+		"grip": ["GRIP %.2f G" % sh.grip_g, float(cst.grip) / 15.0], "brake": ["100-0 %d M" % roundi(sh.stop_m), 28.0 / sh.stop_m]}
 	for k in rows:
 		_menu["l_" + k].text = rows[k][0]
 		_menu["b_" + k].value = clampf(rows[k][1], 0.0, 1.0)
@@ -1437,7 +1437,9 @@ const GARAGE_TABS := [["cars", "CARS"], ["up", "UPGRADES"], ["paint", "PAINT"], 
 const CAR_TAGS := {"pulse": "HOT HATCH", "vector": "SPORT SALOON", "hornet": "COMPACT", "comet": "COUPE", "kestrel": "HOT HATCH",
 	"vanta": "SPORT SEDAN", "bruiser": "MUSCLE CAR", "halcyon": "SUPERCAR", "copperhead": "BOSS CAR · STAGE 1",
 	"marshal": "BOSS CAR · STAGE 2", "static": "BOSS CAR · STAGE 3", "lastexit": "BOSS CAR · STAGE 4"}
-const STAT_KEYS := [["accel", "ACCEL", 12.0], ["top", "TOP", 85.0], ["grip", "GRIP", 15.0], ["brake", "BRAKE", 14.0]]
+## The cars page's cells: [key, label, how a bigger number reads (1 better, -1 worse, 0 neither)]. See _stat_cell.
+const STAT_CELLS := [["t100", "0-100 KM/H", -1], ["top", "TOP SPEED", 1], ["stop", "100-0 KM/H", -1], ["grip", "GRIP", 1],
+	["agility", "AGILITY", 1], ["stability", "STABILITY", 1], ["kg", "WEIGHT", 0], ["range", "RANGE", 1]]
 const GOOD := Color("#8be58b")
 const BAD := Color("#ff8a7a")
 
@@ -1552,7 +1554,7 @@ func _build_cars_page() -> VBoxContainer:
 	grid.columns = 4
 	grid.add_theme_constant_override("h_separation", 12)
 	page.add_child(grid)
-	for sk in STAT_KEYS:
+	for sk in STAT_CELLS:
 		var cell := VBoxContainer.new()
 		cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		cell.add_theme_constant_override("separation", 3)
@@ -1910,20 +1912,25 @@ func _render_cars_page(cur: Dictionary) -> void:
 	else:
 		_garage.blurb.text = "Beat %s to put this car up for sale." % Data.BOSSES[vc.boss].name
 	_garage.fuel.text = "%s FUEL  ·  %d L TANK" % [String(Data.FUEL_GRADES[vc.get("fuel", "regular")].name).to_upper(), int(vc.get("tank", 45))]
-	for sk in STAT_KEYS:
+	# the car as it leaves the showroom, against the car you drive (upgrades and damage show on the main menu)
+	var sheet := CarStats.sheet(CarStats.compute(vc))
+	var cur_sheet := CarStats.sheet(CarStats.compute(cur))
+	for sk in STAT_CELLS:
 		var key: String = sk[0]
-		var value: float = vc[key]
+		var shown := _stat_cell(key, sheet)
 		var cell: Dictionary = _garage["st_" + key]
-		cell.val.text = ("%d km/h" % roundi(value * 3.6)) if key == "top" else ("%.1f" % value)
-		_tween_bar(cell.bar, clampf(value / float(sk[2]), 0.0, 1.0))
-		var d: float = value - float(cur[key])
+		cell.val.text = shown.text
+		_tween_bar(cell.bar, clampf(float(shown.fill), 0.0, 1.0))
+		var other := _stat_cell(key, cur_sheet)
+		var d: float = float(shown.value) - float(other.value)
 		var dl: Label = cell.delta
-		if sel or absf(d) < 0.04:
+		if sel or absf(d) < float(shown.min_delta):
 			dl.text = ""
 		else:
-			var shown: float = d * 3.6 if key == "top" else d
-			dl.text = ("%+d" % roundi(shown)) if key == "top" else ("%+.1f" % shown)
-			dl.add_theme_color_override("font_color", GOOD if d > 0.0 else BAD)
+			var fmt: String = shown.fmt
+			dl.text = ("▲" if d > 0.0 else "▼") if fmt == "" else (fmt % roundi(d) if shown.whole else fmt % d)
+			var kind: int = sk[2]
+			dl.add_theme_color_override("font_color", MUTED if kind == 0 else (GOOD if d * kind > 0.0 else BAD))
 	# what the button does
 	var kind := "light"
 	var text := ""
@@ -1957,6 +1964,28 @@ func _render_cars_page(cur: Dictionary) -> void:
 			b.add_theme_font_size_override("font_size", 32 if text.length() < 18 else 22)
 			for ck in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
 				b.add_theme_color_override(ck, AMBER if sel else (LINE if k == "ghost" else (AMBER_INK if k == "amber" else SIGN_DEEP)))
+
+
+## One cell of the cars page for a car's sheet (CarStats.sheet): its value, what it says, how full its bar is, the
+## smallest difference worth showing against another car and how that difference is written ("" = just an arrow).
+func _stat_cell(key: String, sh: Dictionary) -> Dictionary:
+	match key:
+		"t100":
+			return {"value": sh.t100, "text": "%.1f s" % sh.t100, "fill": 2.4 / float(sh.t100), "min_delta": 0.05, "fmt": "%+.1f", "whole": false}
+		"top":
+			return {"value": sh.top_kmh, "text": "%d km/h" % roundi(sh.top_kmh), "fill": float(sh.top_kmh) / 290.0, "min_delta": 2.0, "fmt": "%+d", "whole": true}
+		"stop":
+			return {"value": sh.stop_m, "text": "%d m" % roundi(sh.stop_m), "fill": 28.0 / float(sh.stop_m), "min_delta": 0.5, "fmt": "%+d", "whole": true}
+		"grip":
+			return {"value": sh.grip_g, "text": "%.2f g" % sh.grip_g, "fill": float(sh.grip_g) * 9.81 / 15.0, "min_delta": 0.02, "fmt": "%+.2f", "whole": false}
+		"agility":
+			return {"value": sh.agility, "text": CarStats.agility_word(sh.agility), "fill": float(sh.agility) / 1.6, "min_delta": 0.04, "fmt": "", "whole": false}
+		"stability":
+			return {"value": sh.stability, "text": CarStats.stability_word(sh.stability), "fill": float(sh.stability) / 1.6, "min_delta": 0.04, "fmt": "", "whole": false}
+		"kg":
+			return {"value": sh.kg, "text": "%s kg" % Fmt.num(roundi(sh.kg)), "fill": float(sh.kg) / 2000.0, "min_delta": 20.0, "fmt": "%+d", "whole": true}
+		_:
+			return {"value": sh.range_km, "text": "%.1f km" % sh.range_km, "fill": float(sh.range_km) / 24.0, "min_delta": 0.3, "fmt": "%+.1f", "whole": false}
 
 
 func _render_garage_list(sel_car: Dictionary) -> void:

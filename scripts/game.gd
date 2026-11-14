@@ -36,6 +36,7 @@ class Vehicle:
 	var yielding := false  # pulling over for the police
 	var hold_t := 0.0      # how long it has waited at the lane line for the lane it is moving into to clear
 	var shape_id := "sedan"  # which outline its hit box has (Data.SHAPES, HitShape)
+	var mass := 0.0          # how heavy it is in a crash against an ordinary car (CarStats.REF_KG): 0 = what its shape weighs (Wreck.MASS)
 	var wreck: Wreck = null  # once it has been hit: a rigid body that slides and spins by itself (no longer driven)
 	var reach_h := 0.9       # how far it reaches sideways of its x right now, and where its rearmost point is along
 	var reach_z := 0.0       # the road: what the traffic following it goes by (they differ from w and z for a turned wreck)
@@ -781,18 +782,17 @@ func _set_player_car() -> void:
 
 func _compute_stats() -> void:
 	var c := Data.car_by_id(Save.data.selected)
-	var m: Dictionary = run.mods if run else {"accel": 1.0, "brake": 1.0, "handling": 1.0, "top": 1.0}
-	var fx := Data.damage_effects(Save.wear(String(c.id)))  # worse damage, worse car
-	st = {
-		"accel": c.accel * (1.0 + 0.06 * Save.perm_level("accel")) * m.accel * fx.accel,
-		"brake": c.brake * (1.0 + 0.06 * Save.perm_level("brake")) * m.brake * fx.brake,
-		"grip": c.grip * (1.0 + 0.06 * Save.perm_level("handling")) * m.handling * fx.grip,
-		"lat": c.lat * (1.0 + 0.04 * Save.perm_level("handling")) * sqrt(m.handling) * fx.lat,
-		"top": c.top * (1.0 + 0.04 * Save.perm_level("top")) * m.top * fx.top,
-		"tank": float(c.get("tank", 45)),
-		"grade": String(c.get("fuel", "regular")),
-		"fuel_use": fx.fuel,
-	}
+	var m: Dictionary = run.mods if run else {}
+	st = CarStats.compute(c, _perm_levels(), m, Save.wear(String(c.id)))  # worse damage, worse car
+	player.mass = float(st.mass)
+
+
+## How many of each permanent upgrade the player has bought (for the car they drive: see Save.perm_level).
+func _perm_levels() -> Dictionary:
+	var lv := {}
+	for k in CarStats.PERM_KEYS:
+		lv[k] = Save.perm_level(k)
+	return lv
 
 
 func _reset_world() -> void:
@@ -1197,6 +1197,8 @@ func _body_of(c: Vehicle) -> Wreck:
 	var b := Wreck.make(c.shape_id)
 	var yaw := c.yaw if c == player else atan2(c.vx, maxf(c.v, 1.0))
 	b.yaw = yaw
+	if c.mass > 0.0:
+		b.mass = c.mass  # (a car's own weight, from its table row: see CarStats)
 	b.pos = Vector2(c.x + sin(yaw) * c.l / 2.0, c.z + cos(yaw) * c.l / 2.0)
 	if c == player:
 		b.vel = Vector2(sin(c.course), cos(c.course)) * c.v
@@ -1217,7 +1219,7 @@ func _take_player_body(b: Wreck, w_before: float) -> void:
 	player.v = b.vel.length()
 	player.course = clampf(atan2(b.vel.x, maxf(b.vel.y, 0.01)), -0.7, 0.7)
 	player.vx = player.v * sin(player.course)
-	_yaw_kick = clampf(_yaw_kick + (b.w - w_before) * 0.6, -3.0, 3.0)  # (a driver who is still in control catches some of the swing)
+	_yaw_kick = clampf(_yaw_kick + (b.w - w_before) * float(st.get("swing_catch", 0.6)), -3.0, 3.0)  # (a driver who is still in control catches some of the swing; a stable car swings less)
 
 
 ## The blow itself between the player's car and another vehicle (`ct` from HitShape.contact: n from the
@@ -1409,6 +1411,7 @@ func _start_boss() -> void:
 	boss.w = sh.w
 	boss.l = sh.l
 	boss.shape_id = car.shape
+	boss.mass = float(car.get("kg", CarStats.REF_KG)) / CarStats.REF_KG
 	boss.is_boss = true
 	# start in a lane that is clear around the boss's starting spot, the one with the most open road ahead
 	var start_lane := -1
@@ -2502,21 +2505,20 @@ func _update_player(dt: float) -> void:
 	var vr: float = player.v / st.top
 	var a := 0.0
 	if gas:
-		a += st.accel * maxf(0.0, 1.0 - pow(vr, 3.0)) * (1.15 if player.v < 10.0 else 1.0)
-	a -= 0.3 + 0.00022 * player.v * player.v
+		a += CarStats.thrust(st, player.v)
+	a -= CarStats.drag(player.v)
 	if run and run.fuel <= 0.0 and state == S.PLAY:
 		a -= 1.8  # a dry engine drags the car down
 	if brk:
-		a -= st.brake * (1.0 if player.v > 3.0 else 0.4)
+		a -= CarStats.braking(st, player.v)
 	if on_shoulder:
 		a -= 2.5 + player.v * 0.05
 	var v_before := player.v
 	player.v = maxf(0.0, player.v + a * dt)
 	player.braking = brk
 	if run and state == S.PLAY and run.dying <= 0.0:
-		# fuel: a full tank lasts FUEL_RANGE_KM flat out, longer driven gently
-		var lpm: float = st.tank / (Data.FUEL_RANGE_KM * 1000.0 * Data.station_scale)
-		lpm *= (0.55 + (0.25 if gas else 0.0) + 0.2 * clampf(vr * vr, 0.0, 1.0)) * run.mods.eco * float(st.get("fuel_use", 1.0))
+		# fuel: a full tank lasts the car's range flat out (CarStats.range_km), longer driven gently
+		var lpm := CarStats.fuel_per_m(st, gas, vr, Data.station_scale) * float(run.mods.eco)
 		run.fuel = maxf(0.0, run.fuel - lpm * player.v * dt)
 		if live and _pit_ready():
 			_start_pit()
@@ -2582,12 +2584,12 @@ func _drive_steer(dt: float, brk: bool, vr: float) -> void:
 	var r := v * tan(player.steer) / wb
 	# grip limit (friction circle): less sideways grip while braking, on the
 	# shoulder, and as the tyres load up near top speed
-	var grip: float = st.grip * (1.0 - 0.18 * clampf(vr, 0.0, 1.2)) * (0.6 if on_shoulder else 1.0) * (0.75 if brk and v > 3.0 else 1.0)
+	var grip := CarStats.grip_for(st, vr, v, brk, on_shoulder)
 	if absf(r) * v > grip:
 		r = signf(r) * grip / maxf(v, 0.1)  # past the limit: understeer, the car runs wide
 	player.yaw_rate = r
 	player.yaw = clampf(player.yaw + (r + _yaw_kick) * dt, -0.6, 0.6)
-	_yaw_kick = move_toward(_yaw_kick, 0.0, 6.5 * dt)
+	_yaw_kick = move_toward(_yaw_kick, 0.0, float(st.swing_decay) * dt)
 	player.course = player.yaw
 	player.vx = v * sin(player.yaw)
 	player.x += player.vx * dt
@@ -2606,13 +2608,13 @@ func _drive_steer(dt: float, brk: bool, vr: float) -> void:
 func _drive_manual(dt: float, brk: bool, vr: float, cmd: float) -> void:
 	var v := player.v
 	var wb := player.l * 0.6
-	var grip: float = st.grip * (1.0 - 0.18 * clampf(vr, 0.0, 1.2)) * (0.6 if on_shoulder else 1.0) * (0.75 if brk and v > 3.0 else 1.0)
+	var grip := CarStats.grip_for(st, vr, v, brk, on_shoulder)
 	var auth: float = SteerModel.feel(Save.setting("steer_feel")).auth
-	SteerModel.drive(player, dt, v, grip, auth, wb, cmd, Save.data.assist)
+	SteerModel.drive(player, dt, v, grip, auth, wb, cmd, Save.data.assist, st.gain, st.quick)
 	if _yaw_kick != 0.0:
-		# a blow swung the nose: the tyres wear the swing off at about what a sliding car's do (see Wreck)
+		# a blow swung the nose: the tyres wear the swing off at about what a sliding car's do (see Wreck); a stable car's sooner
 		player.yaw = clampf(player.yaw + _yaw_kick * dt, -0.7, 0.7)
-		_yaw_kick = move_toward(_yaw_kick, 0.0, 6.5 * dt)
+		_yaw_kick = move_toward(_yaw_kick, 0.0, float(st.swing_decay) * dt)
 	# how hard the tyres are working (0 .. 1: the limit), for the controls and the haptics
 	var work := absf(v * player.yaw_rate) / maxf(SteerModel.usable_at(grip, auth, v), 0.1)
 	_feel_load = lerpf(_feel_load, clampf(work, 0.0, 1.3), minf(1.0, dt * 14.0))
@@ -2741,7 +2743,8 @@ func _start_run() -> void:
 	hud.banner(ri.name, "%s → %s · STAGE 1" % [String(ri.from).to_upper(), String(ri.to).to_upper()])
 	var wear := Save.wear(String(Save.data.selected))
 	if autotest:
-		print("[autotest] run starts with a %d%% worn %s: top speed %.0f km/h, acceleration %.2f" % [roundi(wear * 100.0), Save.data.selected, float(st.top) * 3.6, float(st.accel)])
+		print("[autotest] run starts with a %d%% worn %s: top speed %.0f km/h, acceleration %.2f; pull %.1f, agility %.2f, stability %.2f, %d kg, range %.1f km" % [roundi(wear * 100.0), Save.data.selected,
+			float(st.top) * 3.6, float(st.accel), float(st.pull), float(st.agility), float(st.stability), roundi(st.kg), float(st.range_km)])
 	if wear >= 0.02:
 		var fx := Data.damage_effects(wear)
 		hud.banner("DAMAGED CAR · %d%% WORN" % roundi(wear * 100.0), ("ANOTHER HARD HIT COULD WRECK IT AND END THE RUN · " if wear >= 0.7 else "") + "TOP SPEED −%d%% · ACCELERATION −%d%% · REPAIR IT AT THE GARAGE" % [

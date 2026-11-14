@@ -312,7 +312,7 @@ func boss_edge(stage: int, r := -1) -> float:
 ## player, close but never through a car, so for the same skill it earns less, and its scores are brought back to where
 ## they were (the numbers are measured: the mean rival score of 6 test races at each skill, over the target for it).
 ## Pairs of (skill, factor); in between the factor is interpolated.
-const BOSS_STYLE := [[0.0, 1.37], [0.3, 1.9], [0.63, 2.5], [0.97, 2.3], [1.3, 2.6], [1.75, 6.0]]
+const BOSS_STYLE := [[0.0, 2.7], [0.3, 2.3], [0.63, 2.2], [0.97, 2.3], [1.3, 2.1], [1.75, 1.75]]
 
 
 func boss_style(sk: float) -> float:

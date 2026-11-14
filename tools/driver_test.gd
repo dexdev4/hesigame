@@ -28,6 +28,13 @@ class Car:
 const LANES: Array = [-5.4, -1.8, 1.8, 5.4]
 const DT := 1.0 / 60.0
 
+var _trace_n := 0
+var _hard_sig := 0
+var _hard_close := 0
+var _hard_follow := 0
+var _hard_other := 0
+var _stuck_lc := false     # the traffic changes lane sooner when it is stuck behind a slower car (the game's), for the benchmark
+var _lc_mult := 1.0
 var _fails := 0
 var _checks := 0
 var _rng := RandomNumberGenerator.new()
@@ -41,6 +48,10 @@ func _check(ok: bool, what: String) -> void:
 
 
 func _initialize() -> void:
+	if OS.get_environment("DRIVER_BENCH") != "":
+		_bench()
+		quit(0)
+		return
 	_scenario_empty()
 	_scenario_stopped_car()
 	_scenario_wall_with_gap()
@@ -57,6 +68,8 @@ func _driver(risk: float) -> CarDriver:
 	var d := CarDriver.new()
 	d.lanes = LANES
 	d.set_risk(risk)
+	if OS.get_environment("DRIVER_IDM") != "":
+		d.kinematic = false  # (the intelligent driver model's ramp, for comparing)
 	return d
 
 
@@ -105,7 +118,8 @@ func _traffic_step(cars: Array, ego: Car, dt: float, lane_changes: bool) -> void
 		if not lane_changes:
 			continue
 		if c.tlane == c.lane:
-			c.lc_t -= dt
+			var stuck := _stuck_lc and lead != null and gap < 30.0 and lead.v < c.cruise - 2.0
+			c.lc_t -= dt * _lc_mult * (3.0 if stuck else 1.0)
 			if c.lc_t <= 0.0:
 				c.lc_t = _rng.randf_range(4.0, 11.0)
 				var nl := c.lane + (-1 if _rng.randf() < 0.5 else 1)
@@ -145,6 +159,7 @@ class Stats:
 	var vx := 0.0
 	var ax := 0.0
 	var ax_max := 0.0
+	var ax_t := 0.0
 	var j2 := 0.0
 	var jumps := 0
 	var rev := 0
@@ -163,6 +178,14 @@ class Stats:
 	var started := false
 	var passed := {}     # car -> closest lateral gap while alongside
 	var was_ahead := {}
+	var hard6 := 0       # frames braking harder than 6 m/s²
+	var hard8 := 0       # ...and than 8
+	var frames := 0
+	var razor := 0       # cars passed with under 0.35 m beside, under 1 m, and more
+	var near := 0
+	var plain := 0
+	var pass_pts := 0.0  # what those passes are worth (the boss's scoring without its multipliers)
+	var counted := {}
 
 
 func _observe(st: Stats, ego: Car, cars: Array) -> void:
@@ -176,6 +199,8 @@ func _observe(st: Stats, ego: Car, cars: Array) -> void:
 		return
 	var ax := (ego.vx - st.vx) / DT
 	var jerk := (ax - st.ax) / DT
+	if absf(ax) > st.ax_max:
+		st.ax_t = st.t
 	st.ax_max = maxf(st.ax_max, absf(ax))
 	st.j2 += jerk * jerk
 	st.n += 1
@@ -196,6 +221,11 @@ func _observe(st: Stats, ego: Car, cars: Array) -> void:
 	var al := (ego.v - st.v) / DT
 	st.a_max = maxf(st.a_max, al)
 	st.b_max = maxf(st.b_max, -al)
+	st.frames += 1
+	if al < -6.0:
+		st.hard6 += 1
+	if al < -8.0:
+		st.hard8 += 1
 	st.v = ego.v
 	st.v_sum += ego.v * DT
 	var yaw := atan2(ego.vx, maxf(ego.v, 1.0))
@@ -211,6 +241,19 @@ func _observe(st: Stats, ego: Car, cars: Array) -> void:
 					print("    first overlap at %.1f s: ego x %.2f z %.1f v %.1f vx %.2f | car x %.2f z %.1f v %.1f vx %.2f lane %d tlane %d sig %.2f" % [st.t, ego.x, ego.z, ego.v, ego.vx, c.x, c.z, c.v, c.vx, c.lane, c.tlane, c.sig_t])
 			st.min_gap = minf(st.min_gap, lat)
 			st.passed[c] = minf(float(st.passed.get(c, 99.0)), lat)
+		elif st.passed.has(c) and not st.counted.has(c) and c.z + c.l <= ego.z:
+			st.counted[c] = true  # it is behind now: the ego passed it
+			var m: float = st.passed[c]
+			var sf := pow(maxf(ego.v, 12.0) / 25.0, 1.5)
+			if m < 0.35:
+				st.razor += 1
+				st.pass_pts += 245.0 * sf
+			elif m < 1.0:
+				st.near += 1
+				st.pass_pts += (25.0 + 95.0 * (2.0 - m)) * sf
+			else:
+				st.plain += 1
+				st.pass_pts += 25.0 * sf
 
 
 var _airbags := 0
@@ -229,7 +272,7 @@ func _line(name: String, st: Stats) -> void:
 func _smooth(name: String, st: Stats, ax_bound: float) -> void:
 	_check(st.overlaps == 0, "%s: it never touched a car (%d frames overlapping)" % [name, st.overlaps])
 	_check(st.jumps == 0, "%s: no jumps in its sideways speed (%d)" % [name, st.jumps])
-	_check(st.ax_max < ax_bound, "%s: sideways acceleration stays under %.0f m/s² (%.1f)" % [name, ax_bound, st.ax_max])
+	_check(st.ax_max < ax_bound, "%s: sideways acceleration stays under %.0f m/s² (%.1f at %.2f s)" % [name, ax_bound, st.ax_max, st.ax_t])
 	_check(st.yaw_rate_max < 1.2, "%s: it never turns faster than 1.2 rad/s (%.2f)" % [name, st.yaw_rate_max])
 	_check(st.b_max < 12.5, "%s: it never brakes harder than 12.5 m/s² (%.1f)" % [name, st.b_max])
 	_check(st.a_max < 9.0, "%s: it never speeds up harder than 9 m/s² (%.1f)" % [name, st.a_max])
@@ -298,6 +341,163 @@ func _scenario_full_wall() -> void:
 	_check(st.b_max < 12.5, "wall, no gap: it did not brake harder than 12.5 m/s² (%.1f)" % st.b_max)
 
 
+## The game's traffic: a mix of cars, vans and (in the outer lanes) lorries, at the speeds of their lanes.
+func _game_car(rng: RandomNumberGenerator, lane: int, z: float) -> Car:
+	var r := rng.randf()
+	var l := 4.2
+	var w := 1.9
+	var slow := 0.0
+	if lane >= 2 and r < 0.17:
+		l = 11.1
+		w = 2.5
+		slow = 2.0
+	elif r < 0.27:
+		l = 5.4
+		w = 2.0
+	elif r < 0.48:
+		l = 4.9
+	elif r < 0.76:
+		l = 4.5
+	var c := _car(lane, z, [31.0, 27.5, 24.0, 20.5][lane] + rng.randf_range(-1.6, 1.6) - slow)
+	c.l = l
+	c.w = w
+	c.reach_h = w / 2.0
+	c.lc_t = rng.randf_range(2.0, 9.0)
+	return c
+
+
+## The game's way of keeping the road populated: cars are added far ahead (380 to 440 m) while fewer than `target` are
+## within 440 m, where a lane has 28 m free around the place and not three of the others are busy there.
+func _game_spawn(rng: RandomNumberGenerator, cars: Array, z: float, ego: Car) -> bool:
+	var lane := rng.randi() % 4
+	for o: Car in cars:
+		if (absf(o.x - LANES[lane]) < 2.4 or o.tlane == lane) and o.z + o.l > z - 28.0 and o.z < z + 28.0:
+			return false
+	var blocked := 0
+	for i in 4:
+		if i == lane:
+			continue
+		for o: Car in cars:
+			if (absf(o.x - LANES[i]) < 2.4 or o.tlane == i) and o.z + o.l > z - 16.0 and o.z < z + 16.0:
+				blocked += 1
+				break
+	if blocked >= 3 or (blocked >= 2 and rng.randf() < 0.5):
+		return false
+	if absf(z - ego.z) < 30.0 and absf(LANES[lane] - ego.x) < 2.4:
+		return false  # (not on top of the car being driven)
+	cars.append(_game_car(rng, lane, z))
+	return true
+
+
+## The benchmark (DRIVER_BENCH=1, or =light / =dense, and DRIVER_SEEDS=N): how the driver drives at each level of risk in
+## the traffic of an early stage (17 cars within 440 m ahead) and of a late one (26), over several seeds: its mean speed, how
+## much of the time it brakes hard, its sideways moves, the cars it passes (and how close), what those passes are worth, and
+## whether it touched a car or needed the guard. For comparing one version of the driver with another in a minute.
+func _bench() -> void:
+	var which := OS.get_environment("DRIVER_BENCH")
+	var nseeds := int(OS.get_environment("DRIVER_SEEDS")) if OS.get_environment("DRIVER_SEEDS") != "" else 4
+	_stuck_lc = true
+	print("%-6s %5s | %5s %5s | %6s %6s %5s | %5s | %5s %5s %5s | %6s | %4s %5s" % ["road", "risk", "v", "v_end", ">6", ">8", "peak", "lc/mn", "razor", "near", "plain", "pts/s", "ovl", "guard"])
+	for dens in [["light", 17, 1], ["dense", 26, 5]]:
+		if which in ["light", "dense"] and which != dens[0]:
+			continue
+		_lc_mult = 1.0 + float(dens[2]) * 0.12
+		for risk in [0.12, 0.4, 0.7, 1.0]:
+			var v_sum := 0.0
+			var v_end := 0.0
+			var hard6 := 0
+			var hard8 := 0
+			var frames := 0
+			var peak := 0.0
+			var lc := 0
+			var razor := 0
+			var near := 0
+			var plain := 0
+			var pts := 0.0
+			var ovl := 0
+			var guard := 0
+			var secs := 0.0
+			_hard_sig = 0
+			_hard_close = 0
+			_hard_follow = 0
+			_hard_other = 0
+			for seed_v in range(1, nseeds + 1):
+				_rng.seed = 100 + seed_v
+				var rng := RandomNumberGenerator.new()
+				rng.seed = 200 + seed_v
+				var cars: Array = []
+				var ego := _ego(2, 0.0, 40.0)
+				var z0 := 45.0
+				while z0 < 420.0:
+					_game_spawn(rng, cars, z0, ego)
+					z0 += rng.randf_range(10.0, 20.0)
+				var driver := _driver(risk)
+				var want := maxf(33.0 + 26.0 * minf((risk - 0.12) / 0.55 + 0.3, 1.2), 36.0)
+				var st := Stats.new()
+				driver.reset(ego)
+				var tr_b := OS.get_environment("DRIVER_BENCH_TRACE").split(":")  # "road:risk:seed": print where it brakes hard
+				var tracing: bool = tr_b.size() == 3 and tr_b[0] == String(dens[0]) and absf(float(tr_b[1]) - float(risk)) < 0.01 and int(tr_b[2]) == seed_v
+				var prev_v := ego.v
+				for i in int(60.0 / DT):
+					_traffic_step(cars, ego, DT, true)
+					driver.step(ego, cars, DT, want)
+					_observe(st, ego, cars)
+					if (ego.v - prev_v) / DT < -6.0:
+						_trace_n += 1
+						# what is it braking for: a car ahead in its strip of the road (counting where a signalling car is going to)
+						var lead: Car = null
+						var lg := 1.0e9
+						for c: Car in cars:
+							var lo := minf(c.x, LANES[c.tlane]) - c.w / 2.0
+							var hi := maxf(c.x, LANES[c.tlane]) + c.w / 2.0
+							var lat := maxf(lo - (ego.x + ego.w / 2.0), (ego.x - ego.w / 2.0) - hi)
+							if lat < 0.3 and c.z + c.l > ego.z and c.z - (ego.z + ego.l) < lg:
+								lg = c.z - (ego.z + ego.l)
+								lead = c
+						if lead != null and lead.tlane != lead.lane:
+							_hard_sig += 1   # a car that is moving over (or has signalled that it will)
+						elif lead != null and lg < 12.0:
+							_hard_close += 1  # a car right ahead
+						elif lead != null:
+							_hard_follow += 1  # a car ahead it is closing on
+						else:
+							_hard_other += 1
+						if tracing and _trace_n % 6 == 1:
+							print("   t=%.1f v %.1f a %.1f x %.2f vx %.1f | lead: %s" % [st.t, ego.v, (ego.v - prev_v) / DT, ego.x, ego.vx,
+								("gap %.1f v %.1f len %.1f lane %d>%d sig %.2f dx %.2f" % [lg, lead.v, lead.l, lead.lane, lead.tlane, lead.sig_t, lead.x - ego.x]) if lead else "none"])
+					prev_v = ego.v
+					for c: Car in cars.duplicate():
+						if c.z < ego.z - 90.0:
+							cars.erase(c)
+					var ahead := 0
+					for c: Car in cars:
+						if c.z > ego.z and c.z < ego.z + 440.0:
+							ahead += 1
+					for k in 2:
+						if ahead < int(dens[1]) and _game_spawn(rng, cars, ego.z + rng.randf_range(380.0, 440.0), ego):
+							ahead += 1
+				v_sum += st.v_sum
+				secs += st.t
+				v_end += ego.v
+				hard6 += st.hard6
+				hard8 += st.hard8
+				frames += st.frames
+				peak = maxf(peak, st.b_max)
+				lc += st.lc
+				razor += st.razor
+				near += st.near
+				plain += st.plain
+				pts += st.pass_pts
+				ovl += st.overlaps
+				guard += driver.airbags
+			var mins := secs / 60.0
+			print("%-6s %5.2f | %5.1f %5.1f | %5.1f%% %5.1f%% %5.1f | %5.1f | %5.1f %5.1f %5.1f | %6.0f | %4d %5d" % [dens[0], risk, v_sum / secs, v_end / float(nseeds), 100.0 * hard6 / float(frames), 100.0 * hard8 / float(frames),
+				peak, float(lc) / mins, float(razor) / mins, float(near) / mins, float(plain) / mins, pts / secs, ovl, guard]
+				+ "   hard braking for: moving-over %d%% right-ahead %d%% closing-on %d%% other %d%%" % [roundi(100.0 * _hard_sig / maxf(float(_hard_sig + _hard_close + _hard_follow + _hard_other), 1.0)),
+				roundi(100.0 * _hard_close / maxf(float(_hard_sig + _hard_close + _hard_follow + _hard_other), 1.0)), roundi(100.0 * _hard_follow / maxf(float(_hard_sig + _hard_close + _hard_follow + _hard_other), 1.0)),
+				roundi(100.0 * _hard_other / maxf(float(_hard_sig + _hard_close + _hard_follow + _hard_other), 1.0))])
+
+
 ## Another car moves over onto it (so that they overlap by half a metre): it steers clear, and does not slam the brakes
 ## (it would only fall back out of the overlap more slowly than the way out sideways) or call on the guard.
 func _scenario_swiped() -> void:
@@ -358,6 +558,10 @@ func _scenario_traffic() -> void:
 				_step_sum += us
 				_step_max = maxi(_step_max, us)
 				_observe(st, ego, cars)
+				if OS.get_environment("DRIVER_FRAMES") != "":  # "risk:seed:t0:t1": every frame's sideways motion
+					var fr := OS.get_environment("DRIVER_FRAMES").split(":")
+					if fr.size() == 4 and absf(float(fr[0]) - risk) < 0.01 and int(fr[1]) == seed_v and st.t >= float(fr[2]) and st.t <= float(fr[3]):
+						print("      f t=%.3f x %.3f vx %.3f ax %.1f tgt %.2f moving %s" % [st.t, ego.x, ego.vx, st.ax, driver.target_x, str(driver._moving)])
 				var tr := OS.get_environment("DRIVER_TRACE").split(":")
 				if tr.size() == 4:
 					driver.debug = absf(float(tr[0]) - risk) < 0.01 and int(tr[1]) == seed_v and st.t >= float(tr[2]) and st.t <= float(tr[3])

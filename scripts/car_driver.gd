@@ -25,6 +25,9 @@ var a_max := 7.0                 # the hardest it speeds up, m/s²
 var b_max := 10.0                # the hardest it brakes, m/s²
 var b_comf := 6.0                # how hard it will brake to settle in behind a car (it looks ahead so as not to need more)
 var arcade_follow := false       # behind a car it keeps its throttle until it must brake (instead of easing off as it closes in)
+var kinematic := true            # behind a slower car it brakes steadily (see _approach), not along the intelligent driver model's ramp
+var brake_jerk := 18.0           # how fast it eases onto the brake when it does not have to hurry, m/s³ (45 when it does)
+var brake_start := 3.0           # the steady braking it starts at, m/s²: it begins when matching the other car's speed in the room it has takes this much
 var free_gain := 0.0             # above 0, on a free road it speeds up flat out until it is within a_max / free_gain m/s of the speed it wants
                                  # and eases on from there (an arcade car), instead of easing up to it all the way (a driver)
 var margin_target := 0.8         # the room it leaves alongside a car it passes, m
@@ -55,6 +58,7 @@ var switch_need := 5.0           # how much better another line must be (metres 
 var debug := false               # print what it makes of each round (for the test)
 var report_airbag := false       # print each time the last-resort guard steps in (for the test)
 var _log := ""
+var lat_stops := 0               # how many times it had to stop its sideways move short of a car (see _lateral_guard)
 var airbags := 0                 # how many times the last-resort guard had to step in (it should be next to never)
 var detail_x := 1.0e9            # print how this line (if it is tried) is played forward (for the test)
 
@@ -90,6 +94,14 @@ var _ol := PackedFloat32Array()
 var _ov := PackedFloat32Array()
 var _ox0 := PackedFloat32Array()
 var _ox1 := PackedFloat32Array()
+var _ox := PackedFloat32Array()  # where each is across the road, where it is going (if it has signalled), in how long it starts to move and how fast it moves sideways,
+var _otx := PackedFloat32Array()
+var _osig := PackedFloat32Array()
+var _olv := PackedFloat32Array()
+var _ohw := PackedFloat32Array() # and how far from its middle it reaches
+var _ostat := PackedByteArray()  # 1 for one that is not going anywhere sideways (or that reaches over the road: a wreck): its strip is fixed
+var _s_lo := 0.0                 # (the strip _strip leaves)
+var _s_hi := 0.0
 var _mg := PackedFloat32Array()
 var _inside := PackedByteArray()  # 1 for a car it is already alongside, in its strip of the road, when the round begins (another car ran into it, say)
 var _plan_v := 0.0               # the speed it was going when the round began
@@ -99,6 +111,13 @@ var _plan_x := 0.0               # ...and where it was, and how it was moving (e
 var _plan_z := 0.0               # moment the cars it is looking at were taken at)
 var _plan_vx := 0.0
 var _plan_ax := 0.0
+var _plan_clock := 0.0           # when the round began (on the driver's clock)
+var _plan_moving := false        # whether it was on a curve then
+var _plan_lag := 0.0             # how long the round takes (the move it picks starts that much later than the state it was planned from)
+var _lag_x := 0.0                # where it will be when it starts it, and how it will be moving (if it carries on along the curve it is on)
+var _lag_vx := 0.0
+var _lag_ax := 0.0
+var _dt := 1.0 / 60.0
 const STEP := 0.2                # seconds between the moments a line is checked at
 var per_frame := 1               # lines tried a frame (so that no frame pays for a whole round of planning)
 
@@ -112,14 +131,18 @@ func set_risk(r: float) -> void:
 	a_max = lerpf(5.5, 8.5, risk)
 	b_max = lerpf(8.0, 11.0, risk)
 	b_comf = lerpf(4.5, 7.0, risk)
-	margin_target = lerpf(1.1, 0.22, risk)
-	margin_hard = lerpf(0.4, 0.16, risk)
+	brake_start = lerpf(2.2, 4.2, risk)
+	margin_target = lerpf(1.1, 0.30, risk)
+	margin_hard = lerpf(0.4, 0.14, risk)
 	follow_gap = lerpf(7.0, 2.5, risk)
 	follow_t = lerpf(1.0, 0.3, risk)
 	react_t = lerpf(1.0, 0.45, risk)
 	pts_weight = lerpf(0.015, 0.1, risk)
 	move_cost = lerpf(2.6, 1.2, risk)
-	switch_need = lerpf(6.0, 3.0, risk)
+	switch_need = lerpf(6.0, 2.0, risk)
+	dwell_t = lerpf(0.9, 0.5, risk)
+	plan_every = lerpf(0.3, 0.22, risk)
+	end_speed_w = lerpf(0.0, 2.0, risk)
 
 
 ## Forget what it was doing (it has been put somewhere else).
@@ -137,6 +160,7 @@ func reset(me) -> void:
 ## One frame of driving `me` (its x, z, v, vx, lane, tlane and braking are set) among `others`.
 ## v_want: the speed it would like to go.
 func step(me, others: Array, dt: float, v_want: float) -> void:
+	_dt = dt
 	_clock += dt
 	_dwell += dt
 	_plan_in -= dt
@@ -149,6 +173,7 @@ func step(me, others: Array, dt: float, v_want: float) -> void:
 			_cursor += 1
 		if _cursor >= _cands.size():
 			_commit(me)
+	_lateral_guard(me, others)
 	var x_prev: float = me.x
 	var z_prev: float = me.z
 	_follow(me)
@@ -234,6 +259,118 @@ func _extent(o) -> Array:
 	return [minf(o.x, xe) - hw, maxf(o.x, xe) + hw]
 
 
+## Where it would be across the road `t` seconds after the planning round began, how fast it would be moving sideways and how
+## hard it would be accelerating sideways, if it carried on along the curve it was on.
+func _exist_state(t: float) -> Array:
+	if not _plan_moving:
+		return [_plan_x, 0.0, 0.0]
+	var tt := _plan_clock + t - _t0
+	if tt >= _dur:
+		return [target_x, 0.0, 0.0]
+	var t2 := tt * tt
+	var t3 := t2 * tt
+	return [_x0 + _v0 * tt + 0.5 * _a0 * t2 + _c3 * t3 + _c4 * t3 * tt + _c5 * t3 * t2,
+		_v0 + _a0 * tt + 3.0 * _c3 * t2 + 4.0 * _c4 * t3 + 5.0 * _c5 * t3 * tt,
+		_a0 + 6.0 * _c3 * tt + 12.0 * _c4 * t2 + 20.0 * _c5 * t3]
+
+
+func _exist_x(t: float) -> float:
+	if not _plan_moving:
+		return _plan_x
+	var tt := _plan_clock + t - _t0
+	if tt >= _dur:
+		return target_x
+	var t2 := tt * tt
+	var t3 := t2 * tt
+	return _x0 + _v0 * tt + 0.5 * _a0 * t2 + _c3 * t3 + _c4 * t3 * tt + _c5 * t3 * t2
+
+
+## Moving sideways it must never go into the side of a car it is alongside (or about to be): a plan can be a little out
+## (a car that did not do what it was expected to, a brake that did not bite as soon as it was thought to), and the
+## last resort for that, the guard that puts it back, shows as a jump. So every frame, if it is moving over, it checks
+## that it can still stop sideways (at a bit more than it moves over with) short of the strip of any car it will be
+## alongside while it does, and if it could not, it begins to stop now: a steady sideways deceleration, not a jump, and
+## then it plans again.
+func _lateral_guard(me, others: Array) -> void:
+	if not _moving or absf(me.vx) < 0.4:
+		return
+	var a_stop: float = lat_accel * 1.3
+	var t_stop: float = absf(me.vx) / a_stop
+	var stop_d: float = me.vx * me.vx / (2.0 * a_stop)
+	var dir: float = signf(me.vx)
+	var hb: float = me.w * 0.5
+	var wall := 1.0e9
+	for o in others:
+		if o == me:
+			continue
+		var orear: float = _rear(o)
+		var olen: float = o.l + (o.z - orear)
+		var gap: float = orear - (me.z + me.l)
+		if gap > 25.0 or gap < -olen - 6.0:
+			continue
+		var closing: float = me.v - maxf(o.v, 0.0)
+		var alongside := false
+		for k in 3:
+			var tk: float = t_stop * float(k) * 0.5
+			var g: float = gap - closing * tk
+			if g < 0.8 and g + olen + me.l > -0.8:
+				alongside = true
+				break
+		if not alongside:
+			continue
+		_strip(o, 0.0, t_stop)
+		var d: float = (_s_lo - (me.x + hb)) if dir > 0.0 else ((me.x - hb) - _s_hi)
+		if d >= -0.02:
+			wall = minf(wall, d)
+	if wall < stop_d + 0.12:
+		_lateral_stop(me, a_stop)
+		lat_stops += 1
+
+
+## Stop moving sideways, at a steady `a` (sideways).
+func _lateral_stop(me, a: float) -> void:
+	var dir: float = signf(me.vx)
+	_x0 = me.x
+	_v0 = me.vx
+	_a0 = -dir * a
+	_c3 = 0.0
+	_c4 = 0.0
+	_c5 = 0.0
+	_dur = absf(me.vx) / a
+	_t0 = _clock
+	target_x = me.x + dir * me.vx * me.vx / (2.0 * a)
+	_moving = true
+	_dwell = 0.0
+	_plan_in = 0.0
+	_cands.clear()
+
+
+## The strip across the road a car takes between `t0` and `t1` seconds from now: if it has signalled it stays where it is
+## until the signal runs out and then drifts over to the lane it is going to (as the traffic of the game does), so it
+## is not in the lane it is moving into until it gets there; a car that is not going anywhere sideways takes the
+## same strip all along. Leaves it in _s_lo and _s_hi.
+func _strip(o, t0: float, t1: float) -> void:
+	var hw: float = maxf(o.reach_h, o.w * 0.5)
+	var xo: float = o.x
+	var x0 := xo
+	var x1 := xo
+	if o.tlane != o.lane and o.tlane >= 0 and o.tlane < lanes.size() and o.reach_h <= o.w * 0.5 + 0.2:
+		var tx: float = float(lanes[o.tlane])
+		var sg: float = maxf(o.sig_t, 0.0)
+		var lv: float = minf(1.9, maxf(o.v, 0.0) * 0.14)
+		x0 = move_toward(xo, tx, lv * maxf(t0 - sg, 0.0))
+		x1 = move_toward(xo, tx, lv * maxf(t1 - sg, 0.0))
+	else:
+		x0 = xo
+		x1 = xo
+		var e: Array = _extent(o)
+		_s_lo = float(e[0])
+		_s_hi = float(e[1])
+		return
+	_s_lo = minf(x0, x1) - hw
+	_s_hi = maxf(x0, x1) + hw
+
+
 ## The last resort: it must never be inside another car. If a move has put it in one, undo what did it: held back
 ## if it ran up behind the car, kept where it was if it swung into its side. (Planning and braking see to it that
 ## this is next to never needed; it is here so that the rare case does not show as one car driving through another.)
@@ -296,8 +433,8 @@ func _curve(x0: float, v0: float, a0: float, xt: float, d: float) -> PackedFloat
 		for k in 17:
 			var t := d * float(k) / 16.0
 			peak = maxf(peak, absf(a0 + 6.0 * c3 * t + 12.0 * c4 * t * t + 20.0 * c5 * t * t * t))
-		if peak <= a_cap:
-			break
+		if peak <= a_cap or attempt == 7:
+			break  # (the time it returns is the one the curve was made for)
 		d *= clampf(sqrt(peak / a_cap), 1.06, 1.5)
 	return PackedFloat64Array([d, c3, c4, c5])
 
@@ -318,14 +455,47 @@ func _idm_free(v: float, v0: float) -> float:
 ## wants to be follow_gap and follow_t seconds behind it, plus the road the braking will take. At that distance it
 ## just holds its speed, and it brakes more the closer it is than that: early and gently, and only as hard as it has to.
 func _idm_int(v: float, gap: float, vc: float) -> float:
-	var dv := maxf(v - vc, 0.0)
-	var s_star := follow_gap + follow_t * (vc + 0.5 * dv) + dv * react_t + dv * dv / (2.0 * b_comf)
-	var q := s_star / maxf(gap, 0.1)
-	var a := a_max * 0.8 * (1.0 - q * q)
+	var a := _approach(v, gap, vc) if kinematic else _idm_ramp(v, gap, vc)
 	return 1.0e9 if (arcade_follow and a > 0.0) else a
 
 
+func _idm_ramp(v: float, gap: float, vc: float) -> float:
+	var dv := maxf(v - vc, 0.0)
+	var s_star := follow_gap + follow_t * (vc + 0.5 * dv) + dv * react_t + dv * dv / (2.0 * b_comf)
+	var q := s_star / maxf(gap, 0.1)
+	return a_max * 0.8 * (1.0 - q * q)
+
+
+## Closing on a slower car the way a driver does it: one steady squeeze of the brake that takes the speed off by the time it
+## is the gap it likes behind it (the constant deceleration that does it, which is the gentlest way to), begun when that takes
+## `brake_start`, and a little more than it needs (so it is a little early, never late); room is kept for what it did not see
+## coming (react_t seconds of the speed it closes at). Short of that it just eases off the throttle. Not closing, it keeps the
+## gap it likes. Returns what the car may do: below zero it must brake, above it may speed up by that much.
+func _approach(v: float, gap: float, vc: float) -> float:
+	var s_min := follow_gap + follow_t * vc
+	var dv := v - vc
+	if dv <= 0.3:
+		var short := s_min - gap
+		return -minf(short * 0.9, b_comf) if short > 0.0 else 1.0e9
+	var room := gap - s_min - react_t * dv
+	if room <= 0.5:
+		return -b_max
+	var a_req := dv * dv / (2.0 * room)
+	var u := a_req / brake_start
+	if u < 1.0:
+		return a_max * 0.8 * (1.0 - u)
+	return -minf(a_req * 1.1, b_max) * smoothstep(1.0, 1.4, u)
+
+
 # ---------------------------------------------------------------- along the road
+
+## How fast the acceleration may change (m/s³): it eases onto the throttle, onto the brake a little quicker, and onto the
+## brake quicker still the harder it has to.
+func _rate(a_target: float, a_now: float) -> float:
+	if a_target > a_now:
+		return 14.0
+	return lerpf(brake_jerk, 45.0, clampf((-a_target - 3.0) / 5.0, 0.0, 1.0))
+
 
 ## Speed up and brake the way the intelligent driver model does (a smooth approach to the speed it wants, early and
 ## gentle braking behind a slower car, the gap it likes kept to a car it follows), eased in and out by a limit on how
@@ -344,8 +514,18 @@ func _drive(me, others: Array, dt: float, v_want: float) -> void:
 		var g: float = orear - (me.z + me.l)
 		if g < -olen - 0.5 or g > 160.0:
 			continue  # (behind it, or too far ahead to matter yet)
-		var ext: Array = _extent(o)
-		var lat: float = minf(minf(_gap_to(ext, xa, hb), _gap_to(ext, xb, hb)), _gap_to(ext, xc, hb))
+		# is it going to be in its way? Not by where a car that has signalled might one day be (it is not there yet), but
+		# by where it will be when it gets there: compare the two at the moments it is alongside (and now)
+		var vcl: float = maxf(o.v, 0.0)
+		var tau: float = clampf(g / maxf(me.v - vcl, 3.0), 0.0, 3.5) if g > 0.0 else 0.0
+		_strip(o, 0.0, 0.0)
+		var lat: float = _gap_to([_s_lo, _s_hi], xa, hb)
+		if tau > 0.0:
+			for tt in [maxf(tau - 0.4, 0.0), tau, tau + 0.5]:
+				_strip(o, tt - 0.3, tt + 0.1)
+				lat = minf(lat, _gap_to([_s_lo, _s_hi], _x_at(me, tt), hb))
+		else:
+			lat = minf(lat, minf(_gap_to([_s_lo, _s_hi], xb, hb), _gap_to([_s_lo, _s_hi], xc, hb)))
 		if lat < margin_hard:
 			var vc: float = maxf(o.v, 0.0)
 			if g < 0.0:
@@ -354,8 +534,7 @@ func _drive(me, others: Array, dt: float, v_want: float) -> void:
 				continue  # (alongside: the line it is on is what keeps clear of it, and steering away is what gets it out)
 			a_int = minf(a_int, _idm_int(me.v, g, vc))
 	var a_t: float = clampf(minf(_idm_free(me.v, v_want), a_int), -b_max, a_max)
-	var rate := 14.0 if a_t > a_lon else 45.0  # (it eases onto the throttle, and onto the brake a little quicker)
-	a_lon = move_toward(a_lon, a_t, rate * dt)
+	a_lon = move_toward(a_lon, a_t, _rate(a_t, a_lon) * dt)
 	var v1: float = maxf(0.0, me.v + a_lon * dt)
 	me.braking = a_lon < -1.5
 	me.v = v1
@@ -385,6 +564,12 @@ func _begin(me, others: Array, v_want: float) -> void:
 	_ox0.resize(others.size())
 	_ox1.resize(others.size())
 	_mg.resize(others.size())
+	_ox.resize(others.size())
+	_otx.resize(others.size())
+	_osig.resize(others.size())
+	_olv.resize(others.size())
+	_ohw.resize(others.size())
+	_ostat.resize(others.size())
 	_inside.resize(others.size())
 	for o in others:
 		if o == me:
@@ -399,6 +584,13 @@ func _begin(me, others: Array, v_want: float) -> void:
 		_ov[_n] = maxf(o.v, 0.0)
 		_ox0[_n] = ext[0]
 		_ox1[_n] = ext[1]
+		_ox[_n] = o.x
+		_ohw[_n] = maxf(o.reach_h, o.w * 0.5)
+		var moving: bool = o.tlane != o.lane and o.tlane >= 0 and o.tlane < lanes.size() and o.reach_h <= o.w * 0.5 + 0.2
+		_ostat[_n] = 0 if moving else 1
+		_otx[_n] = float(lanes[o.tlane]) if moving else o.x
+		_osig[_n] = maxf(o.sig_t, 0.0)
+		_olv[_n] = minf(1.9, maxf(o.v, 0.0) * 0.14)
 		_n += 1
 	if debug:
 		var seen_o := ""
@@ -428,6 +620,13 @@ func _begin(me, others: Array, v_want: float) -> void:
 		_add(_ox0[i] - margin_target - hb)
 		_add(_ox1[i] + margin_target + hb)
 		seen += 1
+	_plan_clock = _clock
+	_plan_moving = _moving
+	_plan_lag = ceilf(float(_cands.size()) / float(per_frame)) * _dt
+	var ls: Array = _exist_state(_plan_lag)
+	_lag_x = ls[0]
+	_lag_vx = ls[1]
+	_lag_ax = ls[2]
 	_cursor = 0
 	_best_x = _hold_x
 	_best_cost = 1.0e18
@@ -448,15 +647,15 @@ func _add(x: float) -> void:
 ## The mark for the line to xt: lower is better.
 func _try(me, xt: float) -> void:
 	var is_hold := _cursor == 0
-	var x0: float = _plan_x
+	var x0: float = _lag_x   # (the move it picks starts once the round is over, from where the curve it is on will have taken it)
 	var dx: float = xt - x0
-	var cf: PackedFloat64Array = _curve(x0, _plan_vx, _plan_ax, xt, duration(absf(dx) + absf(_plan_vx) * 0.25, _plan_v))
+	var cf: PackedFloat64Array = _curve(x0, _lag_vx, _lag_ax, xt, duration(absf(dx) + absf(_lag_vx) * 0.25, _plan_v))
 	var d: float = cf[0]
 	var c3: float = cf[1]
 	var c4: float = cf[2]
 	var c5: float = cf[3]
-	var v0: float = _plan_vx
-	var a0: float = _plan_ax
+	var v0: float = _lag_vx
+	var a0: float = _lag_ax
 	var hb: float = me.w * 0.5
 	var lb: float = me.l
 	var zb: float = _plan_z
@@ -471,17 +670,30 @@ func _try(me, xt: float) -> void:
 	for k in steps:
 		t += STEP
 		var xb: float = xt
-		if t < d:
-			var t2 := t * t
-			var t3 := t2 * t
-			xb = x0 + v0 * t + 0.5 * a0 * t2 + c3 * t3 + c4 * t3 * t + c5 * t3 * t2
+		var tc := t - _plan_lag
+		if tc < 0.0:
+			xb = _exist_x(t)
+		elif tc < d:
+			var t2 := tc * tc
+			var t3 := t2 * tc
+			xb = x0 + v0 * tc + 0.5 * a0 * t2 + c3 * t3 + c4 * t3 * tc + c5 * t3 * t2
 		var a_int := 1.0e9
 		for i in _n:
 			var zc: float = _oz[i] + _ov[i] * t
 			var gap: float = zc - (zb + lb)
 			if gap > 200.0 or zc + _ol[i] < zb - 5.0:
 				continue
-			var lat: float = maxf(_ox0[i] - (xb + hb), (xb - hb) - _ox1[i])
+			var lo: float = _ox0[i]
+			var hi: float = _ox1[i]
+			if _ostat[i] == 0:  # (a car that has signalled is where it is until the signal runs out, then drifts over)
+				var xo: float = _ox[i]
+				var xn: float = move_toward(xo, _otx[i], _olv[i] * maxf(t - _osig[i], 0.0))
+				var xp: float = move_toward(xo, _otx[i], _olv[i] * maxf(t - STEP - _osig[i], 0.0))
+				lo = minf(xn, xp) - _ohw[i]
+				hi = maxf(xn, xp) + _ohw[i]
+			var lat: float = maxf(lo - (xb + hb), (xb - hb) - hi)
+			if debug and absf(xt - detail_x) < 0.011 and lat < 1.5 and gap > -14.0 and gap < 30.0:
+				print("          t=%.1f xb=%.2f obstacle %d: strip [%.2f,%.2f] lat %.2f gap %.1f len %.1f v %.1f inside %d" % [t, xb, i, lo, hi, lat, gap, _ol[i], _ov[i], _inside[i]])
 			if lat < margin_hard + 0.1:
 				if _inside[i] == 1 and gap < 0.5:
 					_mg[i] = minf(_mg[i], lat)  # (already inside its strip of the road: what counts is that it gets clear)
@@ -503,7 +715,7 @@ func _try(me, xt: float) -> void:
 					nz = i
 			print("        step t=%.1f xb=%.2f zb=%.1f ve=%.1f a_int=%.1f | nearest: %s" % [t, xb, zb, ve, a_int, ("z %.1f x [%.2f,%.2f] v %.1f gap %.1f" % [_oz[nz] + _ov[nz] * t, _ox0[nz], _ox1[nz], _ov[nz], _oz[nz] + _ov[nz] * t - zb - lb]) if nz >= 0 else "-"])
 		var a: float = clampf(minf(_idm_free(ve, _plan_vwant), a_int), -b_max, a_max)
-		a_s = move_toward(a_s, a, (14.0 if a > a_s else 45.0) * STEP)  # (the brake and the throttle take a moment, as they do for real)
+		a_s = move_toward(a_s, a, _rate(a, a_s) * STEP)  # (the brake and the throttle take a moment, as they do for real)
 		hardest = minf(hardest, a_s)
 		var v1: float = maxf(0.0, ve + a_s * STEP)
 		zb += (ve + v1) * 0.5 * STEP

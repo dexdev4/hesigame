@@ -1270,7 +1270,8 @@ func _build_menu() -> void:
 		grid.add_child(sv)
 		_menu["l_" + k] = lab
 		_menu["b_" + k] = bar
-	v.add_child(_button("START RUN  →", "amber", "map"))
+	_menu["start"] = _button("START RUN  →", "amber", "map")
+	v.add_child(_menu.start)
 	var btns := GridContainer.new()
 	btns.columns = 3
 	btns.add_theme_constant_override("h_separation", 10)
@@ -1335,8 +1336,10 @@ func render_menu() -> void:
 	# with your permanent upgrades applied, and what damage has taken off
 	var wear := Save.wear(String(c.id))
 	var fx := Data.damage_effects(wear)
-	_menu.dmg.text = ("DAMAGED · %d%% WORN · REPAIR IT IN THE WORKSHOP" % roundi(wear * 100.0)) if wear >= 0.02 else ""
+	var wrecked := Data.is_wrecked(wear)
+	_menu.dmg.text = "WRECKED · 100% · REPAIR IT TO DRIVE" if wrecked else (("DAMAGED · %d%% WORN · REPAIR IT IN THE WORKSHOP" % roundi(wear * 100.0)) if wear >= 0.02 else "")
 	_menu.dmg.visible = wear >= 0.02
+	(_menu.start as Button).text = "REPAIR YOUR CAR  →" if wrecked else "START RUN  →"
 	var accel: float = c.accel * (1.0 + 0.06 * Save.perm_level("accel")) * fx.accel
 	var top: float = c.top * (1.0 + 0.04 * Save.perm_level("top")) * fx.top
 	var grip: float = c.grip * (1.0 + 0.06 * Save.perm_level("handling")) * fx.grip
@@ -1423,6 +1426,7 @@ func render_map() -> void:
 	_map.best.text = Fmt.num(int(wm.best.get(str(i), 0)))
 	_map.skill.text = Data.route_difficulty(i)
 	_map.progress.text = "%d OF %d HIGHWAYS OPEN" % [wm.unlocked, Data.ROUTES.size()]
+	(_map.drive as Button).text = "REPAIR YOUR CAR FIRST  →" if Save.wrecked(String(Save.data.selected)) else "DRIVE  →"
 
 
 func map_note(text: String) -> void:
@@ -1883,7 +1887,7 @@ func _render_cars_page(cur: Dictionary) -> void:
 	var sel: bool = cur.id == vc.id
 	var locked: bool = vc.boss >= 0 and not Save.is_unlocked(vc.id)
 	var vw := Save.wear(String(vc.id))
-	_garage.meta.text = "%d / %d  ·  %s%s" % [idx + 1, Data.CARS.size(), CAR_TAGS.get(vc.id, ""), ("  ·  DAMAGED %d%%" % roundi(vw * 100.0)) if vw >= 0.02 else ""]
+	_garage.meta.text = "%d / %d  ·  %s%s" % [idx + 1, Data.CARS.size(), CAR_TAGS.get(vc.id, ""), ("  ·  WRECKED" if Data.is_wrecked(vw) else "  ·  DAMAGED %d%%" % roundi(vw * 100.0)) if vw >= 0.02 else ""]
 	_garage.name.text = String(vc.name).to_upper()
 	var dot_row := _garage.dots as HBoxContainer
 	for i in dot_row.get_child_count():
@@ -2094,12 +2098,13 @@ func _render_garage_list(sel_car: Dictionary) -> void:
 ## The repair tab: how worn the car is, what that takes off it, and a button to pay to have it fixed.
 func _render_repair(list: VBoxContainer, sel_car: Dictionary) -> void:
 	var wear := Save.wear(String(sel_car.id))
-	var cost := Data.repair_cost(sel_car, wear)
+	var cost := Save.repair_price(sel_car)
+	var wrecked := Data.is_wrecked(wear)
 	var card := _card()
 	list.add_child(card[0])
 	var top := _row(12)
 	card[1].add_child(top)
-	var nm := _label("DAMAGE  %d%%" % roundi(wear * 100.0) if wear >= 0.004 else "NO DAMAGE", 32, LINE if wear < 0.004 else BAD, display_font)
+	var nm := _label(("WRECKED  100%" if wrecked else "DAMAGE  %d%%" % roundi(wear * 100.0)) if wear >= 0.004 else "NO DAMAGE", 32, LINE if wear < 0.004 else BAD, display_font)
 	nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	top.add_child(nm)
 	var bar := _bar(_fill_red if wear >= 0.35 else _fill_amber, 14)
@@ -2112,6 +2117,13 @@ func _render_repair(list: VBoxContainer, sel_car: Dictionary) -> void:
 		card[1].add_child(none)
 	else:
 		var fx := Data.damage_effects(wear)
+		var afford: bool = Save.data.cash >= cost
+		var rb := _button(("REPAIR  $%s" % Fmt.num(cost)) if afford else ("$%s  ·  NEED $%s MORE" % [Fmt.num(cost), Fmt.num(cost - int(Save.data.cash))]), "amber", "repair")
+		rb.disabled = not afford
+		rb.add_theme_font_size_override("font_size", 28 if afford else 22)
+		if wrecked:  # (the way back onto the road comes first)
+			card[1].add_child(_wrap("This car has taken all the damage it can. It cannot be driven until it is repaired%s." % ("" if Save.has_other_drivable(String(sel_car.id)) else ", and as it is the only car you have the garage takes whatever you have towards it"), 19, BAD))
+			card[1].add_child(rb)
 		var rows := [["TOP SPEED", fx.top], ["ACCELERATION", fx.accel], ["GRIP", fx.grip], ["BRAKES", fx.brake]]
 		for r in rows:
 			var rr := _row(10)
@@ -2121,11 +2133,8 @@ func _render_repair(list: VBoxContainer, sel_car: Dictionary) -> void:
 			rr.add_child(_label("−%d%%" % roundi((1.0 - float(r[1])) * 100.0), 19, BAD, mono_font))
 			card[1].add_child(rr)
 		card[1].add_child(_wrap("It also burns %d%% more fuel. The dents and cracks you see on the car are the damage you are paying for." % roundi((float(fx.fuel) - 1.0) * 100.0), 19, MUTED))
-		var afford: bool = Save.data.cash >= cost
-		var rb := _button(("REPAIR  $%s" % Fmt.num(cost)) if afford else ("$%s  ·  NEED $%s MORE" % [Fmt.num(cost), Fmt.num(cost - int(Save.data.cash))]), "amber", "repair")
-		rb.disabled = not afford
-		rb.add_theme_font_size_override("font_size", 28 if afford else 22)
-		card[1].add_child(rb)
+		if not wrecked:
+			card[1].add_child(rb)
 	list.add_child(_wrap("Repairs fix your %s only. Every car keeps its own damage." % sel_car.name, 19, MUTED))
 
 
@@ -2295,7 +2304,8 @@ func _build_over() -> void:
 	_over["cash"] = pay[1]
 	_over["note"] = _wrap("", 21, MUTED)
 	v.add_child(_over.note)
-	v.add_child(_button("RUN AGAIN  →", "amber", "start"))
+	_over["again"] = _button("RUN AGAIN  →", "amber", "start")
+	v.add_child(_over.again)
 	var btns := _row(14)
 	v.add_child(btns)
 	btns.add_child(_button("GARAGE", "light", "garage"))
@@ -2310,6 +2320,7 @@ func show_over(reason: String, score: String, dist: String, bosses: String, cash
 	_over.boss.text = bosses
 	_over.cash.text = cash
 	_over.note.text = note
+	(_over.again as Button).text = "REPAIR YOUR CAR  →" if Save.wrecked(String(Save.data.selected)) else "RUN AGAIN  →"
 	show_screen("over")
 
 

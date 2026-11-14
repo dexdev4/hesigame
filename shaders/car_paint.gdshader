@@ -19,6 +19,7 @@ uniform float metal_tint : hint_range(0.0, 1.0) = 0.0;   // reflections take the
 uniform float flake : hint_range(0.0, 2.0) = 0.0;        // metallic flake glints
 uniform float flake_scale = 190.0;                       // flakes per metre
 uniform float flake_far = 3.2;                           // how far away the flakes still show (metres)
+uniform float flake_tint : hint_range(0.0, 1.0) = 0.55;  // how much of the paint colour the flakes take (0 white, 1 the colour itself)
 uniform vec4 pearl_color : source_color = vec4(1.0, 1.0, 1.0, 1.0);  // pearlescent: the colour it turns to at a glancing view
 uniform float pearl : hint_range(0.0, 1.0) = 0.0;
 uniform float candy : hint_range(0.0, 1.0) = 0.0;        // candy: a deep tinted lacquer over bright metal
@@ -75,17 +76,28 @@ void fragment() {
 	}
 
 	if (flake > 0.0) {
-		float dist = length(VERTEX);
-		// only up close: further away the flakes are smaller than a pixel and turn to noise
-		float fade = 1.0 - smoothstep(flake_far * 0.25, flake_far, dist);
+		// Metal flake: tiny mirrors set at random angles in the paint. Each one shows a slightly different part of
+		// the surroundings, and flashes when it lines up with the sun. They are small round dots scattered through
+		// a lattice in the car's own space (a dot where the panel passes through one of the little spheres), and a
+		// dot smaller than a pixel is spread over the pixel and dimmer for it, so the flake only ever shimmers, and
+		// never crawls about as noise.
+		float cell_m = 1.0 / flake_scale;
+		float aa_c = clamp(max(length(fwidth(obj_p)), 1.0e-5) / cell_m * 0.6, 0.02, 1.5);   // a pixel, in flake cells
+		float fade = 1.0 - smoothstep(flake_far * 0.6, flake_far, length(VERTEX));
 		if (fade > 0.0) {
-			vec3 cell = floor(obj_p * flake_scale);
+			vec3 q = obj_p * flake_scale;
+			vec3 cell = floor(q);
+			vec3 spot = vec3(hash13(cell + 1.3), hash13(cell + 5.7), hash13(cell + 9.1)) * 0.4 + 0.3;
+			float radius = 0.17 + 0.12 * hash13(cell + 7.7);
+			float d = length(fract(q) - spot);
+			float dotm = smoothstep(radius + aa_c, max(radius - aa_c, 0.0), d) * (radius * radius) / (radius * radius + aa_c * aa_c);
 			vec3 tilt = vec3(hash13(cell), hash13(cell + 19.19), hash13(cell + 47.7)) * 2.0 - 1.0;
-			vec3 nf = normalize(n_w + tilt * 0.45);
+			vec3 nf = normalize(n_w + tilt * 0.3);
 			vec3 rf = reflect(-v_w, nf);
 			float lit = clamp(dot(n_w, env_sun_dir) * 3.0, 0.0, 1.0);
-			float glint = pow(max(dot(rf, env_sun_dir), 0.0), 90.0) * lit;
-			EMISSION += mix(vec3(1.0), base_color.rgb, 0.35) * glint * flake * fade * 1.2 * occ;
+			float glint = pow(max(dot(rf, env_sun_dir), 0.0), 60.0) * lit;
+			vec3 seen = car_environment(rf, aa) * 0.25 + vec3(glint) * 0.7;
+			EMISSION += seen * mix(vec3(1.0), base_color.rgb * 1.6, flake_tint) * dotm * flake * fade * 2.2 * occ;
 		}
 	}
 }

@@ -306,6 +306,27 @@ func boss_edge(stage: int, r := -1) -> float:
 	return minf(lerpf(0.62, 1.25, pow(route_t(r), 0.8)) + 0.04 * tier, 1.25)
 
 
+## What a boss's driving is worth in points on top of `boss_edge`: a factor by skill, so that each boss keeps the
+## difficulty it always had (the pop-ups over the boss show the points of a pass as they were; the rest of what it is
+## worth comes into the rival's score smoothly over the next second or two, and with the speed bonus). The old driver slid sideways in a frame and drove through cars; the new one drives like a
+## player, close but never through a car, so for the same skill it earns less, and its scores are brought back to where
+## they were (the numbers are measured: the mean rival score of 6 test races at each skill, over the target for it).
+## Pairs of (skill, factor); in between the factor is interpolated.
+const BOSS_STYLE := [[0.0, 1.37], [0.3, 1.9], [0.63, 2.5], [0.97, 2.3], [1.3, 2.6], [1.75, 6.0]]
+
+
+func boss_style(sk: float) -> float:
+	var t: Array = BOSS_STYLE
+	if sk <= float(t[0][0]):
+		return float(t[0][1])
+	for i in range(1, t.size()):
+		if sk <= float(t[i][0]):
+			var a: Array = t[i - 1]
+			var b: Array = t[i]
+			return lerpf(float(a[1]), float(b[1]), (sk - float(a[0])) / (float(b[0]) - float(a[0])))
+	return float(t[t.size() - 1][1])
+
+
 const DIFFICULTY_NAMES := ["EASY", "EASY", "EASY", "MODERATE", "MODERATE", "MODERATE", "HARD", "HARD", "HARD",
 	"VERY HARD", "VERY HARD", "VERY HARD", "BRUTAL", "BRUTAL"]
 
@@ -341,6 +362,15 @@ func perm_cost(p: Dictionary, level: int) -> int:
 func damage_effects(wear: float) -> Dictionary:
 	var w := clampf(wear, 0.0, 1.0)
 	return {"accel": 1.0 - 0.40 * w, "brake": 1.0 - 0.35 * w, "top": 1.0 - 0.25 * w, "grip": 1.0 - 0.20 * w, "lat": 1.0 - 0.10 * w, "fuel": 1.0 + 0.20 * w}
+
+
+## The wear at which a car is a wreck (the garage shows it as 100%). A wreck ends the run it is in at once, whatever
+## lives are left, and cannot be driven until it has been repaired.
+const WRECKED_AT := 0.995
+
+
+func is_wrecked(wear: float) -> bool:
+	return wear >= WRECKED_AT
 
 
 ## What the garage charges to repair a car ($): a call-out fee, and more the worse the damage and the dearer the car.

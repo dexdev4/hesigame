@@ -152,6 +152,29 @@ func wear(id: String) -> float:
 	return clampf(float(w) if (w is float or w is int) and is_finite(float(w)) else 0.0, 0.0, 1.0)
 
 
+## Is the car a wreck (all the damage a car can take, see Data.WRECKED_AT)? It cannot be driven until it is repaired.
+func wrecked(id: String) -> bool:
+	return Data.is_wrecked(wear(id))
+
+
+## Does the player own a car, other than `id`, that can be driven?
+func has_other_drivable(id: String) -> bool:
+	for c in data.get("owned", []):
+		if String(c) != id and not wrecked(String(c)):
+			return true
+	return false
+
+
+## What the garage asks to repair a car ($). A wreck that is all the player has to drive is mended for what they have
+## (otherwise it would be a dead end: no car to drive, and no way to earn the money to mend one).
+func repair_price(car: Dictionary) -> int:
+	var id := String(car.id)
+	var cost := Data.repair_cost(car, wear(id))
+	if wrecked(id) and cost > int(data.cash) and not has_other_drivable(id):
+		return maxi(0, int(data.cash))
+	return cost
+
+
 ## A car took a knock: its wear goes up by `wear_add` and `visual` (CarModel.damage_state) is what it looks like now.
 func record_damage(id: String, wear_add: float, visual: Dictionary) -> void:
 	if not data.get("damage") is Dictionary:

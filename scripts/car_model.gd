@@ -375,16 +375,16 @@ static func _car_shader_mat(key: String, params: Dictionary) -> ShaderMaterial:
 
 
 ## What each paint finish asks of the paint shader (Data.FINISHES are the ones the workshop sells). "gloss" is the
-## factory finish: a glossy metallic paint under a clear coat, with a little flake that glints in the sun.
+## factory finish: a deep, glossy colour under a clear coat (no flake: that is what the metallic finish is for).
 const FINISH_LOOKS := {
-	"gloss": {"metallic": 0.32, "roughness": 0.36, "coat": 0.6, "coat_roughness": 0.05, "reflect_amount": 1.0, "reflect_f0": 0.045, "flake": 0.7},
+	"gloss": {"metallic": 0.32, "roughness": 0.36, "coat": 0.6, "coat_roughness": 0.05, "reflect_amount": 1.0, "reflect_f0": 0.045, "flake": 0.0},
 	"semigloss": {"metallic": 0.08, "roughness": 0.56, "coat": 0.2, "coat_roughness": 0.38, "reflect_amount": 0.4, "reflect_f0": 0.04, "flake": 0.0, "sheen": 0.3},
 	"matte": {"metallic": 0.0, "roughness": 0.93, "coat": 0.0, "coat_roughness": 0.5, "reflect_amount": 0.05, "reflect_f0": 0.03, "flake": 0.0, "sheen": 0.6},
 	"metallic": {"metallic": 0.5, "roughness": 0.3, "coat": 0.85, "coat_roughness": 0.05, "reflect_amount": 1.0, "reflect_f0": 0.06, "metal_tint": 0.35,
-		"flake": 1.15, "flake_scale": 140.0, "flake_far": 10.0},
+		"flake": 1.15, "flake_scale": 200.0, "flake_far": 10.0, "flake_tint": 0.7},
 	"pearl": {"metallic": 0.3, "roughness": 0.32, "coat": 1.0, "coat_roughness": 0.04, "reflect_amount": 1.0, "reflect_f0": 0.05,
-		"flake": 0.45, "flake_scale": 170.0, "flake_far": 6.0, "pearl": 1.0},
-	"candy": {"metallic": 0.85, "roughness": 0.2, "coat": 1.0, "coat_roughness": 0.03, "reflect_amount": 1.2, "reflect_f0": 0.12, "metal_tint": 0.95, "flake": 0.9, "candy": 1.0},
+		"flake": 0.45, "flake_scale": 170.0, "flake_far": 6.0, "flake_tint": 0.5, "pearl": 1.0},
+	"candy": {"metallic": 0.85, "roughness": 0.2, "coat": 1.0, "coat_roughness": 0.03, "reflect_amount": 1.2, "reflect_f0": 0.12, "metal_tint": 0.95, "flake": 0.5, "flake_tint": 0.92, "candy": 1.0},
 	"chrome": {"metallic": 1.0, "roughness": 0.05, "coat": 0.0, "coat_roughness": 0.05, "reflect_amount": 1.15, "reflect_f0": 0.78, "metal_tint": 0.8, "flake": 0.0},
 }
 
@@ -431,7 +431,7 @@ static func _alloy(c: Color) -> Material:
 			"reflect_f0": 0.8, "metal_tint": 0.3})
 	var dark := c.get_luminance() < 0.3
 	return _car_shader_mat("alloy|%s" % c.to_html(), {"base_color": c, "metallic": 0.55 if dark else 0.85, "roughness": 0.3 if dark else 0.24,
-		"coat": 0.5 if dark else 0.0, "reflect_amount": 0.9, "reflect_f0": 0.06 if dark else 0.55, "metal_tint": 0.0 if dark else 1.0, "flake": 0.3})
+		"coat": 0.5 if dark else 0.0, "reflect_amount": 0.9, "reflect_f0": 0.06 if dark else 0.55, "metal_tint": 0.0 if dark else 1.0, "flake": 0.0})
 
 
 static func box_mesh(size: Vector3) -> BoxMesh:

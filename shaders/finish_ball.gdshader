@@ -52,9 +52,12 @@ void fragment() {
 			col = c * (0.24 + 0.76 * ndl) + vec3(1.0) * pow(ndh, 22.0) * 0.32;
 		} else if (finish == 2) {   // matte: nothing reflects, it falls away to dark
 			col = c * 0.88 * (0.12 + 0.88 * pow(ndl, 0.85));
-		} else if (finish == 3) {   // metallic: glitter in the paint
-			float fl = step(0.93, hash21(floor(UV * 46.0)));
-			col = c * (0.18 + 0.7 * ndl) + vec3(1.0) * pow(ndh, 50.0) * 0.55 + vec3(1.0) * fl * 0.65 * (0.4 + ndl);
+		} else if (finish == 3) {   // metallic: a fine glitter in the paint (small soft dots, in the colour of the paint)
+			vec2 g = UV * 84.0;
+			vec2 id = floor(g);
+			vec2 at = fract(g) - vec2(0.3 + 0.4 * hash21(id + 3.1), 0.3 + 0.4 * hash21(id + 7.3));
+			float fl = step(0.8, hash21(id)) * smoothstep(0.34, 0.1, length(at));
+			col = c * (0.18 + 0.7 * ndl) + vec3(1.0) * pow(ndh, 50.0) * 0.55 + mix(vec3(1.0), c * 1.6, 0.55) * fl * 0.55 * (0.4 + ndl);
 		} else if (finish == 4) {   // pearlescent: the colour turns to another towards the rim
 			vec3 pc = use_pearl > 0.5 ? pearl_col.rgb : hue_shift(c, 0.09) * 1.15 + 0.08;
 			vec3 body = mix(c, pc, clamp(pow(edge, 1.6) * 1.15, 0.0, 1.0));

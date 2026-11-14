@@ -79,6 +79,8 @@ class Crash:
 
 
 class Run:
+	var wrecked := false     # the car has taken all the damage it can: the run is over, whatever lives are left
+	var wear_warned := 0     # how far the car's wear has been pointed out in this run (1: 75%, 2: 90%)
 	var stage := 1
 	var score := 0
 	var dist := 0.0
@@ -114,6 +116,8 @@ class Run:
 	var b_combo := 0
 	var b_combo_t := 0.0
 	var b_speed_acc := 0.0
+	var b_drip := 0.0          # points the rival is still to be given for how it drives (see _boss_award): they come in over a second or two
+	var b_drip_acc := 0.0
 	# police pursuit
 	var cop_t := 0.0
 	var cop_due := false     # a pursuit happened this stage, so the next trigger is the boss
@@ -167,6 +171,9 @@ var ap_brake := false
 var autotest := false
 var auto_quit := 0.0
 var showroom := ""  # --showroom=rear|front: every player car parked in a row, simulation frozen (test view)
+var _inspect_finish := ""  # --inspect-finish=ID: the car shown by --inspect is in this paint finish (test aid)
+var _test_hold_over := false  # --hold-over: with --autotest, stay on the run-over screen rather than start the next run (test aid)
+var _test_wear := -1.0  # --wear=F: the selected car starts this worn, 0 to 1 (test aid; the save keeps it)
 var _sc_base := 0.0     # --sc-base=M: the showroom view is of the road M metres in (test aid: signs, stations)
 var _sc_finish := -1.0  # --sc-finish=M: ... with the finish gantry at M metres (test aid)
 var _inspect: PackedStringArray = []
@@ -262,6 +269,12 @@ func _ready() -> void:
 			_forced_song = BossMusic.find(a.substr(8))
 		if a.begins_with("--showroom"):
 			showroom = a.substr(11) if a.length() > 11 else "rear"
+		if a.begins_with("--inspect-finish="):
+			_inspect_finish = a.substr(17)
+		if a == "--hold-over":
+			_test_hold_over = true
+		if a.begins_with("--wear="):
+			_test_wear = clampf(float(a.substr(7)), 0.0, 1.0)
 		if a.begins_with("--sc-base="):
 			_sc_base = float(a.substr(10))
 		if a.begins_with("--sc-finish="):
@@ -408,6 +421,9 @@ func _ready() -> void:
 	hud.root.add_child(_flash)
 	hud.root.move_child(_flash, 0)
 
+	if _test_wear >= 0.0:
+		var wid := String(Save.data.selected)
+		Save.record_damage(wid, _test_wear - Save.wear(wid), Save.damage_of(wid))
 	_set_player_car()
 	_compute_stats()
 	_reset_world()
@@ -458,6 +474,9 @@ func _build_showroom() -> void:
 			car = {"shape": _inspect[0].substr(2), "color": "#2f5d8c", "style": CarModel.traffic_style(_inspect[0].substr(2))}
 		else:
 			car = Data.car_by_id(_inspect[0])
+		if _inspect_finish != "":
+			car = car.duplicate(true)
+			car.style["finish"] = _inspect_finish
 		var m := CarModel.new()
 		m.build(car.shape, Color(car.color), Color("#b5322a"), car.style)
 		add_child(m)
@@ -920,6 +939,8 @@ func _count_overlaps() -> void:
 			var b := traffic[j]
 			if not b.wreck and absf(a.x - b.x) < (a.w + b.w) / 2.0 - 0.3 and a.z < b.z + b.l - 0.3 and b.z < a.z + a.l - 0.3:
 				_overlaps += 1
+				if OS.get_environment("OVERLAP_DEBUG") != "" and _overlaps % 60 == 1:
+					print("[overlap] a x %.2f z %.1f v %.1f lane %d>%d (%s) | b x %.2f z %.1f v %.1f lane %d>%d (%s) | player z %.1f x %.2f | cop z %.1f x %.2f" % [a.x, a.z, a.v, a.lane, a.tlane, "wreck" if a.wreck else "ok", b.x, b.z, b.v, b.lane, b.tlane, "wreck" if b.wreck else "ok", player.z, player.x, boss.z if boss else 0.0, boss.x if boss else 0.0])
 
 
 # ---------------------------------------------------------------- making way for the police
@@ -1377,7 +1398,7 @@ func _start_boss() -> void:
 	boss.tlane = boss.lane
 	boss.x = Data.LANES[boss.lane]
 	boss.z = player.z - 45.0
-	boss.v = player.v + 11.0  # closes in from behind
+	boss.v = player.v + 6.0  # closes in from behind
 	boss.w = sh.w
 	boss.l = sh.l
 	boss.shape_id = car.shape
@@ -1410,6 +1431,8 @@ func _start_boss() -> void:
 	run.b_dist = 0.0
 	run.b_score = 0
 	run.b_rival = 0
+	run.b_drip = 0.0
+	run.b_drip_acc = 0.0
 	run.b_total = Data.boss_total(run.stage)
 	run.b_next = 1.2
 	run.b_info = bi
@@ -1418,8 +1441,8 @@ func _start_boss() -> void:
 	run.b_combo = 0
 	run.b_combo_t = 0.0
 	run.b_speed_acc = 0.0
-	_boss_think_t = 0.0
-	_boss_off = 0.0
+	_boss_drv = _make_boss_driver(run.b_skill)
+	_boss_drv.reset(boss)
 	finish_z = player.z + run.b_len
 	var everyone: Array[Vehicle] = traffic.duplicate()
 	everyone.append(player)
@@ -1431,8 +1454,21 @@ func _start_boss() -> void:
 
 
 var _bdbg := {}
-var _boss_think_t := 0.0
-var _boss_off := 0.0  # sideways offset inside the lane, to skim the car being passed
+var _boss_drv: CarDriver          # how the boss drives (see CarDriver); made when the race starts
+var _boss_others: Array = []      # what it looks at: the traffic and the player (refilled each frame)
+
+
+## How a boss drives, from how good it is (Data.boss_skill: 0 a rookie, 1 an expert, more a legend, which already
+## climbs with the highway and from boss to boss). Every boss moves over and brakes the way a good player does, in
+## smooth curves and without darting; what grows with its skill is how much it dares: how close it passes a car and
+## how little room it leaves behind one, how hard it moves over and brakes, and how much it wants the points that
+## passing close earns (so the better bosses weave through the traffic for them, the rookies drive round it).
+func _make_boss_driver(sk: float) -> CarDriver:
+	var d := CarDriver.new()
+	d.lanes = Data.LANES
+	d.road_half = Data.ROAD_HALF - 1.1
+	d.set_risk(clampf(0.12 + 0.55 * sk, 0.0, 1.0))
+	return d
 
 
 func _update_boss(dt: float) -> void:
@@ -1453,32 +1489,28 @@ func _update_boss(dt: float) -> void:
 		want = minf(want, player.v + (140.0 - rel) * 0.15)  # too far ahead: ease off
 	elif rel < 15.0:
 		# behind you: traffic there has already been cleared, so push to get back ahead
-		want = minf(maxf(want, player.v + clampf((15.0 - rel) * 0.3, 4.0, 18.0)), top * 1.08)
+		want = minf(maxf(want, player.v + clampf((15.0 - rel) * 0.3, 4.0, 14.0)), top * 1.08)
 	if rel < -150.0:
 		_boss_rejoin(b)
 		rel = b.z - player.z
-	var lg := _boss_leader(b)
-	var lead: Vehicle = lg[0]
-	var gap: float = lg[1]
-	# better bosses brake later and closer
-	var follow := lerpf(6.0, 3.2, minf(sk, 1.0))
-	if lead and gap < 45.0:
-		want = minf(want, lead.v + (gap - follow) * 0.5)
-	b.v += clampf(want - b.v, -(12.0 if gap < 8.0 else 9.0) * dt, lerpf(6.5, 9.5, minf(sk, 1.0)) * dt)
-	if lead and gap < 0.8:
-		b.v = minf(b.v, lead.v)
-	b.v = maxf(0.0, b.v)
-	b.braking = want < b.v - 0.5
-	b.z += b.v * dt
-	if lead and b.z + b.l > lead.z - 0.3 and absf(lead.x - b.x) < (lead.w + b.w) / 2.0:
-		b.z = lead.z - b.l - 0.3  # never inside the car ahead
-	_boss_steer(b, dt, sk, lead, gap)
+	_boss_others.clear()
+	_boss_others.append_array(traffic)
+	_boss_others.append(player)
+	if autotest and OS.get_environment("BOSS_PLAN") != "":  # test aid: print what the driver makes of each round, between two times (s into the race)
+		var win := OS.get_environment("BOSS_PLAN").split(":")
+		var tt: float = float(_bm.get("t", 0.0))
+		_boss_drv.debug = tt >= float(win[0]) and tt <= float(win[1])
+	var t_us := Time.get_ticks_usec() if autotest else 0
+	_boss_drv.step(b, _boss_others, dt, want)
+	if autotest:
+		_drv_cost(Time.get_ticks_usec() - t_us)
 	if run == null or run.phase != "boss":
 		return
 	_boss_score(b, dt, sk)
 	if autotest:
 		_bdbg["v"] = snappedf(lerpf(float(_bdbg.get("v", b.v)), b.v, 0.002), 0.1)
 		_bdbg["rel"] = snappedf(lerpf(float(_bdbg.get("rel", rel)), rel, 0.002), 0.1)
+		_boss_metrics(b, dt)
 
 
 ## A boss stuck far behind (out of sight in the haze) rejoins the race just
@@ -1494,7 +1526,12 @@ func _boss_rejoin(b: Vehicle) -> void:
 			b.x = Data.LANES[l]
 			b.z = probe.z
 			b.v = player.v + 6.0
-			_boss_off = 0.0
+			_boss_drv.reset(b)
+			if not _bm.is_empty():  # (the test's record of how it drove: it was put somewhere else, which is no way of driving)
+				_bm.v = b.v
+				_bm.vx = 0.0
+				_bm.ax = 0.0
+				_bm.yaw = 0.0
 			for c in traffic:
 				c.b_ahead = c.z > b.z + b.l
 				c.b_min = 99.0
@@ -1502,89 +1539,87 @@ func _boss_rejoin(b: Vehicle) -> void:
 			return
 
 
-## Lane choice and position. Skilled bosses pick the lane with the best
-## scoring chances (slow cars to skim past, gaps to thread) and hug the car
-## they are passing; weak ones decide slowly and give cars a wide berth.
-func _boss_steer(b: Vehicle, dt: float, sk: float, lead: Vehicle, gap: float) -> void:
-	_boss_think_t -= dt
-	if b.tlane == b.lane:
-		b.sig_t = maxf(0.0, b.sig_t - dt)
-		var blocked := lead != null and gap < 40.0 and (lead.v < b.v - 1.0 or lead == player)
-		if (_boss_think_t <= 0.0 or blocked) and b.sig_t <= 0.0:
-			_boss_think_t = lerpf(0.9, 0.22, minf(sk, 1.0)) * randf_range(0.8, 1.2)
-			var best := b.lane
-			var best_v := _boss_lane_value(b, b.lane, sk)
-			for l in [b.lane - 1, b.lane + 1]:
-				if l < 0 or l > 3 or _lane_blocked(b, l, lerpf(18.0, 10.0, minf(sk, 1.0)), lerpf(6.0, 3.5, minf(sk, 1.0))):
-					continue
-				var val := _boss_lane_value(b, l, sk) - lerpf(8.0, 2.0, minf(sk, 1.0))  # weak bosses are a little reluctant to move
-				if val > best_v:
-					best_v = val
-					best = l
-			if best != b.lane:
-				b.tlane = best
-	# where to sit across the lane: skim the slower car alongside or just ahead
-	var want_off := 0.0
-	var skim := lerpf(1.05, 0.28, minf(sk, 1.0))  # target clearance to the car being passed
-	var near_d := 1e9
-	for c in traffic:
-		var dz := c.z - b.z
-		if dz > -c.l - 1.0 and dz < 14.0 and absf(c.x - b.x) < 4.6 and absf(c.x - b.x) > 1.2:
-			if dz < near_d:
-				near_d = dz
-				var s := signf(c.x - b.x)
-				var lane_x: float = Data.LANES[b.tlane]
-				var gap_x := absf(c.x - lane_x) - (c.w + b.w) / 2.0
-				want_off = s * clampf(gap_x - skim, 0.0, 1.1)
-	# never squeeze towards a car on the other side
-	for c in traffic:
-		if c.z < b.z + b.l + 2.0 and c.z + c.l > b.z - 2.0:
-			var lane_x: float = Data.LANES[b.tlane]
-			var room := absf(c.x - (lane_x + want_off)) - (c.w + b.w) / 2.0
-			if room < 0.25 and signf(c.x - lane_x) == signf(want_off):
-				want_off = signf(want_off) * maxf(0.0, absf(want_off) - (0.25 - room))
-	_boss_off = move_toward(_boss_off, want_off, lerpf(0.8, 2.2, minf(sk, 1.0)) * dt)
-	var tx: float = Data.LANES[b.tlane] + _boss_off
-	if b.tlane != b.lane:
-		# abort the move if the target lane fills up alongside
-		if _lane_blocked(b, b.tlane, 4.0, 2.0) and absf(Data.LANES[b.tlane] - b.x) > 1.2:
-			b.tlane = b.lane
-			b.sig_t = 1.0
-			tx = Data.LANES[b.lane] + _boss_off
-	var d := tx - b.x
-	var lat := lerpf(4.6, 6.2, minf(sk, 1.0)) if b.tlane != b.lane else 1.8
-	lat = minf(lat, b.v * 0.2)  # real steering: no sideways motion without forward speed
-	var step := clampf(d, -lat * dt, lat * dt)
-	b.vx = step / maxf(dt, 0.0001)
-	b.x += step
-	if b.tlane != b.lane and absf(Data.LANES[b.tlane] - b.x) < 0.6:
-		b.lane = b.tlane
-		b.sig_t = lerpf(1.0, 0.25, minf(sk, 1.0))  # settle before the next lane change
+## Test aid (autotest): how the boss drove, to compare drivers: how hard and how abruptly it moved sideways and along
+## (the acceleration and jerk of its sideways speed, jumps in it, and turns that reversed at once), how many lane
+## changes it made, how fast it went and how often it was in the way of a car (overlapping one).
+var _drv_n := 0
+var _drv_sum := 0
+var _drv_max := 0
 
 
-## How promising a lane is: mostly how much open road it has (so the boss
-## keeps moving), plus scoring chances (slow cars in the next lane to skim).
-func _boss_lane_value(b: Vehicle, lane: int, sk: float) -> float:
-	var lx: float = Data.LANES[lane]
-	var free := 120.0
-	var bonus := 0.0
-	var others: Array[Vehicle] = traffic.duplicate()
-	others.append(player)
-	for c in others:
-		var dz := c.z - (b.z + b.l)
-		if dz < -c.l - 1.0 or dz > 120.0:
-			continue
-		var dx := absf(c.x - lx)
-		if dx < 1.9 or (c.tlane >= 0 and c.tlane == lane and c != player):
-			if c.v < b.v + 2.0:
-				# a car in this lane: open road ends there (sooner if it is much slower)
-				free = minf(free, maxf(dz, -5.0) - clampf((b.v - c.v) * 1.5, 0.0, 30.0))
-		elif dx < 5.4 and c != player and dz > 0.0:
-			# a slower car in the next lane: a near miss waiting to happen
-			bonus += 10.0 * clampf((b.v - c.v) / 8.0, 0.0, 1.5) * (1.0 - dz / 140.0) * (1.5 if c.truck else 1.0)
-		elif dx < 5.4 and c == player and dz > 0.0:
-			bonus += 8.0
-	return free + bonus * lerpf(0.4, 1.6, minf(sk, 1.0)) + randf_range(-10.0, 10.0) * (1.2 - minf(sk, 1.0))
+## Test aid: what a frame of a computer driver costs (microseconds).
+func _drv_cost(us: int) -> void:
+	_drv_n += 1
+	_drv_sum += us
+	_drv_max = maxi(_drv_max, us)
+
+
+func _drv_cost_text() -> String:
+	var s := "driver cost per frame: mean %.0f µs, worst %d µs" % [float(_drv_sum) / maxf(float(_drv_n), 1.0), _drv_max]
+	_drv_n = 0
+	_drv_sum = 0
+	_drv_max = 0
+	return s
+
+
+var _bm := {}
+
+
+func _boss_metrics(b: Vehicle, dt: float) -> void:
+	if dt <= 0.0:
+		return
+	if _bm.is_empty():
+		_bm = {"t": 0.0, "vx": b.vx, "ax": 0.0, "lane": b.lane, "lc": 0, "axmax": 0.0, "j2": 0.0, "n": 0, "snaps": 0, "rev": 0,
+			"vsum": 0.0, "a_lon_max": 0.0, "hard_brake": 0, "ov": 0, "sign": 0, "flip_t": -9.0, "yaw_rate_max": 0.0, "yaw": 0.0, "v": b.v}
+	var m := _bm
+	m.t += dt
+	var ax := (b.vx - float(m.vx)) / dt
+	var jerk := (ax - float(m.ax)) / dt
+	m.axmax = maxf(float(m.axmax), absf(ax))
+	m.j2 += jerk * jerk
+	m.n += 1
+	if absf(b.vx - float(m.vx)) > 1.5:
+		m.snaps += 1  # a jump in the sideways speed within one frame
+	var sg := int(signf(b.vx)) if absf(b.vx) > 0.5 else 0
+	if sg != 0 and int(m.sign) != 0 and sg != int(m.sign) and m.t - float(m.flip_t) > 0.05:
+		if m.t - float(m.flip_t) < 1.2:
+			m.rev += 1  # turned back the other way almost at once
+		m.flip_t = m.t
+	if sg != 0:
+		m.sign = sg
+	if b.lane != int(m.lane):
+		m.lc += 1
+		m.lane = b.lane
+	m.vx = b.vx
+	m.ax = ax
+	m.vsum += b.v * dt
+	var al := (b.v - float(m.v)) / dt
+	if absf(al) > 30.0 and OS.get_environment("BOSS_DEBUG") != "":
+		print("[boss-debug] JUMP t=%.2f v %.1f -> %.1f dt %.4f x=%.2f rel=%.0f player v=%.1f" % [m.t, float(m.v), b.v, dt, b.x, b.z - player.z, player.v])
+	m.v = b.v
+	m.a_lon_max = maxf(float(m.a_lon_max), absf(al))
+	if al < -8.0:
+		m.hard_brake += 1
+		if OS.get_environment("BOSS_DEBUG") != "" and m.hard_brake % 40 == 1:
+			print("[boss-debug] t=%.1f v=%.1f al=%.1f a_lon=%.1f x=%.2f rel=%.0f player v=%.1f z=%.0f" % [m.t, b.v, al, _boss_drv.a_lon, b.x, b.z - player.z, player.v, player.z])
+	var yaw := atan2(b.vx, maxf(b.v, 1.0))
+	m.yaw_rate_max = maxf(float(m.yaw_rate_max), absf(yaw - float(m.yaw)) / dt)
+	m.yaw = yaw
+	for c in traffic:
+		if absf(c.x - b.x) < (c.w + b.w) / 2.0 - 0.02 and c.z < b.z + b.l - 0.02 and c.z + c.l > b.z + 0.02:
+			m.ov += 1
+			break
+
+
+func _boss_metrics_line() -> String:
+	if _bm.is_empty():
+		return ""
+	var m := _bm
+	var n := maxf(float(m.n), 1.0)
+	var line := _drv_cost_text() + ", drove %.0f s: %d lane changes, mean %.1f m/s, sideways accel max %.1f jerk rms %.0f, %d jumps, %d quick reversals, along accel max %.1f, %d hard-brake frames, yaw rate max %.2f rad/s, overlapped a car in %d frames, guard stepped in %d times" % [
+		m.t, m.lc, float(m.vsum) / maxf(float(m.t), 0.01), m.axmax, sqrt(float(m.j2) / n), m.snaps, m.rev, m.a_lon_max, m.hard_brake, m.yaw_rate_max, m.ov, _boss_drv.airbags if _boss_drv else 0]
+	_bm = {}
+	return line
 
 
 ## The boss earns points exactly as you do: passes worth more the faster and
@@ -1598,8 +1633,16 @@ func _boss_score(b: Vehicle, dt: float, sk: float) -> void:
 	# style points; scaled so the harder-driving bosses keep the same targets
 	# (about 6k for the first boss up to about 20k for the last over 2 km)
 	var flair := (lerpf(0.85, 1.25, minf(sk, 1.0)) + maxf(0.0, sk - 1.0) * 0.4) * lerpf(0.8, 0.55, minf(sk, 1.0)) * run.b_edge
+	if run.b_drip > 0.0:  # the rest of what its driving is worth (Data.boss_style) comes in smoothly, not in the pop-ups
+		var give := minf(run.b_drip, maxf(run.b_drip * dt * 1.5, 2.0 * dt))
+		run.b_drip -= give
+		run.b_drip_acc += give
+		if run.b_drip_acc >= 1.0:
+			var whole := int(run.b_drip_acc)
+			run.b_drip_acc -= whole
+			run.b_rival += whole
 	if b.v > 33.0:
-		run.b_speed_acc += (b.v - 33.0) * 1.3 * dt * mult * flair
+		run.b_speed_acc += (b.v - 33.0) * 1.3 * dt * mult * flair * Data.boss_style(sk)
 		if run.b_speed_acc >= 1.0:
 			var n := int(run.b_speed_acc)
 			run.b_speed_acc -= n
@@ -1642,6 +1685,7 @@ func _boss_award(base: float, combo: int, label: String, flair: float) -> void:
 	if autotest:
 		_bdbg[label] = int(_bdbg.get(label, 0)) + 1
 	run.b_rival += pts
+	run.b_drip += float(pts) * (Data.boss_style(run.b_skill) - 1.0)  # (what a pass is worth to it beyond what the pop-up says: Data.boss_style)
 	if label != "" and boss and boss.model:
 		boss.model.show_tag_pop("%s +%s" % [label, Fmt.num(pts)])
 
@@ -1669,11 +1713,15 @@ func _route_cleared() -> void:
 
 func _end_battle() -> void:
 	var bi := run.b_info
+	run.b_rival += int(run.b_drip + run.b_drip_acc)  # (what it was still to be given)
+	run.b_drip = 0.0
+	run.b_drip_acc = 0.0
 	_remove_boss()
 	_boss_mood_end(6.0)
 	finish_z = -1.0
 	if autotest:
 		print("[autotest] boss race route %d stage %d skill %.2f edge %.2f: you %d, %s %d %s" % [Data.route, run.stage, run.b_skill, run.b_edge, run.b_score, bi.full, run.b_rival, _bdbg])
+		print("[autotest] boss drive: %s" % _boss_metrics_line())
 		_bdbg = {}
 	if run.b_score > run.b_rival:
 		run.bosses += 1
@@ -2002,6 +2050,27 @@ func _damage_model(m: CarModel, p: Vector3, dir: Vector3, strength: float, v: Ve
 		if autotest:
 			print("[autotest] player's car: knock of %.1f m/s, wear now %.3f, %d dents, top speed %.0f km/h" % [strength, Save.wear(String(Save.data.selected)),
 				m.dmg.dents.size() if m.dmg else 0, float(st.top) * 3.6])
+		_check_wreck()
+
+
+## The player's car has taken all the damage it can (100%): the run is over, whatever lives are left. The knock
+## that did it carries on into the crash (see _hit and _update_run).
+func _check_wreck() -> void:
+	if run == null or run.wrecked or godmode:
+		return
+	var w := Save.wear(String(Save.data.selected))
+	if not Data.is_wrecked(w):
+		if w >= 0.9 and run.wear_warned < 2:
+			run.wear_warned = 2
+			_notify("CAR %d%% WORN · NEARLY A WRECK" % roundi(w * 100.0), "bad")
+		elif w >= 0.75 and run.wear_warned < 1:
+			run.wear_warned = 1
+			_notify("CAR %d%% WORN" % roundi(w * 100.0), "bad")
+		return
+	run.wrecked = true
+	run.lives = 0
+	if autotest:
+		print("[autotest] the car is a wreck (100% damage): the run is over with its lives gone")
 
 
 ## Test aid (--dent=KIND:STRENGTH,...): the garage car takes some knocks.
@@ -2583,6 +2652,12 @@ func _set_route(i: int) -> void:
 
 
 func _start_run() -> void:
+	if Save.wrecked(String(Save.data.selected)) and not godmode:
+		if autotest:  # (the test driver starts runs by itself: its wreck is mended for nothing)
+			Save.repair(String(Save.data.selected))
+			print("[autotest] the wrecked %s was repaired for the next run" % Save.data.selected)
+		elif _wrecked_block():
+			return
 	_leave_garage()
 	_set_route(int(Save.data.get("route_sel", 0)))
 	_boss_music(false, 0.5)
@@ -2610,7 +2685,7 @@ func _start_run() -> void:
 		print("[autotest] run starts with a %d%% worn %s: top speed %.0f km/h, acceleration %.2f" % [roundi(wear * 100.0), Save.data.selected, float(st.top) * 3.6, float(st.accel)])
 	if wear >= 0.02:
 		var fx := Data.damage_effects(wear)
-		hud.banner("DAMAGED CAR · %d%% WORN" % roundi(wear * 100.0), "TOP SPEED −%d%% · ACCELERATION −%d%% · REPAIR IT AT THE GARAGE" % [
+		hud.banner("DAMAGED CAR · %d%% WORN" % roundi(wear * 100.0), ("ANOTHER HARD HIT COULD WRECK IT AND END THE RUN · " if wear >= 0.7 else "") + "TOP SPEED −%d%% · ACCELERATION −%d%% · REPAIR IT AT THE GARAGE" % [
 			roundi((1.0 - float(fx.top)) * 100.0), roundi((1.0 - float(fx.accel)) * 100.0)], "alert")
 	hud.show_hint()
 	_calibrate_tilt()
@@ -2638,7 +2713,9 @@ func _end_run(reason: String) -> void:
 	if run.fuel_paid > 0:
 		notes.append("Fuel cost $%s this run." % Fmt.num(run.fuel_paid))
 	var wear_now := Save.wear(String(Save.data.selected))
-	if wear_now >= 0.02:
+	if Data.is_wrecked(wear_now):
+		notes.append("Your car is wrecked. It cannot be driven until it is repaired in the Workshop: $%s." % Fmt.num(Save.repair_price(Data.car_by_id(Save.data.selected))))
+	elif wear_now >= 0.02:
 		notes.append("Your car is %d%% worn: repairs in the Workshop cost $%s." % [roundi(wear_now * 100.0), Fmt.num(Data.repair_cost(Data.car_by_id(Save.data.selected), wear_now))])
 	var next_car := {}
 	for c in Data.CARS:
@@ -2662,7 +2739,7 @@ func _end_run(reason: String) -> void:
 	state = S.OVER
 	hud.set_play_visible(false)
 	hud.show_over(reason, Fmt.num(score), Fmt.km(dist), str(bosses), "+$" + Fmt.num(earned), " ".join(notes))
-	if autotest and _test_replay < 0.0:
+	if autotest and _test_replay < 0.0 and not _test_hold_over:
 		_start_run()
 
 
@@ -2742,7 +2819,6 @@ func _apply_boon(id: String) -> void:
 
 
 var _cop_aim := 0.0
-var _cop_think := 0.0
 var _yields := 0
 var _overlaps := 0      # test aid: frames in which two cars on the road were more than 30 cm inside each other
 var _cop_reach := -1.0  # test aid: seconds into the pursuit when the cop first came within 12 m
@@ -2770,9 +2846,31 @@ func _start_cop() -> void:
 	boss.v = player.v + 5.0
 	boss.w = sh.w
 	boss.l = sh.l
+	# it comes up from behind where the road is clear (not on top of a car): in the lane nearest yours that is clear there,
+	# and only when every lane has a car there does it start further back
+	var want_lane := boss.lane
+	var found := false
+	for k in 6:
+		for ahead in [70.0, 16.0]:  # (the best is a lane that is open for 70 m, else one that is clear right there)
+			for dl in [0, -1, 1, -2, 2, -3, 3]:
+				var l: int = want_lane + dl
+				if l >= 0 and l <= 3 and not _lane_blocked(boss, l, ahead, 12.0):
+					boss.lane = l
+					boss.tlane = l
+					boss.x = Data.LANES[l]
+					found = true
+					break
+			if found:
+				break
+		if found:
+			break
+		boss.z -= 8.0
 	boss.shape_id = "sedan"
 	boss.title = "POLICE"
 	_cop_aim = boss.x
+	_cop_drv = _make_cop_driver()
+	_cop_drv.reset(boss)
+	_cop_reversing = false
 	boss.model = CarModel.new()
 	boss.model.build("sedan", Color("#f2f3f5"), Color("#b5322a"), {"rim": "steel", "badge": "POLICE", "plate": "PD 911"})
 	boss.model.add_lightbar(sh.t)
@@ -2795,9 +2893,10 @@ func _start_cop() -> void:
 	run.cop_t = 0.0
 	run.siren_t = 0.0
 	_cop_reach = -1.0
+	_cop_vrel_t = 0.0
+	_cop_vrel_s = 0.0
+	_cop_overlap = 0
 	_cop_held = 0.0
-	_cop_pass_tx = INF
-	_cop_held_t = 0.0
 	_yields = 0
 	run.cop_due = true
 	hud.banner("POLICE PURSUIT", "DON'T GET RAMMED FOR %d S · ESCAPE FOR +1 LIFE" % int(COP_TIME), "alert")
@@ -2864,7 +2963,7 @@ func _cop_block_setup() -> void:
 ## and the next trigger is the real boss.
 func _end_cop() -> void:
 	if autotest and run:
-		print("[autotest] cop pursuit: reached you after %s s, held up by traffic %.1f s, %d cars pulled over, over after %.1f s, cars overlapped %d frames" % ["%.1f" % _cop_reach if _cop_reach >= 0.0 else "never", _cop_held, _yields, run.cop_t, _overlaps])
+		print("[autotest] cop pursuit: closing %.1f m/s, reached you after %s s, held up by traffic %.1f s, %d cars pulled over, over after %.1f s, cars overlapped %d frames, the police car inside a car %d frames" % [_cop_vrel_s / maxf(_cop_vrel_t, 0.01), "%.1f" % _cop_reach if _cop_reach >= 0.0 else "never", _cop_held, _yields, run.cop_t, _overlaps, _cop_overlap])
 	_remove_boss()
 	_boss_mood_end(6.0)
 	run.phase = "cruise"
@@ -2872,99 +2971,126 @@ func _end_cop() -> void:
 	run.stage_score = 0
 
 
-## Where the police car can drive: the four lanes, and a strip beside each outer lane to pass on.
-const COP_XS: Array[float] = [-7.7, -5.4, -1.8, 1.8, 5.4, 7.7]
-var _cop_pass_tx := INF     # while it goes round a car in its way: the x it is heading for (INF: not going round one)
-var _cop_held_t := 0.0      # how long a car has held it up
+var _cop_overlap := 0       # test aid: frames the police car was inside a car of the traffic
+var _cop_drv: CarDriver     # how the police car finds its way through the traffic (see CarDriver)
+var _cop_reversing := false
 
 
-## The nearest car (not the player) between the police car and the player in the player's lane (at x), or null.
-func _cop_corridor(b: Vehicle, x: float) -> Vehicle:
-	var best: Vehicle = null
-	for c in traffic:
-		if c.z + c.l > b.z and c.z < player.z and absf(c.x - x) < c.reach_h + b.w / 2.0 + 0.25 and (best == null or c.z < best.z):
-			best = c
-	return best
+## The police car drives the way a good player would if only getting to you mattered: it plans a line through the
+## traffic like a boss does, but it does not mind passing a car with a hand's width to spare, brakes late and hard, moves
+## over quickly even from a crawl, leans towards where you are (the pull) and takes the strip beside the outer lane when
+## that is the way round. The player is not a car in its way: reaching you is the point.
+func _make_cop_driver() -> CarDriver:
+	var d := CarDriver.new()
+	d.lanes = Data.LANES
+	d.set_risk(1.0)
+	d.road_half = 7.7
+	d.lane_hold = 0.0
+	d.lat_accel = 17.0
+	d.d_min = 0.85
+	d.min_vlat = 2.8
+	d.a_max = COP_ACCEL
+	d.free_gain = 1.5
+	d.arcade_follow = true
+	d.b_max = 12.0
+	d.b_comf = 8.0
+	d.margin_hard = 0.16
+	d.margin_target = 0.3
+	d.follow_gap = 2.2
+	d.follow_t = 0.2
+	d.react_t = 0.5
+	d.crash_buf = 1.2
+	d.crash_t = 0.45
+	d.pts_weight = 0.0
+	d.move_cost = 0.7
+	d.switch_need = 1.0
+	d.plan_every = 0.15
+	d.per_frame = 2
+	d.dwell_t = 0.4
+	d.goal_cap = false
+	d.progress_w = 3.0
+	d.end_speed_w = 2.0
+	d.edge_x = 5.95
+	d.edge_cost = 28.0
+	return d
 
 
-## Is the way along x clear for the police car, from just behind it to z1?
-func _cop_way_clear(b: Vehicle, x: float, z1: float) -> bool:
-	var hw := b.w / 2.0 + 0.2
-	for c in traffic:
-		if absf(c.x - x) < c.reach_h + hw and c.z + c.l > b.z - 3.0 and minf(c.z, c.reach_z) < z1:
-			return false
-	if absf(player.x - x) < player.w / 2.0 + hw and player.z + player.l > b.z - 3.0 and player.z < z1:
-		return false
-	return true
-
-
-## The open road ahead of the police car along x: distance to the first car there that is not pulling away.
-func _cop_road_ahead(b: Vehicle, x: float) -> float:
-	var free := 150.0
-	for c in traffic:
-		if absf(c.x - x) < c.reach_h + b.w / 2.0 + 0.2 and c.z + c.l > b.z and c.v < b.v + 1.0:
-			free = minf(free, c.z - (b.z + b.l))
-	return free
-
-
-## Where the police car should be to get past `blocker` (a car between it and the player): where it is if that
-## is clear all the way past, else the free lane beside it (or the strip on the outside) with the most road
-## open ahead; it holds where it is, looking every frame, while there is none.
-func _cop_go_around(b: Vehicle, blocker: Vehicle) -> float:
-	var z1 := minf(blocker.z + blocker.l + 9.0, b.z + b.l + 14.0)  # (a lane need only be clear for the next few metres: it can go on to another)
-	var k := 0
-	for i in COP_XS.size():
-		if absf(COP_XS[i] - b.x) < absf(COP_XS[k] - b.x):
-			k = i
-	var best := -1
-	var best_val := -1e9
-	for nk in [k, k - 1, k + 1]:
-		if nk < 0 or nk >= COP_XS.size():
-			continue
-		if nk == COP_XS.size() - 1 and not station.is_empty() and absf(b.z - float(station.z)) < 250.0:
-			continue  # (the strip on the right is the fuel stop's exit lane there)
-		var x: float = COP_XS[nk]
-		if not _cop_way_clear(b, x, z1):
-			continue
-		var val := _cop_road_ahead(b, x) - (40.0 if nk == 0 or nk == COP_XS.size() - 1 else 0.0) + (12.0 if nk == k else 0.0)
-		if val > best_val:
-			best_val = val
-			best = nk
-	if best >= 0:
-		_cop_pass_tx = COP_XS[best]
-	elif _cop_pass_tx == INF:
-		return b.x
-	return _cop_pass_tx
+var _cop_vrel_t := 0.0
+var _cop_vrel_s := 0.0
 
 
 func _update_cop(dt: float) -> void:
 	var b := boss
 	var gap_to_player := player.z - (b.z + b.l)
+	if autotest and gap_to_player > 15.0 and _cop_reach < 0.0:
+		_cop_vrel_t += dt
+		_cop_vrel_s += (b.v - player.v) * dt
 	var tag := b.model.get_node_or_null("CopTag") as Label3D
 	if tag:  # fade the tag out when it would sit on top of the player's car
 		tag.modulate.a = clampf((gap_to_player - 8.0) / 10.0, 0.0, 1.0)
 		tag.outline_modulate.a = tag.modulate.a
 	# close in fast, then match speed and push for contact
 	var want := player.v + clampf(gap_to_player * 0.3 + 2.0, -8.0, COP_CLOSE)  # keeps pushing at contact
-	var lg := _boss_leader(b)
-	var lead: Vehicle = lg[0]
-	var gap: float = lg[1]
 	if autotest:
-		if lead and lead != player and gap < 25.0:
+		var lg := _boss_leader(b)
+		var lead: Vehicle = lg[0]
+		if lead and lead != player and float(lg[1]) < 25.0:
 			_cop_held += dt
 		if _cop_reach < 0.0 and gap_to_player < 12.0 and run:
 			_cop_reach = run.cop_t
-	# gone past a player who has stopped (it was quicker than the player's braking): back up to him
+		for c in traffic:
+			if not c.wreck and absf(c.x - b.x) < (c.w + b.w) / 2.0 - 0.05 and c.z < b.z + b.l - 0.05 and c.z + c.l > b.z + 0.05:
+				_cop_overlap += 1  # (it is inside a car: it should never be)
+				if OS.get_environment("COP_DEBUG") != "" and _cop_overlap % 20 == 1:
+					print("[cop-overlap] cop x %.2f z %.1f v %.1f (len %.1f) | car x %.2f z %.1f v %.1f lane %d>%d len %.1f reach z %.1f h %.2f | drv airbags %d moving? target %.2f" % [b.x, b.z, b.v, b.l, c.x, c.z, c.v, c.lane, c.tlane, c.l, c.reach_z, c.reach_h, _cop_drv.airbags, _cop_drv.target_x])
+				break
+	# it has gone past a player who has stopped (it was quicker than the player's braking): back up to him
 	var reversing := b.z > player.z + player.l - 0.3 and player.v < 4.0
+	_cop_aim = lerpf(_cop_aim, player.x, minf(1.0, dt * 1.6))  # (where it thinks you are: it reacts with a delay, so a late lane change can shake it off)
 	if reversing:
-		want = -8.0
-	elif lead and lead != player and gap < 30.0:
-		want = minf(want, lead.v + (gap - 3.0) * 0.6)  # traffic in the way: brakes late behind it
-	b.v += clampf(want - b.v, -12.0 * dt, COP_ACCEL * dt)
-	b.v = clampf(b.v, -8.0 if reversing else 0.0, 90.0)
-	b.z += b.v * dt
-	if lead and lead != player and b.z + b.l > lead.z - 0.3 and absf(lead.x - b.x) < (lead.w + b.w) / 2.0:
-		b.z = lead.z - b.l - 0.3
+		_cop_reversing = true
+		b.v = clampf(b.v + clampf(-8.0 - b.v, -12.0 * dt, COP_ACCEL * dt), -8.0, 90.0)
+		b.z += b.v * dt
+		for c in traffic:  # backing up, it stops at the car behind it
+			if not c.wreck and absf(c.x - b.x) < (c.w + b.w) / 2.0 + 0.1 and c.z + c.l <= b.z + 1.0 and b.z < c.z + c.l + 0.3:
+				b.z = c.z + c.l + 0.3
+				b.v = maxf(b.v, minf(c.v, 0.0))
+		var rstep := clampf(_cop_aim - b.x, -3.6 * dt, 3.6 * dt)
+		b.vx = 0.0
+		if absf(rstep) > 0.0:
+			var clear := true
+			for c in traffic:  # never slide sideways into a car
+				if absf(c.x - (b.x + rstep)) < (c.w + b.w) / 2.0 and c.z < b.z + b.l and c.z + c.l > b.z:
+					clear = false
+					break
+			if clear:
+				b.x += rstep
+				b.vx = rstep / maxf(dt, 0.0001)
+		b.lane = Data.nearest_lane(b.x)
+		b.tlane = b.lane
+	else:
+		if _cop_reversing or _cop_drv == null:
+			_cop_drv = _make_cop_driver() if _cop_drv == null else _cop_drv
+			_cop_drv.reset(b)
+			_cop_reversing = false
+		# the pull towards you is gentle while it is far (it hunts for the gaps), strong when it is close
+		_cop_drv.pull_x = _cop_aim
+		_cop_drv.pull_w = lerpf(0.4, 3.0, clampf((45.0 - gap_to_player) / 30.0, 0.0, 1.0))
+		_cop_drv.goal_z = player.z - 3.0 - b.l
+		_cop_drv.goal_v = player.v
+		_cop_drv.road_half = 7.7
+		if not station.is_empty() and absf(b.z - float(station.z)) < 250.0:
+			_cop_drv.road_half = 6.5  # (the strip on the right is the fuel stop's exit lane there)
+		if autotest and OS.get_environment("COP_PLAN") != "":  # test aid: print what the driver makes of each round, between two times (s into the pursuit)
+			var win := OS.get_environment("COP_PLAN").split(":")
+			_cop_drv.debug = run.cop_t >= float(win[0]) and run.cop_t <= float(win[1])
+		_cop_drv.report_airbag = autotest and OS.get_environment("COP_DEBUG") != ""
+		var t_us := Time.get_ticks_usec() if autotest else 0
+		_cop_drv.step(b, traffic, dt, want)
+		if autotest:
+			_drv_cost(Time.get_ticks_usec() - t_us)
+	if autotest and OS.get_environment("COP_DEBUG") != "" and int(run.cop_t * 4.0) != int((run.cop_t - dt) * 4.0):
+		print("[cop-debug] t=%.2f gap %.0f cop v %.1f (want %.1f) x %.2f tgt %.2f a_lon %.1f | player v %.1f x %.2f aim %.2f" % [run.cop_t, gap_to_player, b.v, want, b.x, _cop_drv.target_x, _cop_drv.a_lon, player.v, player.x, _cop_aim])
 	# the player is solid: the cop pushes in for contact but never drives through
 	# (and keeps a little back while the player is invulnerable)
 	if absf(player.x - b.x) < (player.w + b.w) / 2.0 and b.z < player.z + 2.0:
@@ -2972,61 +3098,6 @@ func _update_cop(dt: float) -> void:
 		if b.z > limit:
 			b.z = limit
 			b.v = minf(b.v, player.v)
-	# steer: at where it thinks the player is (it reacts with a delay, so a late lane change can shake it off),
-	# otherwise lane by lane through gaps. A car in its way to the player that is stopped or crawling it drives
-	# round, near the player as well: it never sits behind one.
-	_cop_aim = lerpf(_cop_aim, player.x, minf(1.0, dt * 1.6))
-	b.vx = 0.0
-	if lead != null and lead != player and gap < 10.0:
-		_cop_held_t += dt
-	else:
-		_cop_held_t = maxf(0.0, _cop_held_t - dt * 2.0)
-	var tx: float
-	var near := absf(gap_to_player) < 20.0
-	var blocker: Vehicle = _cop_corridor(b, _cop_aim) if (near or _cop_pass_tx != INF) else null
-	var passing := false
-	if blocker != null and (_cop_pass_tx != INF or blocker.v < 5.0 or _cop_held_t > 1.0):
-		tx = _cop_go_around(b, blocker)
-		passing = true
-		b.tlane = Data.nearest_lane(tx)
-		b.lane = Data.nearest_lane(b.x)
-	elif near:
-		_cop_pass_tx = INF
-		tx = _cop_aim
-	else:
-		_cop_pass_tx = INF
-		_cop_think -= dt
-		if b.tlane == b.lane and _cop_think <= 0.0:
-			# hunt for the gap: the lane with the most open road, leaning towards the player
-			_cop_think = 0.25
-			var pl := Data.nearest_lane(player.x)
-			var best := b.lane
-			var best_v := _free_ahead(b, b.lane) - absf(b.lane - pl) * 12.0
-			for l in [b.lane - 1, b.lane + 1]:
-				if l < 0 or l > 3 or _lane_blocked(b, l, 12.0, 3.5):
-					continue
-				var val := _free_ahead(b, l) - absf(l - pl) * 12.0 - 6.0
-				if val > best_v:
-					best_v = val
-					best = l
-			b.tlane = best
-		tx = Data.LANES[b.tlane]
-	var lat := 5.2 if absf(gap_to_player) >= 20.0 else 3.6  # darts into gaps; near you it reacts with a lag
-	lat = minf(lat, absf(b.v) * 0.2)
-	if passing or near or _cop_held_t > 0.5:
-		lat = maxf(lat, 1.5)  # (pulling out round a stopped car, and then in on a player who has stopped, it may have to do it from a crawl)
-	var step := clampf(tx - b.x, -lat * dt, lat * dt)
-	var nx := b.x + step
-	var clear := true
-	for c in traffic:  # never slide sideways into a car
-		if absf(c.x - nx) < (c.w + b.w) / 2.0 and c.z < b.z + b.l and c.z + c.l > b.z:
-			clear = false
-			break
-	if clear:
-		b.x = nx
-		b.vx = step / maxf(dt, 0.0001)
-	if absf(b.x - Data.LANES[b.tlane]) < 0.05:
-		b.lane = b.tlane
 	b.model.flash_lightbar(t)
 
 
@@ -3228,10 +3299,12 @@ func _stage_req() -> Dictionary:
 func _update_run(dt: float) -> void:
 	if run == null:
 		return
+	if run.wrecked and run.dying <= 0.0 and crash == null:
+		_start_crash(player.v, 1.0 if player.x < 0.0 else -1.0, null)  # (a wreck that did not come in a hit crashes all the same)
 	if run.dying > 0.0:
 		run.dying -= dt
 		if run.dying <= 0.0:
-			_end_run("Out of lives")
+			_end_run("Car wrecked" if run.wrecked else "Out of lives")
 		return
 	run.invuln = maxf(0.0, run.invuln - dt)
 	var d := player.v * dt
@@ -4305,6 +4378,24 @@ func _dev_tool(id: String) -> void:
 	sound.play("ding", 1.4)
 
 
+## A wrecked car cannot be driven: say so and take the player to its repair. True if it was the car.
+func _wrecked_block() -> bool:
+	var id := String(Save.data.selected)
+	if godmode or not Save.wrecked(id):
+		return false
+	var c := Data.car_by_id(id)
+	_end_crash()
+	_free_retired()
+	state = S.GARAGE
+	hud.garage_view = ""
+	hud.garage_tab = "repair"
+	hud.show_screen("garage")
+	_enter_garage()
+	hud.garage_say("Your %s is wrecked: 100%% damage. It cannot be driven until it is repaired." % c.name)
+	sound.play("ding", 0.6, -6.0)
+	return true
+
+
 func _on_act(action: String, arg: String) -> void:
 	# a drag that scrolled a menu must not also press the button it started on
 	if hud and hud.clicks_blocked() and not action in ["cam_set", "set", "cam_save", "save", "pause", "cam_cycle", "rp", "rp_scrub", "pump", "fill", "pay"]:
@@ -4325,6 +4416,8 @@ func _on_act(action: String, arg: String) -> void:
 		"help":
 			hud.show_screen("help")
 		"map":
+			if _wrecked_block():
+				return
 			state = S.MENU
 			hud.render_map()
 			hud.show_screen("map")
@@ -4404,7 +4497,7 @@ func _on_act(action: String, arg: String) -> void:
 		"repair":
 			var rid: String = Save.data.selected
 			var rw := Save.wear(rid)
-			var rcost := Data.repair_cost(Data.car_by_id(rid), rw)
+			var rcost := Save.repair_price(Data.car_by_id(rid))
 			if rw > 0.004 and Save.data.cash >= rcost:
 				Save.data.cash -= rcost
 				Save.repair(rid)  # (this saves, too)
@@ -5339,14 +5432,3 @@ func _pay_and_go() -> void:
 	hud.set_play_visible(true)
 	run.pit.step = "out"
 	run.dry_t = 0.0
-
-
-## Open road ahead of b in a lane: distance to the first car there that is
-## not pulling away (150 m if clear).
-func _free_ahead(b: Vehicle, lane: int) -> float:
-	var lx: float = Data.LANES[lane]
-	var free := 150.0
-	for c in traffic:
-		if (absf(c.x - lx) < 1.9 or (c.tlane == lane and c.v > 1.0)) and c.z + c.l > b.z and c.v < b.v + 1.0:
-			free = minf(free, c.z - (b.z + b.l))
-	return free

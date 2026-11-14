@@ -1,6 +1,0 @@
-{
-  "appId": "com.redlinerush.game",
-  "appName": "Redline Rush",
-  "webDir": "www",
-  "android": { "backgroundColor": "#1b1e23" }
-}

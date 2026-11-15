@@ -289,6 +289,18 @@ func car_by_id(id: String) -> Dictionary:
 	return CARS[0]
 
 
+## How much of the road's traffic there is for a car going at v m/s, as a share of what the stage has. Up to 50 m/s (180 km/h)
+## all of it; above that the faster the car the fewer cars (36% fewer at 80 m/s): the cars come at you faster, so the same
+## road gives you less time to find a gap, and at 280 km/h in the traffic of stage 8 there were none to find (the autopilot
+## averaged 107 km/h there, no more than at 160: tools/economy_sim.py --sweep).
+func traffic_for_speed(v: float) -> float:
+	return clampf(1.0 - 0.012 * (v - 50.0), 0.6, 1.0) if speed_traffic else 1.0
+
+
+## Off with --flat-traffic (a test aid: the traffic as it was before the rule above).
+var speed_traffic := true
+
+
 func stage_req(stage: int) -> Dictionary:
 	return {
 		"d": (2400.0 + 400.0 * stage) * target_scale,

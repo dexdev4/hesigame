@@ -3246,9 +3246,11 @@ func set_cabin_view(on: bool) -> void:
 ## the back faces of the roof, pillars and door panels, in headliner and trim.
 ## Because they are the real bodywork they sit exactly where the car has them,
 ## whatever the model, so nothing can poke through the roof or leave a gap.
-## tools/make_inner.py prepares the mesh and a smooth mask for each of the three
-## openings the driver looks out of (windscreen and the two front side windows),
-## so the shell is cut open along clean curves, not along the ragged edge of the
+## tools/make_inner.py prepares the mesh and, for each of the three openings the
+## driver looks out of (windscreen and the two front side windows), a signed
+## distance field of a clean shape (the glass patch's convex hull, rounded at the
+## corners), so the shell is cut open along straight edges and round corners with a
+## crisp edge, and a rubber seal drawn along it, not along the ragged edge of the
 ## model's glass.
 func _inner_shell(liner: Color) -> MeshInstance3D:
 	if not _inner_data.has(_shape_id):
@@ -3271,25 +3273,33 @@ uniform vec4 wr[3];
 uniform sampler2D mask0 : filter_linear, repeat_disable;
 uniform sampler2D mask1 : filter_linear, repeat_disable;
 uniform sampler2D mask2 : filter_linear, repeat_disable;
+const float RANGE = 0.06;   // how far (metres) the opening fields count either side of the edge (make_inner.py RANGE)
+const float SEAL = 0.03;    // how wide the rubber seal along the edge of an opening is, metres
+const float PILLAR = 0.055;  // the least pillar left between two openings, metres (where their edges meet or cross); less than RANGE, which is what a missing opening reads
 varying vec3 lp;
-void vertex() { lp = VERTEX; }
+varying vec3 nrm;
+void vertex() { lp = VERTEX; nrm = NORMAL; }
+// how far inside the opening the point is, metres (negative outside it): the field is 0.5 at the edge
 float opening(sampler2D m, vec3 p, int i) {
 	vec3 q = p - wc[i];
-	if (abs(dot(q, wn[i])) > 0.1) { return 0.0; }
+	if (abs(dot(q, wn[i])) > 0.12) { return -1.0; }
 	vec2 t = vec2((dot(q, wu[i]) - wr[i].x) * wr[i].z, (dot(q, wv[i]) - wr[i].y) * wr[i].w);
-	if (t.x < 0.0 || t.y < 0.0 || t.x > 1.0 || t.y > 1.0) { return 0.0; }
-	return textureLod(m, t, 0.0).r;
+	if (t.x < 0.0 || t.y < 0.0 || t.x > 1.0 || t.y > 1.0) { return -1.0; }
+	return (textureLod(m, t, 0.0).r - 0.5) * (2.0 * RANGE);
 }
 void fragment() {
-	float w = max(opening(mask0, lp, 0), max(opening(mask1, lp, 1), opening(mask2, lp, 2)));
-	if (w > 0.5) { discard; }                               // a window opening
-	float seal = 1.0 - 0.5 * smoothstep(0.04, 0.5, w);      // dark where the glass meets the trim: a seal in shadow
-	vec3 up = normalize((VIEW_MATRIX * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
-	vec3 fn = normalize(cross(dFdx(VERTEX), dFdy(VERTEX)));  // the face's own normal
-	float d = -abs(dot(fn, up));                            // about -1 on the roof, 0 on the pillars and doors
-	vec3 base = mix(wall, roof, 1.0 - smoothstep(-0.75, -0.25, d));
+	float s0 = opening(mask0, lp, 0);
+	float s1 = opening(mask1, lp, 1);
+	float s2 = opening(mask2, lp, 2);
+	// an opening is cut only where no other opening's edge is within PILLAR of it: the A-pillar is never thinner than that
+	float sd = max(min(s0, min(-PILLAR - s1, -PILLAR - s2)), max(min(s1, min(-PILLAR - s0, -PILLAR - s2)), min(s2, min(-PILLAR - s0, -PILLAR - s1))));
+	if (sd > 0.0) { discard; }                              // a window opening
+	float seal = mix(0.35, 1.0, smoothstep(0.0, SEAL, -sd)); // dark where the shell meets the glass: a rubber seal, crisp at the edge
+	float rf = abs(normalize(nrm).y);                       // about 1 on the roof, 0 on the pillars and doors (smooth over the shell)
+	vec3 base = mix(wall, roof, smoothstep(0.42, 0.62, rf));  // headliner above, pillar and door trim below, a clean seam between
 	float lit = 0.8 + 0.25 * (1.0 - smoothstep(-3.2, -0.8, lp.z));  // brighter towards the windscreen
 	lit *= 0.82 + 0.18 * smoothstep(0.7, 1.15, lp.y);       // darker down by the door sills
+	lit *= 1.0 - 0.22 * smoothstep(0.3, 0.75, abs(lp.x));   // and towards the roof rails: the roof curves away
 	ALBEDO = pow(base * lit, vec3(0.72)) * dim * seal;      // lifted a little (the tone mapping crushes dark trim to black), dimmed at night
 }
 """
@@ -3363,7 +3373,7 @@ static func _blank_mask() -> ImageTexture:
 
 
 ## Loads a car's prepared inner shell (assets/models/inner/NAME.inner): its mesh
-## and the three window masks. Empty if the file is missing.
+## (with smooth normals) and the three opening fields. Empty if the file is missing.
 static func _inner_load(id: String) -> Dictionary:
 	var path := "res://assets/models/inner/%s.inner" % String(PROFILES[id].mesh).get_file().get_basename()
 	var f := FileAccess.open(path, FileAccess.READ)
@@ -3373,13 +3383,18 @@ static func _inner_load(id: String) -> Dictionary:
 	var nv := f.get_32()
 	var ni := f.get_32()
 	var pf := f.get_buffer(nv * 12).to_float32_array()
+	var nb := f.get_buffer(nv * 3)
 	var P := PackedVector3Array()
 	P.resize(nv)
+	var N := PackedVector3Array()
+	N.resize(nv)
 	for i in nv:
 		P[i] = Vector3(pf[i * 3], pf[i * 3 + 1], pf[i * 3 + 2])
+		N[i] = Vector3(nb[i * 3] / 127.5 - 1.0, nb[i * 3 + 1] / 127.5 - 1.0, nb[i * 3 + 2] / 127.5 - 1.0)
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = P
+	arrays[Mesh.ARRAY_NORMAL] = N
 	arrays[Mesh.ARRAY_INDEX] = f.get_buffer(ni * 4).to_int32_array()
 	var m := ArrayMesh.new()
 	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)

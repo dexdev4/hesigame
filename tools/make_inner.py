@@ -4,22 +4,28 @@ pillars and door tops, as a small mesh (assets/models/inner/NAME.inner).
 
 The car meshes are one-sided shells that were split into paint and glass by
 their texture, triangle by triangle, so the edge of every window is ragged
-(teeth of a few centimetres). Seen from outside that does not matter, but
-from the driver's seat the windscreen edge is half a metre away. So this tool
-takes every triangle round the cabin that is seen from inside, paint and
+(teeth and tabs of a few centimetres). Seen from outside that does not matter,
+but from the driver's seat the windscreen edge is half a metre away. So this
+tool takes every triangle round the cabin that is seen from inside, paint and
 glass alike, as an opaque shell, and describes the three openings the driver
-looks out of (the windscreen and the two front side windows) as smooth
-masks: for each, the plane of the glass and a small greyscale image of where
-the glass is, blurred so the teeth melt away. The game cuts the shell open
-wherever a mask is over one half, which leaves headliner, A-pillars and door
-frames with clean curved edges, whatever the model's texture did.
+looks out of (the windscreen and the two front side windows) as clean shapes:
+for each, the plane of the glass and a signed distance field of the opening
+(how far each point of the plane is from its edge, positive inside). The
+opening is the convex hull of the glass patch, rounded at the corners, so it
+is a windscreen or a side window shaped like one, with straight edges and
+round corners, whatever the model's texture did; and because the stored image
+is a distance, not a picture of the opening, the game can cut the shell along
+it with a crisp edge at any size (and draw a seal along it).
 
 File format: u32 vertex count, u32 index count, the vertex positions (3 x
-float32 each), the indices (int32), then three window slots (windscreen,
+float32 each), the smooth vertex normals (3 x uint8 each, 0..255 for -1..1; the
+game shades the pillars and the roof by them, so they are not faceted), the
+indices (int32), then three window slots (windscreen,
 left, right): u32 present, and if present 16 float32 (plane centre, normal,
-u axis, v axis, then the mask's u0, v0, width, height in metres), u16 w,
-u16 h and w * h mask bytes. Laid out so the game can read the big blocks
-straight into packed arrays.
+u axis, v axis, then the field's u0, v0, width, height in metres), u16 w,
+u16 h and w * h bytes of field: 128 is the edge, and each step is RANGE / 127
+metres, inside above and outside below. Laid out so the game can read the
+big blocks straight into packed arrays.
 
 Usage: python3 tools/make_inner.py          (all player cars)
 """
@@ -66,9 +72,12 @@ def read_cpe2(path):
 
 
 CELL = 0.001    # the shell keeps the model's own triangles (welded to 1 mm)
-PIXEL = 0.005   # window mask resolution, metres
-BLUR = 0.025    # how far the window masks are smoothed, metres
+PIXEL = 0.005   # resolution the glass is cleaned at, metres
+OUT_PIXEL = 0.01  # resolution of the stored field (it is smooth, so a coarser grid keeps the edge exactly)
+ROUND = 0.025   # how far the field is smoothed, metres: the corners of the opening come out about 4 cm round
 OPEN = 0.03     # glass patches narrower than twice this are frame, not window, metres
+RANGE = 0.06    # the stored field counts this far (metres) either side of the edge (Game: CarModel._inner_shader)
+INSET = 0.02    # how much smaller than the glass the opening is made, metres
 
 
 def plane_frame(pts, n_hint):
@@ -134,8 +143,95 @@ def largest_patch(img):
     return (label == best).astype(np.float64) if best else img
 
 
-def raster_mask(tris_uv, margin=0.06):
-    """Fill the triangles (n, 3, 2) of a window into a blurred greyscale mask; returns (u0, v0, w_m, h_m, bytes, w, h)."""
+def edt1d(f):
+    """One line of the squared Euclidean distance transform (Felzenszwalb and Huttenlocher): f is 0 at a site, huge elsewhere."""
+    n = len(f)
+    d = np.empty(n)
+    v = np.zeros(n, np.int64)
+    z = np.empty(n + 1)
+    k = 0
+    z[0] = -np.inf
+    z[1] = np.inf
+    for q in range(1, n):
+        while True:
+            p = v[k]
+            s = ((f[q] + q * q) - (f[p] + p * p)) / (2.0 * q - 2.0 * p)
+            if s <= z[k] and k > 0:
+                k -= 1
+            else:
+                break
+        k += 1
+        v[k] = q
+        z[k] = s
+        z[k + 1] = np.inf
+    k = 0
+    for q in range(n):
+        while z[k + 1] < q:
+            k += 1
+        d[q] = (q - v[k]) ** 2 + f[v[k]]
+    return d
+
+
+def edt(sites):
+    """Distance in pixels from every pixel to the nearest True pixel of `sites`."""
+    g = np.where(sites, 0.0, 1e12)
+    h, w = g.shape
+    for x in range(w):
+        g[:, x] = edt1d(g[:, x])
+    for y in range(h):
+        g[y, :] = edt1d(g[y, :])
+    return np.sqrt(g)
+
+
+def signed_distance(shape):
+    """Signed distance in pixels from the edge of a binary image: positive inside."""
+    inside = shape > 0.5
+    return np.where(inside, edt(~inside) - 0.5, -(edt(inside) - 0.5))
+
+
+def gaussian(img, sigma):
+    r = int(np.ceil(3 * sigma))
+    k = np.exp(-0.5 * (np.arange(-r, r + 1) / sigma) ** 2)
+    k /= k.sum()
+    p = np.pad(img, ((0, 0), (r, r)), mode="edge")
+    img = sum(k[i] * p[:, i:i + img.shape[1]] for i in range(len(k)))
+    p = np.pad(img, ((r, r), (0, 0)), mode="edge")
+    return sum(k[i] * p[i:i + img.shape[0], :] for i in range(len(k)))
+
+
+def convex_hull(pts):
+    pts = sorted(set(map(tuple, pts)))
+
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+    lo = []
+    for p in pts:
+        while len(lo) >= 2 and cross(lo[-2], lo[-1], p) <= 0:
+            lo.pop()
+        lo.append(p)
+    up = []
+    for p in reversed(pts):
+        while len(up) >= 2 and cross(up[-2], up[-1], p) <= 0:
+            up.pop()
+        up.append(p)
+    return np.array(lo[:-1] + up[:-1], np.float64)
+
+
+def hull_image(shape):
+    """The convex hull of the white pixels of a binary image, filled in."""
+    ys, xs = np.nonzero(shape > 0.5)
+    h = convex_hull(list(zip(xs.astype(float), ys.astype(float))))
+    gy, gx = np.mgrid[0:shape.shape[0], 0:shape.shape[1]]
+    inside = np.ones(shape.shape, bool)
+    for i in range(len(h)):
+        a, b = h[i], h[(i + 1) % len(h)]
+        inside &= ((b[0] - a[0]) * (gy - a[1]) - (b[1] - a[1]) * (gx - a[0])) >= -0.5 * np.hypot(b[0] - a[0], b[1] - a[1])
+    return inside.astype(np.float64)
+
+
+def window_field(tris_uv, margin=RANGE + 0.01):
+    """Fill the triangles (n, 3, 2) of a window, clean them into one patch, take its convex hull and make a signed
+    distance field of it; returns (u0, v0, w_m, h_m, bytes, w, h)."""
     lo = tris_uv.reshape(-1, 2).min(0) - margin
     hi = tris_uv.reshape(-1, 2).max(0) + margin
     w = int(np.ceil((hi[0] - lo[0]) / PIXEL))
@@ -153,16 +249,23 @@ def raster_mask(tris_uv, margin=0.06):
         l1 = ((b[1] - c[1]) * (xs - c[0]) + (c[0] - b[0]) * (ys - c[1])) / d
         l2 = ((c[1] - a[1]) * (xs - c[0]) + (a[0] - c[0]) * (ys - c[1])) / d
         inside = (l1 >= -0.02) & (l2 >= -0.02) & (l1 + l2 <= 1.02)
-        yy = np.clip(ys[inside].astype(int) - 0, 0, h - 1)
-        xx = np.clip(xs[inside].astype(int) - 0, 0, w - 1)
+        yy = np.clip(ys[inside].astype(int), 0, h - 1)
+        xx = np.clip(xs[inside].astype(int), 0, w - 1)
         img[yy, xx] = 1.0
     img = closing(img, int(round(OPEN / PIXEL)))
     img = opening(img, int(round(OPEN / PIXEL)))
     img = largest_patch(img)
-    r = max(2, int(round(BLUR / PIXEL / 1.7)))
-    for _ in range(3):
-        img = box_blur(img, r)
-    return lo[0], lo[1], w * PIXEL, h * PIXEL, np.clip(img * 255.0 + 0.5, 0, 255).astype(np.uint8), w, h
+    sdf = gaussian(signed_distance(hull_image(img)) * PIXEL, ROUND / PIXEL) - INSET
+    # keep only the part of the grid the field is counting in, on an even number of pixels, and store it at OUT_PIXEL
+    ys, xs = np.nonzero(sdf > -RANGE)
+    y0, y1 = int(ys.min()) // 2 * 2, int(ys.max()) + 1
+    x0, x1 = int(xs.min()) // 2 * 2, int(xs.max()) + 1
+    sdf = sdf[y0:y1, x0:x1]
+    sdf = np.pad(sdf, ((0, sdf.shape[0] % 2), (0, sdf.shape[1] % 2)), mode="edge")
+    sdf = sdf.reshape(sdf.shape[0] // 2, 2, sdf.shape[1] // 2, 2).mean((1, 3))
+    byte = np.clip((0.5 + 0.5 * sdf / RANGE) * 255.0 + 0.5, 0, 255).astype(np.uint8)
+    h2, w2 = byte.shape
+    return lo[0] + x0 * PIXEL, lo[1] + y0 * PIXEL, w2 * OUT_PIXEL, h2 * OUT_PIXEL, byte, w2, h2
 
 
 def build(name):
@@ -208,9 +311,14 @@ def build(name):
         pts = P[sel].reshape(-1, 3)
         c, n, u, v = plane_frame(pts, ng[sel].mean(0))
         tri_uv = np.stack([np.stack([(P[sel][:, k] - c) @ u, (P[sel][:, k] - c) @ v], 1) for k in range(3)], 1)
-        u0, v0, wm, hm, mask, w, h = raster_mask(tri_uv)
+        u0, v0, wm, hm, mask, w, h = window_field(tri_uv)
         slots.append((c, n, u, v, u0, v0, wm, hm, mask, w, h))
-        info.append("%s %d tris %dx%d" % (kind, len(sel), w, h))
+        # the opening (field above the edge) against the glass it was made from: the hull and the 2 cm inset keep them close
+        opening_area = float((mask > 127).sum()) * OUT_PIXEL ** 2
+        ta, tb = tri_uv[:, 1] - tri_uv[:, 0], tri_uv[:, 2] - tri_uv[:, 0]
+        glass_area = float((0.5 * np.abs(ta[:, 0] * tb[:, 1] - ta[:, 1] * tb[:, 0])).sum())
+        assert 0.5 * glass_area < opening_area < 2.5 * glass_area or kind != "windscreen", (name, kind, opening_area, glass_area)
+        info.append("%s %d tris %dx%d, opening %.2f m2" % (kind, len(sel), w, h, opening_area))
 
     # --- the shell: every triangle above the belt line that is seen from inside, thinned out
     d_lo = d_base - 1.6
@@ -250,6 +358,7 @@ def build(name):
     with open(os.path.join(OUT, name + ".inner"), "wb") as f:
         f.write(struct.pack("<II", len(vp), len(idx)))
         f.write(vp.astype("<f4").tobytes())
+        f.write(np.clip((vn * 0.5 + 0.5) * 255.0 + 0.5, 0, 255).astype(np.uint8).tobytes())
         f.write(idx.astype("<i4").tobytes())
         for sl in slots:
             if sl is None:

@@ -97,6 +97,9 @@ class Run:
 	var combo_t := 0.0
 	var phase := "cruise"  # or "boss"
 	var cash_bonus := 0
+	var time := 0.0          # seconds played (the autotest's economy lines)
+	var fuel_burnt := 0.0    # litres burnt in the run
+	var hits := 0            # collisions with a car or the rail
 	var invuln := 1.5
 	var bosses := 0
 	var speed_acc := 0.0
@@ -185,6 +188,9 @@ var _burst_i := 0
 var force_cop := false
 var _test_block := ""       # --cop-block=KIND: the player sits still behind a stopped car, the police car behind that (test aid)
 var auto_speed := 46.0  # --autospeed=M/S: how fast the test driver goes
+var _auto_look := 0.0   # --autolook=SECONDS: the test driver brakes when the road ahead is shorter than this many seconds of travel (0: 16 m, as it always did)
+var _odo_every := 0.0   # --odometer=METRES: the autotest prints how the run is going every this far
+var _odo_next := 0.0
 var idcolor := false   # --idcolor: flat unique colour per traffic car, no fog or scenery (flicker test)
 var _id_next := 1
 var _id_log: FileAccess
@@ -263,6 +269,15 @@ func _ready() -> void:
 	autotest = args.has("--autotest")
 	if args.has("--fast"):
 		Data.target_scale = 0.08
+	if args.has("--flat-traffic"):
+		Data.speed_traffic = false
+	for a in args:
+		if a.begins_with("--target-scale="):  # stage and boss targets times this (--fast is 0.08; a big one means no boss in the run)
+			Data.target_scale = float(a.substr(15))
+		if a.begins_with("--autolook="):
+			_auto_look = float(a.substr(11))
+		if a.begins_with("--odometer="):
+			_odo_every = float(a.substr(11))
 	for a in args:
 		if a.begins_with("--quit-after="):
 			auto_quit = float(a.split("=")[1])
@@ -1146,7 +1161,7 @@ func _update_traffic(dt: float) -> void:
 			_retire(c)
 			traffic.remove_at(i)
 	# keep the road populated
-	var dens := minf(7.2, 3.3 + run.stage * 0.55) if run else 3.4
+	var dens := (minf(7.2, 3.3 + run.stage * 0.55) if run else 3.4) * Data.traffic_for_speed(player.v)
 	# Cars are added and removed only far beyond the haze (and are not drawn
 	# past CarModel.DRAW_DISTANCE), so none of them pops in or out of view.
 	var ahead := 0
@@ -1790,6 +1805,8 @@ func _end_battle() -> void:
 		if run.stage == Data.BOSSES.size():
 			_route_cleared()
 		run.cash_bonus += 200 * run.stage
+		if autotest:
+			_econ_line(true)
 		var unlocked_new := false
 		if not Save.is_unlocked(bi.car) and Data.car_unlock_route(Data.car_by_id(bi.car)) < 0:
 			Save.data.unlocked.append(bi.car)
@@ -1798,6 +1815,8 @@ func _end_battle() -> void:
 		sound.play("chime", 1.0, 0.0)
 		_show_pick(bi, unlocked_new)
 	else:
+		if autotest:
+			_econ_line(false)
 		if not (Save.setting("dev_lives") or godmode):  # infinite lives covers lost races too
 			run.lives -= 1
 		run.combo = 0
@@ -1808,6 +1827,14 @@ func _end_battle() -> void:
 		_notify("LOST TO %s · -1 LIFE" % String(bi.full).to_upper(), "bad")
 		run.phase = "cruise"
 		run.rematch_t = 2.5
+
+
+## The autotest's economy line, at the end of every boss race: what the run has earned so far (score / 40, distance / 50 and
+## prize money), what it has cost in fuel, and how it has driven. tools/economy_sim.py reads it.
+func _econ_line(won: bool) -> void:
+	print("[autotest] economy: car %s route %d stage %d %s | %.0f s, %.0f m, mean %.0f km/h, hits %d | score %d (this race %d, the boss %d) | gross $%d = score $%d + distance $%d + prizes $%d | fuel %.1f L burnt, $%d paid" % [
+		Save.data.selected, Data.route, run.stage, "WON" if won else "LOST", run.time, run.dist, run.dist / maxf(run.time, 0.1) * 3.6, run.hits, run.score, run.b_score, run.b_rival,
+		_gross_earnings(), run.score / 40, int(run.dist / 50.0), run.cash_bonus, run.fuel_burnt, run.fuel_paid])
 
 
 # ---------------------------------------------------------------- scoring
@@ -1905,13 +1932,14 @@ func _autopilot(dt: float) -> void:
 			best_d = d
 			best = l
 	target_x = Data.LANES[best]
-	ap_brake = best_d < 16.0
+	ap_brake = best_d < maxf(16.0, _auto_look * player.v)
 	ap_gas = not ap_brake and player.v < (auto_speed if autotest else 38.0)
 
 
 func _hit(reason: String, other: Vehicle = null, ct := {}) -> void:
 	if not _live() or run.invuln > 0.0:
 		return
+	run.hits += 1
 	var shielded := run.shield > 0
 	if shielded:
 		run.shield -= 1
@@ -2520,6 +2548,7 @@ func _update_player(dt: float) -> void:
 		# fuel: a full tank lasts the car's range flat out (CarStats.range_km), longer driven gently
 		var lpm := CarStats.fuel_per_m(st, gas, vr, Data.station_scale) * float(run.mods.eco)
 		run.fuel = maxf(0.0, run.fuel - lpm * player.v * dt)
+		run.fuel_burnt += lpm * player.v * dt
 		if live and _pit_ready():
 			_start_pit()
 			return
@@ -2713,6 +2742,7 @@ func _set_route(i: int) -> void:
 
 
 func _start_run() -> void:
+	_odo_next = _odo_every
 	if Save.wrecked(String(Save.data.selected)) and not godmode:
 		if autotest:  # (the test driver starts runs by itself: its wreck is mended for nothing)
 			Save.repair(String(Save.data.selected))
@@ -3381,6 +3411,10 @@ func _update_run(dt: float) -> void:
 	run.invuln = maxf(0.0, run.invuln - dt)
 	var d := player.v * dt
 	run.dist += d
+	run.time += dt
+	if autotest and _odo_every > 0.0 and run.dist >= _odo_next:
+		_odo_next += _odo_every
+		print("[autotest] odometer %.0f m: %.0f s, mean %.0f km/h, score %d, hits %d, fuel %.1f L, stage %d" % [run.dist, run.time, run.dist / maxf(run.time, 0.1) * 3.6, run.score, run.hits, run.fuel_burnt, run.stage])
 	if run.combo_t > 0.0:
 		run.combo_t -= dt
 		if run.combo_t <= 0.0:

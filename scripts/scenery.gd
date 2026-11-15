@@ -139,6 +139,12 @@ func _ready() -> void:
 ## keeps the ground there clear for the exit lane and the forecourt.
 const SITE := 300.0
 
+## Police speed checks (SpeedTrap) are parked at this site in every TREE_PERIOD of road, on the right outside the rail
+## (the fuel stop's ground is 115 to 445 m in, its signs at 0 and 300): the bushes, trees and rocks keep it clear.
+const TRAP_SITE := 520.0
+const TRAP_HALF := 9.0     # m: half the length of the bay
+const TRAP_WIDTH := 6.5    # m: how far beyond the rail it is kept clear
+
 var _station_nodes: Array[GasStation] = []
 var _stations: Array = []  # info dictionaries from game.gd: {z, name, prices, color}
 
@@ -148,6 +154,8 @@ var _stations: Array = []  # info dictionaries from game.gd: {z, name, prices, c
 static func site_clear(pz: float, x: float) -> bool:
 	if x < 0.0:
 		return false
+	if x < Data.RAIL + TRAP_WIDTH and absf(fposmod(pz - VIEW_BEHIND - TRAP_SITE + TREE_PERIOD / 2.0, TREE_PERIOD) - TREE_PERIOD / 2.0) < TRAP_HALF:
+		return true  # a speed check's bay
 	# road distance from the site, in -300..300 (pattern z maps to road z - VIEW_BEHIND)
 	var rel := fposmod(pz - VIEW_BEHIND - SITE + TREE_PERIOD / 2.0, TREE_PERIOD) - TREE_PERIOD / 2.0
 	if x < GasStation.OUTER_X + 2.5 and rel > -GasStation.EXIT_START - 15.0 and rel < GasStation.MERGE_END + 15.0:

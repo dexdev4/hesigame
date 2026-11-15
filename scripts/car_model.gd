@@ -3476,6 +3476,14 @@ func add_lightbar(roof_y: float) -> void:
 	flash_lightbar(0.0)
 
 
+## The light bar switched off, its lenses dull (a patrol car parked at the roadside).
+func lightbar_off() -> void:
+	if _bar_l == null:
+		return
+	_bar_l.material_override = mat(Color("#5a1818"), 0.0)
+	_bar_r.material_override = mat(Color("#18285a"), 0.0)
+
+
 ## Alternating red and blue flashes.
 func flash_lightbar(t: float) -> void:
 	if _bar_l == null:

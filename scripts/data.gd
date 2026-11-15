@@ -175,6 +175,7 @@ const BOONS := [
 	{"id": "armour", "name": "Roll cage", "desc": "1.5 s longer protection after every hit", "tag": "DEFENCE"},
 	{"id": "calm", "name": "Rolling roadblock", "desc": "Traffic drives 10% slower for this run", "tag": "TRAFFIC"},
 	{"id": "eco", "name": "Eco tune", "desc": "Burns 25% less fuel for this run", "tag": "FUEL"},
+	{"id": "radar", "name": "Radar jammer", "desc": "Warns of a police speed check 250 m ahead, in time to slow down", "tag": "POLICE"},
 	{"id": "cash", "name": "Sponsor deal", "desc": "A bonus of $400 per stage cleared, now", "tag": "CASH"},
 ]
 
@@ -325,14 +326,74 @@ func boss_skill(stage: int, r := -1) -> float:
 	var i := (stage - 1) % BOSSES.size()
 	var tier := (stage - 1) / BOSSES.size()
 	var rt := route_t(r)
-	return minf(lerpf(0.0, 0.85, rt) + i * lerpf(0.1, 0.3, rt) + 0.28 * tier, 1.9)
+	var rank := minf(lerpf(0.0, 0.85, rt) + i * lerpf(0.1, 0.3, rt) + 0.28 * tier, 1.9)
+	return rank + BOSS_FLOOR * maxf(0.0, 1.0 - rank / BOSS_FLOOR_END)
 
 
-## How generously a boss's driving is scored (bosses score more than their driving alone earns, as a rival
-## that was just as good as you would be a coin toss). Low on the first highways, and 1.25 on the last.
+## The lower bosses were rookies (the first boss of the first highway raced at skill 0, leaving a metre beside a car and
+## driving 147 km/h) and far too easy. Now even the first race like a driver this much better than their rank in the
+## climb says: it fades out, and bosses of a rank of BOSS_FLOOR_END and more (from about the ninth highway) race as they did.
+const BOSS_FLOOR := 0.45
+const BOSS_FLOOR_END := 1.25
+
+
+## What a boss's race is meant to score, in points over its 2 km: the first and the last of the four bosses of a highway,
+## for the highways listed (a highway between two of them gets the numbers in between, and the four bosses of a highway step
+## evenly from the first to the last). From I-40 on they are what the bosses made before (measured: about 8,700 for the
+## first boss of I-40 and 14,500 for the last, 25,800 for the last of I-60 and 35,700 for the last of I-80, the targets the
+## game has always had being 16,200, 25,900 and 34,000 for the last bosses of I-40, I-60 and I-80); the first highways' were
+## far too low, a rookie that left a metre beside a car and made 1,600 points for the first boss of I-10 and 5,100 for the
+## last, and are raised to 3,800 and 8,500, and the ones after them in step. Every lap of the four bosses after the first is
+## harder again, by LAP_PAR (up to LAP_MAX laps). Measured against the autopilot, which makes 2,000 to 3,500 in a race (a player who goes for
+## the passes makes more).
+const BOSS_PAR := [[0, 3800.0, 8500.0], [1, 5500.0, 10000.0], [2, 6500.0, 11500.0], [3, 7500.0, 12500.0], [4, 8500.0, 13500.0],
+	[6, 9500.0, 15000.0], [9, 12500.0, 25000.0], [13, 19000.0, 35000.0]]
+const LAP_PAR := 1.3
+const LAP_MAX := 4  # (the bosses stop getting harder with the laps after this one: they did the same, at the skill's cap)
+
+
+## The score the boss of this stage is meant to make (BOSS_PAR).
+func boss_par(stage: int, r := -1) -> float:
+	var rr := float(route if r < 0 else r)
+	var t: Array = BOSS_PAR
+	var first := float(t[0][1])
+	var last := float(t[0][2])
+	if rr >= float(t[t.size() - 1][0]):
+		first = float(t[t.size() - 1][1])
+		last = float(t[t.size() - 1][2])
+	else:
+		for k in range(1, t.size()):
+			if rr <= float(t[k][0]):
+				var u := (rr - float(t[k - 1][0])) / (float(t[k][0]) - float(t[k - 1][0]))
+				first = lerpf(float(t[k - 1][1]), float(t[k][1]), u)
+				last = lerpf(float(t[k - 1][2]), float(t[k][2]), u)
+				break
+	var i := (stage - 1) % BOSSES.size()
+	var lap := (stage - 1) / BOSSES.size()
+	return lerpf(first, last, float(i) / float(BOSSES.size() - 1)) * pow(LAP_PAR, mini(lap, LAP_MAX))
+
+
+## What a boss earns in a race by driving at skill `sk`, if its driving were scored at face value (`boss_edge` 1): about
+## BOSS_YIELD * exp(BOSS_YIELD_PER_SKILL * sk) points, times a factor for the car it drives (the Night Marshal's makes
+## a sixth more than the Copperhead's). Measured: tools/boss_cal.py --extra=--boss-edge=1.0, 8 races at every highway and
+## stage (the fit is within 13% of the mean of each set of eight, which is about as close as it can be: a single race varies
+## by 40% and more, most of all for the best bosses, whose razor passes are worth thousands each). It has to be measured
+## again if the way a boss drives or scores changes.
+const BOSS_YIELD := 7200.0
+const BOSS_YIELD_PER_SKILL := 0.745
+const BOSS_CAR_YIELD := [1.0, 1.165, 1.083, 1.073]
+
+
+func boss_yield(sk: float, stage: int) -> float:
+	var i := (stage - 1) % BOSSES.size()
+	return BOSS_YIELD * float(BOSS_CAR_YIELD[i]) * exp(BOSS_YIELD_PER_SKILL * sk)
+
+
+## How generously a boss's driving is scored (bosses score more than their driving alone earns for the first highways,
+## where they drive for less than they are worth, and less for the last): the number the driving's points are multiplied
+## by so that the boss's race comes to what it is meant to be (`boss_par`, over what its skill earns: `boss_yield`).
 func boss_edge(stage: int, r := -1) -> float:
-	var tier := (stage - 1) / BOSSES.size()
-	return minf(lerpf(0.62, 1.25, pow(route_t(r), 0.8)) + 0.04 * tier, 1.25)
+	return boss_par(stage, r) / boss_yield(boss_skill(stage, r), stage)
 
 
 ## What a boss's driving is worth in points on top of `boss_edge`: a factor by skill, so that each boss keeps the

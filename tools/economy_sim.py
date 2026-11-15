@@ -71,7 +71,7 @@ def run_one(job):
     json.dump({"cash": 100000, "owned": cars, "selected": car, "unlocked": cars, "routes": 14}, open(os.path.join(user, "save.json"), "w"))
     frames = 16000 * stages + 6000
     cmd = ["godot", "--headless", "--path", ROOT, "--fixed-fps", "60", "--quit-after", str(frames), "--",
-           "--autotest", "--orient=portrait", "--godmode", "--seed=%d" % seed, "--car=" + car, "--route=%d" % route, "--autospeed=%.1f" % speed]
+           "--autotest", "--no-traps", "--orient=portrait", "--godmode", "--seed=%d" % seed, "--car=" + car, "--route=%d" % route, "--autospeed=%.1f" % speed]
     env = dict(os.environ, XDG_DATA_HOME=work)
     p = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=1800)
     rows = []
@@ -105,7 +105,7 @@ def sweep_one(job):
     json.dump({"cash": 100000, "owned": cars, "selected": car, "unlocked": cars, "routes": 14}, open(os.path.join(user, "save.json"), "w"))
     frames = int(metres / max(speed, 10.0) * 60.0) + 900
     cmd = ["godot", "--headless", "--path", ROOT, "--fixed-fps", "60", "--quit-after", str(frames), "--",
-           "--autotest", "--orient=portrait", "--godmode", "--seed=%d" % seed, "--car=" + car, "--route=%d" % route,
+           "--autotest", "--no-traps", "--orient=portrait", "--godmode", "--seed=%d" % seed, "--car=" + car, "--route=%d" % route,
            "--autospeed=%.1f" % speed, "--autolook=%.2f" % look, "--target-scale=1000", "--start-stage=%d" % start_stage, "--odometer=500"] + extra
     env = dict(os.environ, XDG_DATA_HOME=work)
     p = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=1800)

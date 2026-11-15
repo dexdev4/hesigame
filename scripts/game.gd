@@ -91,6 +91,7 @@ class Run:
 	var mods := {"accel": 1.0, "brake": 1.0, "handling": 1.0, "top": 1.0, "score": 1.0, "traffic": 1.0, "eco": 1.0}
 	var shield := 0          # hits the crumple zone will absorb
 	var armour := 0.0        # extra seconds of protection after a hit
+	var radar := false       # the radar jammer is fitted: it warns of a police speed check SpeedTrap.WARN metres ahead
 	var clear_t := 0.0       # traffic stays away while this runs down
 	var combo_time := 3.5
 	var combo := 0
@@ -124,7 +125,8 @@ class Run:
 	var b_drip_acc := 0.0
 	# police pursuit
 	var cop_t := 0.0
-	var cop_due := false     # a pursuit happened this stage, so the next trigger is the boss
+	var cop_due := false     # a pursuit happened this stage, so the next trigger is the boss (only the --cop test aid has a pursuit take a stage's trigger)
+	var cop_trap := false    # the pursuit came from a speed check: it breaks in on the middle of a stage, so the stage's progress stays
 	var siren_t := 0.0
 	# fuel
 	var fuel := 0.0          # litres in the tank
@@ -186,6 +188,11 @@ var shots: Array = []
 var burst: Array = []  # --burst=START:COUNT:DIR saves COUNT consecutive frames (test aid)
 var _burst_i := 0
 var force_cop := false
+var _traps_on := true       # --no-traps: no police speed checks on the road (test aid: for the measurements that are not about them)
+var _trap_first := -1.0     # --trap-at=METRES: the first speed check is at least this far into the run (test aid)
+var _speeding := false      # --speeding: the test driver does not slow down for a speed check (test aid)
+var _test_radar := false    # --radar: every run starts with the radar jammer fitted (test aid)
+var _test_boon := ""        # --boon=ID: the test driver takes this upgrade after a boss, whether or not it is one of the three on offer (test aid)
 var _test_block := ""       # --cop-block=KIND: the player sits still behind a stopped car, the police car behind that (test aid)
 var auto_speed := 46.0  # --autospeed=M/S: how fast the test driver goes
 var _auto_look := 0.0   # --autolook=SECONDS: the test driver brakes when the road ahead is shorter than this many seconds of travel (0: 16 m, as it always did)
@@ -232,6 +239,7 @@ var _test_crash := -1.0
 var _test_stage := 0
 var _test_dent := ""      # --dent=KIND:STRENGTH[,...]: knock the garage car about (test aid; kinds: front, rear, left, right, corner)
 var _test_boss_sk := -99.0  # --boss-sk=X: the skill every boss races at (below -50: not set)
+var _test_boss_edge := -99.0  # --boss-edge=X: how generously every boss's driving is scored (Data.boss_edge), to measure what a skill earns on its own
 var _test_fuel := 1.0
 var _test_first_station := -1.0
 var _pit_test: Array = []   # --pit-test=SPEED:REL:X: start a run at the first fuel stop, SPEED m/s, REL metres from the pumps, x across the road (test aid)
@@ -318,6 +326,16 @@ func _ready() -> void:
 		if a.begins_with("--cop-block="):  # the blocking exploit, as it was played (test aid; implies --cop)
 			_test_block = a.substr(12)
 			force_cop = true
+		if a == "--no-traps":  # no police speed checks (test aid)
+			_traps_on = false
+		if a.begins_with("--trap-at="):  # the first speed check is this many metres into the run, or the next place there is one (test aid)
+			_trap_first = float(a.substr(10))
+		if a == "--speeding":  # the test driver does not slow down for the speed checks (test aid)
+			_speeding = true
+		if a == "--radar":  # runs start with the radar jammer fitted (test aid)
+			_test_radar = true
+		if a.begins_with("--boon="):  # the test driver takes this upgrade after every boss (test aid)
+			_test_boon = a.substr(7)
 		if a.begins_with("--stations="):  # a fuel stop every KM km, tank range scaled to match (test aid)
 			Data.station_scale = float(a.substr(11)) / Data.STATION_EVERY_KM
 		if a.begins_with("--first-station="):  # the first fuel stop this many metres in (test aid)
@@ -344,6 +362,8 @@ func _ready() -> void:
 			_test_dent = a.substr(7)
 		if a.begins_with("--boss-sk="):  # every boss races at this skill, whatever the highway and stage (test aid)
 			_test_boss_sk = float(a.substr(10))
+		if a.begins_with("--boss-edge="):  # every boss's score is scaled by this, whatever the highway and stage (test aid)
+			_test_boss_edge = float(a.substr(12))
 		if a == "--godmode":  # infinite lives without saving it (test aid)
 			godmode = true
 		if a == "--hitboxes":  # draw every car's hit box (test aid)
@@ -1431,14 +1451,19 @@ func _start_boss() -> void:
 	# start in a lane that is clear around the boss's starting spot, the one with the most open road ahead
 	var start_lane := -1
 	var start_safe := -1.0
-	for l in [boss.lane, 3 - boss.lane, 0, 3]:
-		boss.lane = l
-		boss.x = Data.LANES[l]
-		if not _lane_blocked(boss, l, 12.0, 12.0):
-			var safe := _safe_speed_at(boss.z, l, boss.l)
-			if safe > start_safe + 3.0:
-				start_safe = safe
-				start_lane = l
+	var want_lane := boss.lane
+	for k in 8:  # (when a car is in the way in every lane it starts a little further back, up to 56 m: it used to be left on top of one)
+		for l in [want_lane, 3 - want_lane, 0, 3]:
+			boss.lane = l
+			boss.x = Data.LANES[l]
+			if not _lane_blocked(boss, l, 12.0, 12.0):
+				var safe := _safe_speed_at(boss.z, l, boss.l)
+				if safe > start_safe + 3.0:
+					start_safe = safe
+					start_lane = l
+		if start_lane >= 0:
+			break
+		boss.z -= 8.0
 	if start_lane >= 0:
 		boss.lane = start_lane
 		boss.x = Data.LANES[start_lane]
@@ -1470,7 +1495,7 @@ func _start_boss() -> void:
 	run.b_next = 1.2
 	run.b_info = bi
 	run.b_skill = Data.boss_skill(run.stage) if _test_boss_sk < -50.0 else _test_boss_sk
-	run.b_edge = Data.boss_edge(run.stage)
+	run.b_edge = Data.boss_edge(run.stage) if _test_boss_edge < -50.0 else _test_boss_edge
 	run.b_combo = 0
 	run.b_combo_t = 0.0
 	run.b_speed_acc = 0.0
@@ -1932,8 +1957,14 @@ func _autopilot(dt: float) -> void:
 			best_d = d
 			best = l
 	target_x = Data.LANES[best]
-	ap_brake = best_d < maxf(16.0, _auto_look * player.v)
-	ap_gas = not ap_brake and player.v < (auto_speed if autotest else 38.0)
+	var top_v: float = auto_speed if autotest else 38.0
+	var stop := best_d < maxf(16.0, _auto_look * player.v)
+	if not _speeding and run and run.phase == "cruise" and _check_rel() < 300.0:
+		# a speed check is coming up: slow to well under its limit for the last 300 m (--speeding goes past it as it was)
+		top_v = minf(top_v, SpeedTrap.LIMIT - 2.5)
+		stop = stop or player.v > top_v + 0.6
+	ap_brake = stop
+	ap_gas = not ap_brake and player.v < top_v
 
 
 func _hit(reason: String, other: Vehicle = null, ct := {}) -> void:
@@ -2756,12 +2787,14 @@ func _start_run() -> void:
 	_set_player_car()
 	run = Run.new()
 	run.lives = 3 + Save.perm_level("lives")
+	run.radar = _test_radar
 	station = {}
 	last_station = {}
 	if _test_stage > 1:
 		run.stage = _test_stage
 	_compute_stats()
 	_reset_world()
+	_traps_reset()
 	run.fuel = st.tank * _test_fuel
 	_new_station(player.z)
 	touches.clear()
@@ -2826,6 +2859,7 @@ func _end_run(reason: String) -> void:
 		print("[autotest] run over: %s score=%d dist=%.0f bosses=%d earned=%d" % [reason, score, dist, bosses, earned])
 	run = null
 	_remove_boss()
+	_trap_clear()
 	finish_z = -1.0
 	_compute_stats()
 	state = S.OVER
@@ -2843,6 +2877,8 @@ func _show_pick(bi: Dictionary, unlocked_new: bool) -> void:
 			continue
 		if b.id == "fuel" and run.fuel > st.tank * 0.85:
 			continue  # a refuel is only offered when the tank could use it
+		if b.id == "radar" and run.radar:
+			continue  # (one jammer is all a car needs)
 		pool.append(b)
 	pool.shuffle()
 	var opts := pool.slice(0, 3)
@@ -2854,8 +2890,9 @@ func _show_pick(bi: Dictionary, unlocked_new: bool) -> void:
 		line = "The %s goes on sale when you clear %s. " % [boss_car.name, Data.route_info(Data.car_unlock_route(boss_car)).title] + line
 	hud.show_pick("%s beaten · +$%s prize" % [bi.full, Fmt.num(200 * run.stage)], line, opts)
 	if autotest:
-		print("[autotest] beat %s, picking %s" % [bi.full, opts[0].id])
-		_apply_boon(opts[0].id)
+		var pick: String = _test_boon if _test_boon != "" else opts[0].id
+		print("[autotest] beat %s, picking %s" % [bi.full, pick])
+		_apply_boon(pick)
 
 
 ## After an upgrade is chosen: the traffic around you melts away so there is
@@ -2891,6 +2928,9 @@ func _apply_boon(id: String) -> void:
 			for c in traffic:
 				c.cruise *= 0.9
 		"eco": run.mods.eco *= 0.75
+		"radar":
+			run.radar = true
+			_notify("RADAR JAMMER FITTED", "hot")
 		"cash":
 			run.cash_bonus += 400 * run.stage
 			_notify("SPONSOR DEAL · +$%s" % Fmt.num(400 * run.stage), "hot")
@@ -2915,7 +2955,6 @@ var _yields := 0
 var _overlaps := 0      # test aid: frames in which two cars on the road were more than 30 cm inside each other
 var _cop_reach := -1.0  # test aid: seconds into the pursuit when the cop first came within 12 m
 var _cop_held := 0.0    # test aid: seconds the cop had a car in its way less than 25 m ahead
-const COP_CHANCE := 0.3   # chance that a boss trigger is a police pursuit instead
 const COP_TIME := 40.0    # seconds to survive to escape
 const COP_CLOSE := 9.0    # the most the police car gains on you, m/s (it was 16: on an open road it was on you in 4 s)
 const COP_ACCEL := 6.0    # how hard it accelerates, m/s² (was 10.5)
@@ -2924,8 +2963,9 @@ const BOSS_WARN := 10.0   # seconds of warning before the boss or police arrives
 
 
 ## Police pursuit: a cop car comes up from behind and tries to ram you.
-## Survive COP_TIME seconds for an extra life; get rammed and you lose one.
-func _start_cop() -> void:
+## Survive COP_TIME seconds for an extra life; get rammed and you lose one. `gap` is how far behind you it starts
+## (a speed check's patrol car starts from the roadside where it was parked, `from_trap`).
+func _start_cop(gap := COP_GAP, from_trap := false) -> void:
 	_clear_station_for(COP_TIME * 85.0)
 	_remove_boss()
 	var sh: Dictionary = Data.SHAPES.sedan
@@ -2934,7 +2974,7 @@ func _start_cop() -> void:
 	boss.lane = Data.nearest_lane(player.x)
 	boss.tlane = boss.lane
 	boss.x = Data.LANES[boss.lane]
-	boss.z = player.z - COP_GAP
+	boss.z = player.z - gap
 	boss.v = player.v + 5.0
 	boss.w = sh.w
 	boss.l = sh.l
@@ -2999,10 +3039,12 @@ func _start_cop() -> void:
 	_cop_overlap = 0
 	_cop_held = 0.0
 	_yields = 0
-	run.cop_due = true
+	run.cop_trap = from_trap
+	if not from_trap:
+		run.cop_due = true
 	hud.banner("POLICE PURSUIT", "DON'T GET RAMMED FOR %d S · ESCAPE FOR +1 LIFE" % int(COP_TIME), "alert")
 	if autotest:
-		print("[autotest] police pursuit stage %d" % run.stage)
+		print("[autotest] police pursuit stage %d%s" % [run.stage, " (from a speed check: it starts %.0f m behind you)" % (player.z - boss.z) if from_trap else ""])
 	if _test_block != "":
 		_cop_block_setup()
 
@@ -3068,8 +3110,10 @@ func _end_cop() -> void:
 	_remove_boss()
 	_boss_mood_end(6.0)
 	run.phase = "cruise"
-	run.stage_dist = 0.0
-	run.stage_score = 0
+	if not run.cop_trap:  # (a speed check's pursuit came in the middle of a stage: the stage goes on where it was)
+		run.stage_dist = 0.0
+		run.stage_score = 0
+	run.cop_trap = false
 
 
 var _cop_overlap := 0       # test aid: frames the police car was inside a car of the traffic
@@ -3201,6 +3245,179 @@ func _update_cop(dt: float) -> void:
 			b.z = limit
 			b.v = minf(b.v, player.v)
 	b.model.flash_lightbar(t)
+
+
+# ---------------------------------------------------------------- speed checks
+
+## A police car is parked outside the guardrail every 5 to 15 km of road (SpeedTrap says where). A car that goes past it
+## faster than the limit sets off a police pursuit; one that has slowed down for it is let go. The radar jammer, one of
+## the rewards for beating a boss, warns of the next speed check SpeedTrap.WARN metres before it.
+
+var _trap_rng := RandomNumberGenerator.new()
+var _trap_site := 0   # the site (SpeedTrap.site_z) of the next speed check to put on the road
+var _trap_quiet := 0.0   # no speed check before this road distance (a boss race or a pursuit has just been over: SpeedTrap.QUIET)
+var _trap_phase := "cruise"  # the phase of the run when _update_traps last looked
+var _trap := {}       # the speed check on the road, if there is one: {z (its middle), node, model, state, t, warn, rearm}; the state is
+                      # "wait" until the car goes past it, then "alert" for the moment (SpeedTrap.DELAY) between that and the pursuit, or "done"
+
+
+## A new run: the first speed check is somewhere in its first 2.5 to 7 km.
+func _traps_reset() -> void:
+	_trap_clear()
+	_trap_quiet = 0.0
+	_trap_phase = "cruise"
+	if not _traps_on:
+		return
+	_trap_rng.seed = randi()
+	if _trap_first >= 0.0:
+		_trap_site = ceili((player.z + _trap_first - Scenery.TRAP_SITE) / Scenery.TREE_PERIOD)
+	else:
+		_trap_site = SpeedTrap.first_site(player.z, _trap_rng)
+
+
+## Take the speed check off the road.
+func _trap_clear() -> void:
+	if _trap.has("node") and is_instance_valid(_trap.node):
+		(_trap.node as Node3D).queue_free()
+	_trap = {}
+
+
+## The speed check is behind: its patrol car is gone from the road, and the next one is 5 to 15 km further on.
+func _trap_next() -> void:
+	_trap_clear()
+	_trap_site += SpeedTrap.gap_sites(_trap_rng)
+
+
+## The patrol car, parked in its bay with its nose turned towards the road and its light bar dark.
+func _trap_spawn(z: float) -> void:
+	var sh: Dictionary = Data.SHAPES.sedan
+	var m := CarModel.new()
+	m.build("sedan", Color("#f2f3f5"), Color("#b5322a"), {"rim": "steel", "badge": "POLICE", "plate": "PD 911"})
+	m.add_lightbar(sh.t)
+	m.lightbar_off()
+	m.position = Vector3(0.0, 0.0, float(sh.l) / 2.0)  # (the node stands at its middle, so that it turns about that)
+	var node := Node3D.new()
+	node.add_child(m)
+	node.rotation.y = SpeedTrap.TURN
+	node.position = Vector3(SpeedTrap.BAY_X, 0.0, -(z - player.z))
+	add_child(node)
+	_trap = {"z": z, "node": node, "model": m, "state": "wait", "t": 0.0, "warn": 0, "rearm": false}
+	if autotest:
+		print("[autotest] speed check on the road at %.0f m, %.0f m ahead" % [z, z - player.z])
+
+
+## Where the patrol car is on the screen, for the world as it is at road distance `pz`: the live one, or a replay's.
+func _place_traps(pz: float) -> void:
+	if not _trap.is_empty():
+		(_trap.node as Node3D).position = Vector3(SpeedTrap.BAY_X, 0.0, -(float(_trap.z) - pz))
+
+
+## How far it is, in metres, from the middle of the car to the speed check that it has still to go past (a huge number
+## when there is none).
+func _check_rel() -> float:
+	if _trap.is_empty() or _trap.state != "wait":
+		return 1e9
+	return float(_trap.z) - (player.z + player.l * 0.5)
+
+
+## How far ahead the speed check is while the radar jammer is showing it (from SpeedTrap.WARN metres until the car is level
+## with it), or -1 when the jammer is not showing one.
+func _check_ahead() -> float:
+	if run == null or not run.radar or run.phase != "cruise":
+		return -1.0
+	var rel := _check_rel()
+	return rel if rel <= SpeedTrap.WARN and rel > 0.0 else -1.0
+
+
+## A speed (m/s) as the player reads speeds (Settings > Units): "112 KM/H" or "70 MPH".
+func _speed_label(v: float) -> String:
+	if Save.setting("units") == "mph":
+		return "%d MPH" % roundi(v * 2.23694)
+	return "%d KM/H" % roundi(v * 3.6)
+
+
+## The limit of a speed check in the same units. In miles an hour it is rounded down (74.6 is shown as 74), so that
+## a speed that the speedometer shows as the limit or less is never over it.
+func _limit_text() -> String:
+	if Save.setting("units") == "mph":
+		return "%d MPH" % int(SpeedTrap.LIMIT * 2.23694)
+	return "%d KM/H" % roundi(SpeedTrap.LIMIT * 3.6)
+
+
+## Each step of a run: put the next speed check on the road as it comes into view, warn of it if the jammer is fitted,
+## tell the car how fast it was going as it passes, and take the patrol car off the road once it is behind.
+func _update_traps(dt: float) -> void:
+	if not _traps_on or run == null:
+		return
+	if run.phase != _trap_phase:  # a boss race or a pursuit is over: no speed check for the next SpeedTrap.QUIET metres
+		if run.phase == "cruise":
+			_trap_quiet = player.z + SpeedTrap.QUIET
+		_trap_phase = run.phase
+	if _trap.is_empty():
+		# a check that would have come while a boss or the police had the road, or soon after, comes at the first place after that
+		var from_z := maxf(_trap_quiet, player.z + 100.0)
+		if SpeedTrap.site_z(_trap_site) < from_z:
+			_trap_site = ceili((from_z - Scenery.TRAP_SITE) / Scenery.TREE_PERIOD)
+		var z := SpeedTrap.site_z(_trap_site)
+		if run.phase == "cruise" and z - player.z < SpeedTrap.SPAWN:
+			_trap_spawn(z)
+		return
+	var rel: float = float(_trap.z) - (player.z + player.l * 0.5)
+	if _trap.state == "wait":
+		if run.radar and run.phase == "cruise" and rel > 0.0:
+			if _trap.warn < 1 and rel <= SpeedTrap.WARN:
+				_trap.warn = 1
+				hud.fuel_warning("SPEED CHECK AHEAD", "POLICE %d M AHEAD · KEEP BELOW %s" % [int(SpeedTrap.WARN), _limit_text()], Hud.TAIL)
+				sound.play("ding", 1.5, -2.0)
+				if autotest:
+					print("[autotest] radar jammer: speed check %.0f m ahead, going %.0f km/h" % [rel, player.v * 3.6])
+			elif _trap.warn < 2 and rel <= 100.0 and SpeedTrap.speeding(player.v):  # still too fast with 100 m to go
+				_trap.warn = 2
+				hud.pop("SLOW DOWN", "hot")
+				sound.play("ding", 1.9, -3.0)
+				if autotest:
+					print("[autotest] radar jammer: still going %.0f km/h with %.0f m to the speed check" % [player.v * 3.6, rel])
+		if rel <= 0.0:
+			_trap_pass()
+	elif _trap.state == "alert":
+		_trap.t -= dt
+		(_trap.model as CarModel).flash_lightbar(t)
+		if _trap.t <= 0.0:
+			_trap_pull_out()
+	if not _trap.is_empty() and _trap.state != "alert" and player.z - float(_trap.z) > SpeedTrap.GONE:
+		if _trap.rearm:  # (it did not count: the next one is the next place there is, not 5 to 15 km on)
+			_trap_clear()
+		else:
+			_trap_next()
+
+
+## The car is level with the patrol car: it is told how fast it was going. Too fast, and the police are after it.
+func _trap_pass() -> void:
+	var v := player.v
+	var busy := not run.pit.is_empty() or crash != null or run.dying > 0.0
+	var verdict := SpeedTrap.verdict(v, run.phase, busy)
+	_trap.state = "done"
+	_trap.rearm = verdict == "ignored"
+	if autotest:
+		print("[autotest] speed check passed at %.1f km/h (stage %d, %s): %s" % [v * 3.6, run.stage, run.phase, verdict])
+	if verdict == "chase":
+		_trap.state = "alert"
+		_trap.t = SpeedTrap.DELAY
+		hud.banner("SPEED TRAP", "%s IN A %s ZONE · THE POLICE ARE COMING" % [_speed_label(v), _limit_text()], "alert")
+		sound.play("siren", 1.0, -2.0)
+		_boss_music(true)
+	elif verdict == "clear":
+		_notify("SPEED CHECK CLEAR · %s" % _speed_label(v), "small")
+
+
+## The patrol car pulls out after the car it has caught: the pursuit starts from where it stood.
+func _trap_pull_out() -> void:
+	var gap := clampf(player.z - (float(_trap.z) - Data.SHAPES.sedan.l * 0.5), 25.0, COP_GAP)  # (as far behind you as it stood when you went past)
+	_trap_next()
+	if run.phase == "cruise" and run.pit.is_empty() and crash == null and run.dying <= 0.0:
+		_start_cop(gap, true)
+	elif run.phase == "cruise":  # (the car has crashed or pulled in to the pumps: the police let it go)
+		_boss_music(false, 3.0)
 
 
 # ---------------------------------------------------------------- boss mood
@@ -3357,9 +3574,10 @@ func _boss_mood_end(fade := 6.0) -> void:
 	_boss_music(false, fade)
 
 
-## A stage is complete: warn that the boss (or a police car) is coming in
-## BOSS_WARN seconds, without stopping the game. Fuel stops are moved out of
-## the way of the countdown and the race.
+## A stage is complete: warn that the boss is coming in BOSS_WARN seconds, without
+## stopping the game. Fuel stops are moved out of the way of the countdown and the
+## race. (The police no longer come at the end of a stage: they come from a speed
+## check, see _trap_pass. `cop` is the --cop test aid, which has them come here.)
 func _begin_incoming(cop: bool) -> void:
 	run.phase = "incoming"
 	run.inc_t = BOSS_WARN
@@ -3367,8 +3585,8 @@ func _begin_incoming(cop: bool) -> void:
 	_boss_music(true)
 	_clear_station_for(player.v * BOSS_WARN + run.b_len + 300.0)
 	var bi := Data.boss_info(run.stage)
-	if cop or not run.cop_due:
-		hud.banner("BOSS OR POLICE?", "SOMETHING IS COMING IN %d S" % int(BOSS_WARN), "alert")
+	if cop:
+		hud.banner("POLICE INCOMING", "THEY ARE COMING IN %d S" % int(BOSS_WARN), "alert")
 	else:
 		hud.banner(String(bi.full).to_upper() + " INCOMING", String(bi.line).to_upper(), "alert")
 	sound.play("ding", 1.2, -2.0)
@@ -3431,6 +3649,7 @@ func _update_run(dt: float) -> void:
 	_update_fuel(dt)
 	if run == null:
 		return  # ran dry
+	_update_traps(dt)
 	if run.phase == "cruise":
 		run.stage_dist += d
 		if run.rematch_t > 0.0:
@@ -3445,7 +3664,7 @@ func _update_run(dt: float) -> void:
 			return
 		var r := _stage_req()
 		if (run.stage_dist >= r.d or run.stage_score >= r.p) and not _station_busy():
-			_begin_incoming(not run.cop_due and (force_cop or randf() < COP_CHANCE))
+			_begin_incoming(not run.cop_due and force_cop)
 	elif run.phase == "incoming":
 		# the game carries on; the boss (or the police) turns up when this runs out
 		var before := run.inc_t
@@ -3782,6 +4001,7 @@ func _draw_hitboxes() -> void:
 
 func _sync_visuals(delta: float) -> void:
 	scenery.update_view(player.z, finish_z, delta)
+	_place_traps(player.z)
 	if show_hitboxes or _hitbox_mi != null or Save.setting("dev_hitbox"):
 		_draw_hitboxes()
 	for c in traffic:
@@ -4053,12 +4273,11 @@ func _update_hud() -> void:
 			"l1": "ESCAPE", "l2": "GAP", "f1": run.cop_t / COP_TIME, "f2": clampf(gp / 60.0, 0.0, 1.0),
 			"v1": "%d/%d s" % [int(run.cop_t), int(COP_TIME)], "v2": "%d m" % int(gp), "done1": false, "done2": gp > 30.0})
 	elif run.phase == "incoming":
-		var mystery: bool = run.inc_cop or not run.cop_due
 		var bi := Data.boss_info(run.stage)
-		d.merge({"title": ("BOSS OR POLICE?" if mystery else String(bi.full).to_upper()) + " · %d" % ceili(maxf(run.inc_t, 0.0)),
+		d.merge({"title": ("POLICE" if run.inc_cop else String(bi.full).to_upper()) + " · %d" % ceili(maxf(run.inc_t, 0.0)),
 			"sub": "ARRIVING IN %d S" % ceili(maxf(run.inc_t, 0.0)), "l1": "ARRIVES", "l2": "RIVAL",
 			"f1": 1.0 - run.inc_t / BOSS_WARN, "f2": 0.0, "v1": "%d s" % ceili(maxf(run.inc_t, 0.0)),
-			"v2": "???" if mystery else Data.boss_skill_name(run.stage).to_upper(), "done1": false, "done2": false})
+			"v2": "POLICE" if run.inc_cop else Data.boss_skill_name(run.stage).to_upper(), "done1": false, "done2": false})
 		d.boss = true
 	elif run.phase == "boss":
 		var mx := maxf(float(maxi(run.b_score, run.b_rival)) * 1.15, 1000.0)
@@ -4077,13 +4296,14 @@ func _update_hud() -> void:
 		var sub := _hud_boss_sub
 		if run.rematch_t > 0.0:
 			sub = "REMATCH INCOMING"
-		elif not run.cop_due:
-			sub = "BOSS OR POLICE?"
 		d.merge({"title": _hud_title, "sub": sub, "l1": "DIST", "l2": "PTS",
 			"f1": run.stage_dist / r.d, "f2": run.stage_score / r.p,
 			"v1": "%.1f/%.1f km" % [minf(run.stage_dist, r.d) / 1000.0, r.d / 1000.0],
 			"v2": "%s/%s" % [Fmt.num(mini(run.stage_score, int(r.p))), Fmt.num(r.p)],
 			"done1": d_ok, "done2": p_ok})
+	var chk := _check_ahead()
+	if chk >= 0.0:  # the radar jammer's speed check tracker
+		d.merge({"chk_on": true, "chk_dist": chk, "chk_hot": SpeedTrap.speeding(player.v), "chk_limit": _limit_text()})
 	hud.update_play(d)
 
 
@@ -4915,6 +5135,7 @@ func _replay_show(t: float, dt: float) -> void:
 	player.v = p[Replay.P_V]
 	player.vx = p[Replay.P_VX]
 	scenery.update_view(pz, f.finish, dt)
+	_place_traps(pz)
 	var crashed := p[Replay.P_CRASH] > 0.5
 	skids.visible = crashed
 	skids.update_view(pz)

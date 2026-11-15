@@ -76,10 +76,19 @@ var _trk_dist: Label
 var _trk_bar: ProgressBar
 var _trk_key := ""            # what its words were last made from
 var _trk_lane := false        # whether it is showing the exit lane (not the way there)
-var _warn: PanelContainer     # the fuel stop warning, along the top of the screen
+var _warn: PanelContainer     # the fuel stop warning (and the radar jammer's speed check warning), along the top of the screen
+var _warn_style: StyleBoxFlat
 var _warn_title: Label
 var _warn_sub: Label
 var _warn_tween: Tween
+var _chk: PanelContainer      # the speed check tracker (the radar jammer): top right, under the fuel stop tracker when that shows
+var _chk_style: StyleBoxFlat
+var _chk_head: Label
+var _chk_dist: Label
+var _chk_note: Label
+var _chk_bar: ProgressBar
+var _chk_key := ""            # what its words were last made from
+var _chk_hot := false         # whether it is showing "too fast" (red) rather than "speed ok" (green)
 var _fill_green: StyleBoxFlat
 var _rf := {}
 var mirror: RearMirror
@@ -591,9 +600,39 @@ func _build_play() -> void:
 	_trk_bar = _bar(_fill_amber, 6)
 	tv.add_child(_trk_bar)
 
+	# the speed check tracker (the radar jammer's): the fuel stop tracker's panel in red or green, under it when both show
+	_chk = PanelContainer.new()
+	_chk_style = _band_style(TAIL, 0.8, 8)
+	_chk_style.corner_radius_top_right = 8
+	_chk_style.corner_radius_bottom_right = 8
+	_chk_style.content_margin_left = 13.0
+	_chk_style.content_margin_right = 12.0
+	_chk_style.content_margin_top = 5.0
+	_chk_style.content_margin_bottom = 8.0
+	_chk.add_theme_stylebox_override("panel", _chk_style)
+	_chk.custom_minimum_size.x = 176.0
+	_chk.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_chk.visible = false
+	play_layer.add_child(_chk)
+	var cv := VBoxContainer.new()
+	cv.add_theme_constant_override("separation", 1)
+	cv.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_chk.add_child(cv)
+	_chk_head = _label("SPEED CHECK", 15, TAIL, mono_font)
+	cv.add_child(_chk_head)
+	_chk_dist = _label("", 34, LINE, display_font)
+	_chk_dist.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.6))
+	_chk_dist.add_theme_constant_override("shadow_offset_y", 2)
+	cv.add_child(_chk_dist)
+	_chk_note = _label("", 14, TAIL, mono_font)
+	cv.add_child(_chk_note)
+	_chk_bar = _bar(_fill_red, 6)
+	cv.add_child(_chk_bar)
+
 	# the fuel stop warning, along the top of the screen: it holds for five seconds, then fades
 	_warn = PanelContainer.new()
-	var wsb := _band_style(AMBER, 0.9, 10)
+	_warn_style = _band_style(AMBER, 0.9, 10)
+	var wsb := _warn_style
 	wsb.border_width_left = 7
 	wsb.corner_radius_top_right = 10
 	wsb.corner_radius_bottom_right = 10
@@ -724,6 +763,7 @@ func set_play_visible(on: bool) -> void:
 			_warn_tween.kill()
 		_warn.visible = false
 		_trk.visible = false
+		_chk.visible = false
 
 
 ## Which on-screen control a touch at `pos` lands on: "gas", "brake", "ui" or "".
@@ -830,6 +870,7 @@ func update_play(d: Dictionary) -> void:
 		_fuel_val.text = d.fuel_l
 		_set_font_color(_fuel_val, TAIL if low else LINE)
 		_update_tracker(d.trk_on, d.trk_entry, d.trk_pumps)
+	_update_check(d.get("chk_on", false), d.get("chk_dist", 0.0), d.get("chk_hot", false), d.get("chk_limit", ""))
 	var sign_bg := Color("#173a6e", 0.92) if d.get("cop", false) else (RED_SIGN if d.boss else Color(SIGN, 0.88))
 	if sign_bg != _sign_bg:  # (setting a style's colour redraws everything that uses it, even if it is the same colour)
 		_sign_bg = sign_bg
@@ -898,10 +939,57 @@ func _place_tracker() -> void:
 		_trk.position = at
 
 
-## A warning across the top of the screen (the fuel stop is 1 km ahead): it comes in, holds for five seconds and fades.
-func fuel_warning(title: String, sub: String) -> void:
+## The speed check tracker (the radar jammer's): how far the patrol car is, counting down, and whether the car is slow
+## enough to go past it (green: "SPEED OK") or too fast (red, with the limit to slow to). `dist` is in metres and `limit`
+## the limit in the units the player has chosen.
+func _update_check(on: bool, dist: float, hot: bool, limit: String) -> void:
+	if not on:
+		if _chk.visible:
+			_chk.visible = false
+		return
+	var big := "%d m" % (int(maxf(dist, 0.0) / 10.0) * 10)  # (in tens of metres: it is never a blur of digits)
+	var note := ("SLOW TO " + limit) if hot else "SPEED OK"
+	var key := big + "|" + note
+	if key != _chk_key:
+		_chk_key = key
+		_chk_dist.text = big
+		_chk_note.text = note
+	if hot != _chk_hot or not _chk.visible:
+		_chk_hot = hot
+		var accent := TAIL if hot else LANE_GREEN
+		_chk_style.border_color = accent
+		_set_font_color(_chk_head, accent)
+		_set_font_color(_chk_note, accent)
+		_set_fill(_chk_bar, _fill_red if hot else _fill_green)
+	_chk_bar.value = clampf(1.0 - dist / SpeedTrap.WARN, 0.0, 1.0)
+	_chk.visible = true
+	_place_check()
+
+
+## Where the speed check tracker goes: the fuel stop tracker's place, or under it when that is showing too.
+func _place_check() -> void:
+	var vp := play_layer.size if play_layer.size.x > 10.0 else get_viewport().get_visible_rect().size
+	var w := maxf(_chk.size.x, _chk.custom_minimum_size.x)
+	var x := vp.x - 22.0 - w
+	var y := maxf(cam_btn.global_position.y + cam_btn.size.y, _goal.global_position.y + _goal.size.y) + 6.0
+	if _trk.visible:
+		y = _trk.global_position.y + _trk.size.y + 6.0
+	if mirror and mirror.is_visible_in_tree():
+		var m := Rect2(mirror.global_position, mirror.size).grow(3.0)
+		if m.intersects(Rect2(Vector2(x, y), Vector2(w, _chk.size.y))):
+			y = m.end.y + 2.0
+	var at := Vector2(x, y) - play_layer.global_position
+	if _chk.position != at:
+		_chk.position = at
+
+
+## A warning across the top of the screen (the fuel stop is 1 km ahead, a speed check 250 m): it comes in, holds for
+## five seconds and fades. `accent` is amber for the fuel stop and red for the police.
+func fuel_warning(title: String, sub: String, accent := AMBER) -> void:
 	if _warn_tween:
 		_warn_tween.kill()
+	_warn_style.border_color = accent
+	_warn_sub.add_theme_color_override("font_color", accent)
 	_warn_title.text = title
 	_warn_sub.text = sub
 	var vp := play_layer.size if play_layer.size.x > 10.0 else get_viewport().get_visible_rect().size

@@ -47,6 +47,7 @@ const SETTING_DEFAULTS := {
 	"dev_lives": false,           # infinite lives
 	"dev_fps": false,             # frame-rate counter
 	"dev_hitbox": false,          # draw every car's hit box
+	"dev_hitch": false,           # say on screen when a frame takes much longer than the others, and what the game was doing in it
 }
 
 
@@ -133,9 +134,11 @@ func load_data() -> void:
 
 
 func persist() -> void:
+	var t0 := PerfProbe.t()
 	var f := FileAccess.open(PATH, FileAccess.WRITE)
 	if f:
 		f.store_string(JSON.stringify(data))
+	PerfProbe.note("save written", t0)
 
 
 ## A car's damage record (empty if it has none): wear 0..1 and what shows (see CarModel.damage_state).

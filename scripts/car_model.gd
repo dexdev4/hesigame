@@ -663,12 +663,21 @@ static func _spoke(st: SurfaceTool, side: float, ang: float, twist: float, r0: f
 ## Wheel and tyre, built once per size/design/colour and shared. Big alloy
 ## rims with concave spokes, centre cap and wheel nuts; a low-profile tyre
 ## with a rounded sidewall and tread grooves; a brake disc behind the spokes.
-static func _wheel_mesh(r: float, width: float, style := "5spoke", rim_col := Color("#c3c8ce"), rim_frac := 0.66, lq := false) -> ArrayMesh:
-	var key := "wheel%s_%s_%s_%s_%s_%s" % [r, width, style, rim_col.to_html(), rim_frac, lq]
+## The mesh does not depend on the colour of the rim, so one is made for each size and style and every car that has it
+## shares it (a car's own rim colour is the material put on the rim's surface, number 1, of its own wheel: see _rim_mat,
+## and build()). It used to be made for each colour too, and the first car with a size, style and colour the session had
+## not met stopped the game for several milliseconds to build it: with five styles and five colours that was one
+## car in four or five early on.
+static func _wheel_mesh(r: float, width: float, style := "5spoke", rim_frac := 0.66, lq := false) -> ArrayMesh:
+	var key := "wheel%s_%s_%s_%s_%s" % [r, width, style, rim_frac, lq]
 	if _meshes.has(key):
 		return _meshes[key]
 	if lq:
-		return _wheel_mesh_lq(key, r, width, rim_col if style != "steel" else Color("#6f7378"), rim_frac)
+		var t1 := PerfProbe.t()
+		var lm := _wheel_mesh_lq(key, r, width, rim_frac)
+		PerfProbe.note("wheel mesh (far)", t1)
+		return lm
+	var t0 := PerfProbe.t()
 	var hw := width / 2.0
 	var rr := r * rim_frac  # rim radius
 	var tire := _new_st()
@@ -780,15 +789,16 @@ static func _wheel_mesh(r: float, width: float, style := "5spoke", rim_col := Co
 	brake.commit(m)
 	dark.commit(m)
 	m.surface_set_material(0, mat(Color("#121315"), 0.0, 0.88))
-	m.surface_set_material(1, _alloy(rim_col) if style != "steel" else mat(Color("#6f7378"), 0.0, 0.5, 0.5))
+	m.surface_set_material(1, _rim_mat(style, Color("#c3c8ce")))  # (each car puts its own on: see build())
 	m.surface_set_material(2, mat(Color("#77797c"), 0.0, 0.42, 0.85))
 	m.surface_set_material(3, mat(Color("#0d0e10"), 0.0, 0.9))
 	_meshes[key] = m
+	PerfProbe.note("wheel mesh (near) " + style, t0)
 	return m
 
 
 ## The far-away wheel: a plain tyre, a rim disc and a dark centre.
-static func _wheel_mesh_lq(key: String, r: float, width: float, rim_col: Color, rim_frac: float) -> ArrayMesh:
+static func _wheel_mesh_lq(key: String, r: float, width: float, rim_frac: float) -> ArrayMesh:
 	var hw := width / 2.0
 	var rr := r * rim_frac
 	var tire := _new_st()
@@ -804,10 +814,18 @@ static func _wheel_mesh_lq(key: String, r: float, width: float, rim_col: Color, 
 	rim.commit(m)
 	dark.commit(m)
 	m.surface_set_material(0, mat(Color("#121315"), 0.0, 0.88))
-	m.surface_set_material(1, _alloy(rim_col))
+	m.surface_set_material(1, _alloy(Color("#c3c8ce")))  # (each car puts its own on: see build())
 	m.surface_set_material(2, mat(Color("#0d0e10"), 0.0, 0.9))
 	_meshes[key] = m
 	return m
+
+
+## The material of a wheel's rim (surface 1 of its mesh): the alloy in the rim's colour, or plain steel. The distant wheel
+## (`lq`) is a plain disc in the same colour (steel is a grey alloy there).
+static func _rim_mat(style: String, col: Color, lq := false) -> Material:
+	if lq:
+		return _alloy(col if style != "steel" else Color("#6f7378"))
+	return _alloy(col) if style != "steel" else mat(Color("#6f7378"), 0.0, 0.5, 0.5)
 
 
 ## Brake caliper: a block curving round the top of the disc, fixed to the car.
@@ -879,6 +897,12 @@ static func _kit(id: String, style := {}, lq := false) -> Dictionary:
 			key += "|" + k
 	if _kits.has(key):
 		return _kits[key]
+	if lq and PROFILES.get(id, {}).has("mesh") and not PROFILES[id].has("mesh_lq"):
+		# (a body with no light version of its own is the same body at any distance: building it twice cost as much again)
+		var near := _kit(id, style)
+		_kits[key] = near
+		return near
+	var t0 := PerfProbe.t()
 	var kit := {}
 	if PROFILES.get(id, {}).has("mesh"):
 		kit = _mesh_kit(id, PROFILES[id], Data.SHAPES[id], style, lq)
@@ -887,6 +911,7 @@ static func _kit(id: String, style := {}, lq := false) -> Dictionary:
 	else:
 		kit = _car_kit(id, style, lq)
 	_kits[key] = kit
+	PerfProbe.note("kit " + key, t0)
 	return kit
 
 
@@ -1127,6 +1152,27 @@ static func _car_kit(id: String, style := {}, lq := false) -> Dictionary:
 ## chrome, and the head and tail lamps. Tail lamps go to their own mesh so
 ## they brighten under braking; the outer ends of the lamps double as the
 ## indicators. The cabin, wheels and interior come from the profile as usual.
+## A PackedVector3Array from `n` vector3s of raw little-endian floats, without going through them one at a time in script
+## (which cost as much as everything else in reading a car's mesh from its file; Godot 4.3 has no
+## PackedByteArray.to_vector3_array): the bytes of a variant that is a packed vector3 array are its type (36) and its
+## length, then the floats.
+static func _vec3s(raw: PackedByteArray, n: int) -> PackedVector3Array:
+	var bytes := PackedByteArray()
+	bytes.resize(8)
+	bytes.encode_u32(0, Variant.Type.TYPE_PACKED_VECTOR3_ARRAY)
+	bytes.encode_u32(4, n)
+	bytes.append_array(raw)
+	var out: Variant = bytes_to_var(bytes)
+	if out is PackedVector3Array and (out as PackedVector3Array).size() == n:
+		return out
+	var fl := raw.to_float32_array()  # (the engine reads a vector3 as something other than three floats: the slow way)
+	var P := PackedVector3Array()
+	P.resize(n)
+	for i in n:
+		P[i] = Vector3(fl[i * 3], fl[i * 3 + 1], fl[i * 3 + 2])
+	return P
+
+
 static func _mesh_kit(id: String, pr: Dictionary, sh: Dictionary, style: Dictionary, lq := false) -> Dictionary:
 	var f := FileAccess.open(pr.mesh_lq if lq and pr.has("mesh_lq") else pr.mesh, FileAccess.READ)
 	var body := ArrayMesh.new()
@@ -1137,24 +1183,19 @@ static func _mesh_kit(id: String, pr: Dictionary, sh: Dictionary, style: Diction
 	if f == null or f.get_buffer(4).get_string_from_ascii() != "CPE2":
 		push_error("car mesh missing: %s" % pr.mesh)
 		return {}
+	var mesh_path: String = pr.mesh_lq if lq and pr.has("mesh_lq") else pr.mesh
+	var mesh_size := f.get_length()
 	var n_surf := f.get_32()
 	for si in n_surf:
 		var sname := f.get_buffer(f.get_32()).get_string_from_utf8()
 		var nv := f.get_32()
-		var pos := f.get_buffer(nv * 12).to_float32_array()
-		var nor := f.get_buffer(nv * 12).to_float32_array()
+		var P := _vec3s(f.get_buffer(nv * 12), nv)
+		var N := _vec3s(f.get_buffer(nv * 12), nv)
 		var idx := f.get_buffer(f.get_32() * 4).to_int32_array()
 		for t in range(0, idx.size(), 3):  # glTF winds front faces anticlockwise, Godot clockwise
 			var tmp := idx[t + 1]
 			idx[t + 1] = idx[t + 2]
 			idx[t + 2] = tmp
-		var P := PackedVector3Array()
-		var N := PackedVector3Array()
-		P.resize(nv)
-		N.resize(nv)
-		for i in nv:
-			P[i] = Vector3(pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2])
-			N[i] = Vector3(nor[i * 3], nor[i * 3 + 1], nor[i * 3 + 2])
 		var C := PackedColorArray()
 		C.resize(nv)
 		C.fill(Color.WHITE)
@@ -1185,18 +1226,22 @@ static func _mesh_kit(id: String, pr: Dictionary, sh: Dictionary, style: Diction
 			arr[Mesh.ARRAY_TEX_UV] = uv
 			var tm := ArrayMesh.new()
 			tm.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+			_keep_arrays(tm, Mesh.PRIMITIVE_TRIANGLES, arr)
 			kit["tails"] = tm
 			continue
 		if sname == "headlens":
 			sname = "head"
 		body.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+		_keep_arrays(body, Mesh.PRIMITIVE_TRIANGLES, arr)
 		names.append(sname)
 	# number plate on the tail
 	var bbm := BodyBuilder.new(id, pr, sh, style)
 	var plate_y: float = pr.get("plate_y", bbm.floor_y + 0.29)
 	var plate := _new_st()
 	_box(plate, Vector3(0, plate_y, 0.006), Vector3(0.52, 0.12, 0.016))
-	body.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, plate.commit_to_arrays())
+	var plate_arrays := plate.commit_to_arrays()
+	body.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, plate_arrays)
+	_keep_arrays(body, Mesh.PRIMITIVE_TRIANGLES, plate_arrays)
 	names.append("plate")
 	var tyre: Array = pr.tyre
 	var wheels: Array = []
@@ -1208,7 +1253,7 @@ static func _mesh_kit(id: String, pr: Dictionary, sh: Dictionary, style: Diction
 		var x: float = float(pr.wheel_x[mini(k, 1)]) if pr.has("wheel_x") else bbm.hw(ax) - float(tyre[mini(k, 1)]) / 2.0 - 0.012
 		wheels.append([-x, -ax, tyre[mini(k, 1)]])
 		wheels.append([x, -ax, tyre[mini(k, 1)]])
-	kit.merge({"sig_l": sig_l.commit(), "sig_r": sig_r.commit(), "wheels": wheels, "rim_frac": pr.get("rim_frac", 0.66),
+	kit.merge({"sig_l": _commit_kept(sig_l), "sig_r": _commit_kept(sig_r), "wheels": wheels, "rim_frac": pr.get("rim_frac", 0.66),
 		"r": pr.wheel[0], "ww": tyre[0], "plate_y": plate_y, "plate_z": 0.02, "body": body, "surfaces": names, "lod_near": float(pr.get("lod_near", 22.0))})
 	if pr.get("truck", false):
 		kit["truck"] = true
@@ -1216,7 +1261,9 @@ static func _mesh_kit(id: String, pr: Dictionary, sh: Dictionary, style: Diction
 		kit["tails"] = ArrayMesh.new()
 	if not pr.get("no_cabin", false):
 		# the simple seats and dash seen through the glass, kept inside the real body
-		kit["cabin"] = _clamp_mesh(bbm.cabin_mesh(), _shell_of(body, names, sh))
+		var cab := bbm.cabin_mesh()
+		var shell := _shell_of_file(mesh_path, mesh_size, body, names, sh)
+		kit["cabin"] = _clamp_mesh(cab, shell)
 	return kit
 
 
@@ -1609,6 +1656,42 @@ var _shoulders: Array = []
 var _shadow_mi: MeshInstance3D
 
 
+## What a kit's meshes were made from, kept (by the mesh's instance id) so that the damage can press dents into private copies
+## of them without reading them back from the graphics card, which stops the game until the card is done (in the middle
+## of a crash, which is when it was done): [[primitive type, arrays], ...] for each of a mesh's surfaces.
+static var _pristine := {}
+
+
+static func _keep_arrays(mesh: ArrayMesh, prim: int, arrays: Array) -> void:
+	var id := mesh.get_instance_id()
+	if not _pristine.has(id):
+		_pristine[id] = []
+	(_pristine[id] as Array).append([prim, arrays])
+
+
+## The arrays a mesh's surfaces were made from (read back the slow way, once, if they were not kept).
+static func pristine(mesh: ArrayMesh) -> Array:
+	var id := mesh.get_instance_id()
+	if not _pristine.has(id):
+		var out: Array = []
+		for si in mesh.get_surface_count():
+			out.append([mesh.surface_get_primitive_type(si), mesh.surface_get_arrays(si)])
+		_pristine[id] = out
+	return _pristine[id]
+
+
+## Like SurfaceTool.commit(), keeping what the mesh is made from (see pristine()).
+static func _commit_kept(st: SurfaceTool) -> ArrayMesh:
+	var m := ArrayMesh.new()
+	var arrays := st.commit_to_arrays()
+	var v: Variant = arrays[Mesh.ARRAY_VERTEX]
+	if v == null or (v as PackedVector3Array).is_empty():
+		return m
+	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	_keep_arrays(m, Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return m
+
+
 ## Cars further away than this are fully hidden by haze, so they are not drawn.
 const DRAW_DISTANCE := 360.0
 ## Beyond this a car is a few dozen pixels wide: the light body and wheels take over.
@@ -1688,11 +1771,13 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a"), style 
 		var wn := Node3D.new()
 		wn.position = Vector3(p[0], kit.r, p[1])
 		var mi := MeshInstance3D.new()
-		mi.mesh = _wheel_mesh(kit.r, ww, rim_style, rim_col, rim_frac)
+		mi.mesh = _wheel_mesh(kit.r, ww, rim_style, rim_frac)
+		mi.set_surface_override_material(1, _rim_mat(rim_style, rim_col))
 		wn.add_child(mi)
 		if true:
 			var mf := MeshInstance3D.new()
-			mf.mesh = _wheel_mesh(kit.r, ww, rim_style, rim_col, rim_frac, true)
+			mf.mesh = _wheel_mesh(kit.r, ww, rim_style, rim_frac, true)
+			mf.set_surface_override_material(1, _rim_mat(rim_style, rim_col, true))
 			wn.add_child(mf)
 			_lod(mi, 0.0, LOD_NEAR)
 			_lod(mf, LOD_NEAR, DRAW_DISTANCE)
@@ -1883,6 +1968,41 @@ const FLEETS := ["NORTHLINE FREIGHT", "PRAIRIE HAULAGE", "BLUE RIDGE LOGISTICS",
 const MAKES := ["ARCO", "NOVA", "CIVITA", "LUMEN", "VEGA", "ORIX", "TERRA", "KITE", "MERIT", "AXON"]
 
 
+# The rims a traffic vehicle may have (repeats make a style more likely), by body type: what traffic_style picks from, and
+# what warm_wheels makes the wheels of before they are needed.
+const TRAFFIC_RIMS_CAR := ["steel", "5spoke", "5spoke", "multi", "multi", "double", "mesh"]
+const TRAFFIC_RIMS_VAN := ["steel", "5spoke"]
+
+
+## The rim styles a traffic vehicle of this body type can have, each once.
+static func traffic_rims(shape: String) -> Array:
+	var all: Array = ["steel"] if shape == "truck" else (TRAFFIC_RIMS_VAN if shape == "van" else TRAFFIC_RIMS_CAR)
+	var out: Array = []
+	for r in all:
+		if not out.has(r):
+			out.append(r)
+	return out
+
+
+## Make the body kit of a kind of car (and its distant light version) now, so that it is there when the first one is built.
+static func warm_kit(shape: String, style := {}) -> void:
+	_kit(shape, style, false)
+	_kit(shape, style, true)
+
+
+## Make the wheel meshes (near and far) of a body in one rim style now. `style` is the car's own style, for a body (a boss's
+## car) whose kit and rims come from it; traffic has the plain kit.
+static func warm_wheels(shape: String, rim: String, style := {}) -> void:
+	var kit := _kit(shape, style)
+	var seen := {}
+	for p in kit.get("wheels", []):
+		var ww: float = p[2] if p.size() > 2 else float(kit.ww)
+		if not seen.has(ww):
+			seen[ww] = true
+			_wheel_mesh(float(kit.r), ww, rim, float(kit.get("rim_frac", 0.66)))
+			_wheel_mesh(float(kit.r), ww, rim, float(kit.get("rim_frac", 0.66)), true)
+
+
 ## The look of one traffic vehicle: its wheels, number plate and badge (and
 ## a haulier's livery on lorries), so no two cars on the road are identical.
 static func traffic_style(shape: String) -> Dictionary:
@@ -1898,10 +2018,10 @@ static func traffic_style(shape: String) -> Dictionary:
 			st.accent = ["#f3f5ef", "#d9a21b", "#b5322a", "#1f4e8c", "#2e7d32", "#1b1e23"].pick_random()
 			st.fleet = FLEETS.pick_random()
 		"van":
-			st.rim = ["steel", "5spoke"].pick_random()
+			st.rim = TRAFFIC_RIMS_VAN.pick_random()
 			st.badge = MAKES.pick_random()
 		_:
-			st.rim = ["steel", "5spoke", "5spoke", "multi", "multi", "double", "mesh"].pick_random()
+			st.rim = TRAFFIC_RIMS_CAR.pick_random()
 			st.rim_color = ["#c3c8ce", "#c3c8ce", "#9aa0a6", "#2a2c30", "#d6d9dc", "#5b5f64"].pick_random()
 			st.caliper = ["#55595e", "#55595e", "#2a2c30", "#9b1c1c"].pick_random()
 			st.badge = MAKES.pick_random()
@@ -1963,6 +2083,13 @@ const SHELL_STEP := 0.04
 static func _shell(id: String) -> Dictionary:
 	if _shells.has(id):
 		return _shells[id]
+	var pr: Dictionary = PROFILES.get(id, {})
+	if pr.has("mesh") and not bake_mode:
+		var f := FileAccess.open(pr.mesh, FileAccess.READ)  # (a baked shell needs no kit: it used to build one, with none of the car's flags, to measure)
+		var b := _baked_shell(pr.mesh, f.get_length() if f else -1, Data.SHAPES[id])
+		if not b.is_empty():
+			_shells[id] = b
+			return b
 	var kit := _kit(id, {})
 	var shell := _shell_of(kit.body, kit.surfaces, Data.SHAPES[id])
 	_shells[id] = shell
@@ -1979,7 +2106,55 @@ static func _clamp_mesh(m: ArrayMesh, shell: Dictionary) -> ArrayMesh:
 			vs[vi] = _inside_shell(vs[vi], shell)
 		arr[Mesh.ARRAY_VERTEX] = vs
 		out.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+		_keep_arrays(out, Mesh.PRIMITIVE_TRIANGLES, arr)
 	return out
+
+
+## The measured shells of the imported bodies (see _shell_of), made once, here, by tools/bake_shells.gd and shipped with the
+## game: measuring one means reading a body's whole mesh back from the graphics card and going over every one of its
+## triangles in script, which took 60 to 150 ms for each body (a boss's: 0.2 to 0.7 s on a phone, in the middle of a race).
+## A shell is for a mesh file and the size of the car (what it was measured for), and is only used if the file is the size
+## it was when it was measured.
+const SHELLS_FILE := "res://assets/models/car_shells.shells"
+const SHELLS_VERSION := 1
+static var bake_mode := false      # tools/bake_shells.gd: measure every shell afresh, and note it in baked_now
+static var baked_now := {}
+static var _baked := {}
+static var _baked_ready := false
+
+
+static func _shell_key(mesh_path: String, sh: Dictionary) -> String:
+	return "%s|%.3f|%.3f" % [mesh_path, float(sh.l), float(sh.w)]
+
+
+## The baked shell of a mesh file (`size` bytes long) for a car of this size, or {} if there is none to be trusted.
+static func _baked_shell(mesh_path: String, size: int, sh: Dictionary) -> Dictionary:
+	if bake_mode:
+		return {}
+	if not _baked_ready:
+		_baked_ready = true
+		var f := FileAccess.open_compressed(SHELLS_FILE, FileAccess.READ, FileAccess.COMPRESSION_ZSTD)
+		if f != null:
+			var d: Variant = f.get_var()
+			if d is Dictionary and int((d as Dictionary).get("version", 0)) == SHELLS_VERSION:
+				_baked = (d as Dictionary).get("shells", {})
+	var e: Variant = _baked.get(_shell_key(mesh_path, sh))
+	if e is Dictionary and int((e as Dictionary).get("size", -1)) == size:
+		return e
+	return {}
+
+
+## The shell of a body made from a mesh file: the baked one, or measured now (and noted, when baking).
+static func _shell_of_file(mesh_path: String, size: int, body: ArrayMesh, names: Array, sh: Dictionary) -> Dictionary:
+	var b := _baked_shell(mesh_path, size, sh)
+	if not b.is_empty():
+		return b
+	var shell := _shell_of(body, names, sh)
+	if bake_mode:
+		var e := shell.duplicate()
+		e["size"] = size
+		baked_now[_shell_key(mesh_path, sh)] = e
+	return shell
 
 
 static func _shell_of(body: ArrayMesh, names: Array, sh: Dictionary) -> Dictionary:

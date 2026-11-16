@@ -15,22 +15,106 @@ var _acc := {}
 var _last := 0
 var _tri_cache := {}
 
+# --hitch=MS: every frame that takes MS milliseconds or more, from one end of a frame to the next (so the engine's own
+# work and the wait for the screen are in it, not only the script's), is printed with where the script's time went and
+# what happened in it: whatever the game noted with PerfProbe.note() since the last frame (a car being built, the
+# save being written, a song being loaded...). At the end a summary says how often and how badly the frame hitched and
+# what was going on in the frames that did.
+static var on := false         # (static, so that any script can note an event)
+static var events: Array = []  # [what, milliseconds] noted since the last frame ended
+var hitch_ms := 0.0
+var skip_frames := 120         # (the first frames of a run load things: they are not counted)
+var _cur := {}
+var _prev_end := 0
+var _spikes: Array = []        # [frame, interval ms, [events]] for every hitch
+var _gaps: Array = []          # every frame's interval, ms (after the first skip_frames)
+
+
+## A time to give to note() (0 when nothing is being measured).
+static func t() -> int:
+	return Time.get_ticks_usec() if on else 0
+
+
+## Something that took a while just happened: how long since t0 (a PerfProbe.t()).
+static func note(what: String, t0: int) -> void:
+	if on:
+		var ms := float(Time.get_ticks_usec() - t0) / 1000.0
+		if ms >= 0.25:
+			events.append([what, ms])
+
 
 func begin() -> void:
 	_last = Time.get_ticks_usec()
+	_cur = {}
 
 
 ## Charge the time since the last mark (or begin) to `section`.
 func mark(section: String) -> void:
 	var n := Time.get_ticks_usec()
 	_acc[section] = int(_acc.get(section, 0)) + (n - _last)
+	_cur[section] = int(_cur.get(section, 0)) + (n - _last)
 	_last = Time.get_ticks_usec()
 
 
 ## True when a report is due.
 func end_frame() -> bool:
 	frames += 1
+	if hitch_ms > 0.0:
+		var now := Time.get_ticks_usec()
+		if frames == 1 and not events.is_empty():
+			var first := []
+			var total := 0.0
+			for e in events:
+				first.append("%s %.1f" % [e[0], e[1]])
+				total += float(e[1])
+			print("[hitch] before the first frame (the start of the run: not counted below): %s" % ", ".join(first))
+		if _prev_end > 0 and frames > skip_frames:
+			var gap := float(now - _prev_end) / 1000.0
+			_gaps.append(gap)
+			if gap >= hitch_ms:
+				var script_us := 0
+				var parts := []
+				var keys := _cur.keys()
+				keys.sort_custom(func(a: String, b: String) -> bool: return _cur[a] > _cur[b])
+				for k in keys:
+					script_us += int(_cur[k])
+					if int(_cur[k]) >= 500:
+						parts.append("%s %.1f" % [k, float(_cur[k]) / 1000.0])
+				var ev := []
+				for e in events:
+					ev.append("%s %.1f" % [e[0], e[1]])
+				_spikes.append([frames, gap, events.duplicate()])
+				print("[hitch] frame %d: %.1f ms (the script %.1f ms: %s; the engine says process %.1f, physics %.1f, %d objects, %d nodes)%s" % [frames, gap, float(script_us) / 1000.0, ", ".join(parts),
+					Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0, Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0,
+					int(Performance.get_monitor(Performance.OBJECT_COUNT)), int(Performance.get_monitor(Performance.OBJECT_NODE_COUNT)), (" | " + ", ".join(ev)) if not ev.is_empty() else ""])
+		_prev_end = Time.get_ticks_usec()
+		events.clear()
 	return frames % every == 0
+
+
+## How often the frame hitched, and what was going on when it did.
+func summary() -> String:
+	if hitch_ms <= 0.0 or _gaps.is_empty():
+		return ""
+	var g := _gaps.duplicate()
+	g.sort()
+	var by := {}
+	var bare := 0
+	for sp in _spikes:
+		if (sp[2] as Array).is_empty():
+			bare += 1
+		var seen := {}
+		for e in sp[2]:
+			if not seen.has(e[0]):
+				seen[e[0]] = true
+				by[e[0]] = [int((by.get(e[0], [0, 0.0]) as Array)[0]) + 1, maxf(float((by.get(e[0], [0, 0.0]) as Array)[1]), float(sp[1]))]
+	var names := by.keys()
+	names.sort_custom(func(a: String, b: String) -> bool: return by[a][0] > by[b][0])
+	var parts := []
+	for n in names:
+		parts.append("%s in %d (up to %.0f ms)" % [n, by[n][0], by[n][1]])
+	return "[hitch] %d frames measured: median %.1f ms, 99th percentile %.1f, worst %.1f; %d took %.0f ms or more, %d of those with nothing noted in them%s" % [
+		g.size(), g[g.size() / 2], g[int(g.size() * 0.99)], g[g.size() - 1], _spikes.size(), hitch_ms, bare, ("; noted in them: " + ", ".join(parts)) if not parts.is_empty() else ""]
 
 
 func _mesh_tris(m: Mesh) -> int:

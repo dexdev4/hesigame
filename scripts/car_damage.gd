@@ -11,7 +11,12 @@ extends RefCounted
 ##
 ## The work is done on the engine's worker threads, a few thousand vertices at a time in parallel (`step` starts a
 ## batch and collects it, without ever waiting), so a hard knock never makes a long frame: the dents appear a moment
-## after the blow, like a crumple. All the dents waiting are pressed in together, one pass over the vertices.
+## after the blow, like a crumple. All the dents waiting are pressed in together, one pass over the vertices. What is
+## left for the main thread is shared out a mesh a frame: a copy of one of the car's meshes (from the arrays the kit's
+## mesh was made from, kept for this: reading a mesh back from the graphics card stops everything until the card has
+## caught up, and used to be done for every mesh of the car at the instant of the blow), and putting the pressed
+## vertices into one mesh. A mesh is not uploaded to the card until its first dents are in it, and one that no dent of
+## a batch touched is not uploaded again.
 ##
 ## The dents can be written out (`state`) and put back (`restore`), which is how a car keeps its damage from one
 ## run to the next, until it is paid for at the garage.
@@ -35,10 +40,14 @@ var sides := 0.0
 var lamps_out := false
 var smoking := false
 var _queue: Array = []   # dents waiting to be pressed in
-var _targets: Array = []  # {mi: MeshInstance3D, mesh: ArrayMesh, surfs: [{arrays: Array, prim: int}], inv: Transform3D, batch: Array}
-var _prepared := false
+var _targets: Array = []  # {mi: MeshInstance3D, mesh: ArrayMesh (its private copy, empty until its dents are first put in), surfs: [{arrays: Array, prim: int}], inv: Transform3D, batch: Array, moved: bool}
+var _prepared := false    # a private copy of every mesh of the car has been made
+var _prep_list: Array = []  # the car's meshes, and how many have been copied
+var _prep := 0
 var _group := -1          # the worker task pressing the current batch (-1: none)
 var _jobs: Array = []     # [target, surface, first vertex, one past the last] for the current batch
+var _touched := PackedByteArray()  # for each target, whether a job of the current batch moved or darkened anything in it
+var _put := -1            # while a finished batch is being put into the meshes: the next target to put in (-1: not doing so)
 
 
 func _init(m: CarModel) -> void:
@@ -122,7 +131,7 @@ func _account(p: Vector3, a: float) -> void:
 
 
 func busy() -> bool:
-	return not _queue.is_empty() or _group >= 0
+	return not _queue.is_empty() or _group >= 0 or _put >= 0
 
 
 ## The dents as plain numbers (a list of [x, y, z, push x, push y, push z, radius, depth]), to be saved.
@@ -154,8 +163,8 @@ func restore(rows: Array) -> void:
 
 
 ## Carry on pressing dents. Starts a batch for everything waiting, and when a batch has finished puts it into the
-## meshes the car draws. Never waits (unless `block`, for tests): the game calls it every frame. True while there
-## is more to do.
+## meshes the car draws, one mesh a frame. Never waits (unless `block`, for tests): the game calls it every frame. True
+## while there is more to do.
 func step(_budget_us := 0, block := false) -> bool:
 	if _group >= 0:
 		if not block and not WorkerThreadPool.is_group_task_completed(_group):
@@ -163,8 +172,24 @@ func step(_budget_us := 0, block := false) -> bool:
 		WorkerThreadPool.wait_for_group_task_completion(_group)
 		_group = -1
 		_jobs = []
-		if is_instance_valid(model):
-			_rebuild()
+		for ti in mini(_touched.size(), _targets.size()):
+			if _touched[ti] != 0:
+				(_targets[ti] as Dictionary).moved = true
+		_put = 0
+	if _put >= 0:
+		if not is_instance_valid(model):
+			_put = -1
+		else:
+			if block:
+				while _put < _targets.size():
+					_put_in(_put)
+					_put += 1
+			elif _put < _targets.size():
+				_put_in(_put)
+				_put += 1
+				if _put < _targets.size():
+					return true
+			_put = -1
 			done.emit()
 	if _queue.is_empty():
 		return false
@@ -172,34 +197,57 @@ func step(_budget_us := 0, block := false) -> bool:
 		_queue.clear()
 		return false
 	if not _prepared:
-		_prepare()  # (copying the meshes is a frame's work on its own)
-		return true
+		if block:
+			while not _prepared:
+				_prepare_next()
+		else:
+			_prepare_next()  # (a mesh a frame)
+			return true
 	_start_batch()
 	if block:
 		return step(0, true)
 	return true
 
 
-## Private copies of the shell's meshes (the kit's meshes are shared by every car of its kind).
-func _prepare() -> void:
-	_prepared = true
-	for mi in model.damage_targets():
-		if mi == null or mi.mesh == null or not mi.mesh is ArrayMesh:
-			continue
-		var src := mi.mesh as ArrayMesh
-		var surfs: Array = []
-		var copy := ArrayMesh.new()
-		var overrides: Array = []
-		for s in src.get_surface_count():
-			var arrays := src.surface_get_arrays(s)
-			var prim := src.surface_get_primitive_type(s)
-			surfs.append({"arrays": arrays, "prim": prim})
-			copy.add_surface_from_arrays(prim, arrays)
-			overrides.append(mi.get_surface_override_material(s))
-		mi.mesh = copy
-		for s in overrides.size():
-			mi.set_surface_override_material(s, overrides[s])
-		_targets.append({"mi": mi, "mesh": copy, "surfs": surfs, "inv": mi.transform.affine_inverse(), "batch": []})
+## Make a private copy of the next of the car's meshes (the kit's meshes are shared by every car of its kind), from the
+## arrays the kit's mesh was made from: only the copy of the arrays is made here; it is not given to the card until its
+## first dents are pressed in (see _put_in), and until then the car goes on drawing the kit's mesh.
+func _prepare_next() -> void:
+	if _prep == 0 and _prep_list.is_empty():
+		_prep_list = model.damage_targets()
+	if _prep < _prep_list.size():
+		var mi: MeshInstance3D = _prep_list[_prep]
+		_prep += 1
+		if mi != null and is_instance_valid(mi) and mi.mesh is ArrayMesh:
+			var t0 := PerfProbe.t()
+			var surfs: Array = []
+			for src: Array in CarModel.pristine(mi.mesh as ArrayMesh):
+				surfs.append({"arrays": _copy_arrays(src[1]), "prim": int(src[0])})
+			_targets.append({"mi": mi, "mesh": ArrayMesh.new(), "surfs": surfs, "inv": mi.transform.affine_inverse(), "batch": [], "moved": false})
+			PerfProbe.note("damage: copy a mesh's arrays", t0)
+	if _prep >= _prep_list.size():
+		_prepared = true
+
+
+## A copy of a mesh's arrays that can be written to without changing the original (packed arrays are shared by whoever holds them).
+static func _copy_arrays(src: Array) -> Array:
+	var out := src.duplicate()
+	for k in out.size():
+		var v: Variant = out[k]
+		match typeof(v):
+			TYPE_PACKED_VECTOR3_ARRAY:
+				out[k] = (v as PackedVector3Array).duplicate()
+			TYPE_PACKED_COLOR_ARRAY:
+				out[k] = (v as PackedColorArray).duplicate()
+			TYPE_PACKED_VECTOR2_ARRAY:
+				out[k] = (v as PackedVector2Array).duplicate()
+			TYPE_PACKED_INT32_ARRAY:
+				out[k] = (v as PackedInt32Array).duplicate()
+			TYPE_PACKED_FLOAT32_ARRAY:
+				out[k] = (v as PackedFloat32Array).duplicate()
+			TYPE_PACKED_BYTE_ARRAY:
+				out[k] = (v as PackedByteArray).duplicate()
+	return out
 
 
 ## Everything waiting becomes one batch of jobs for the worker threads.
@@ -207,6 +255,8 @@ func _start_batch() -> void:
 	var waiting := _queue
 	_queue = []
 	_jobs = []
+	_touched.resize(_targets.size())
+	_touched.fill(0)
 	for ti in _targets.size():
 		var tg: Dictionary = _targets[ti]
 		var inv: Transform3D = tg.inv
@@ -248,6 +298,7 @@ func _work(idx: int) -> void:
 		cols = cv
 		has_c = true
 	var batch: Array = tg.batch
+	var touched := false
 	for i in range(int(job[2]), int(job[3])):
 		var v := verts[i]
 		var moved := false
@@ -284,27 +335,39 @@ func _work(idx: int) -> void:
 				moved = true
 		if moved:
 			verts[i] = v
+			touched = true
 			if has_n and have_nn:
 				norms[i] = nn
 		if has_c and shade < 0.9999:
 			var col := cols[i]
 			cols[i] = Color(col.r * shade, col.g * shade, col.b * shade, col.a)
+			touched = true
+	if touched:
+		_touched[int(job[0])] = 1  # (every job writes its own target's flag, and only ever the one value)
 
 
-## Put the changed vertices into the meshes the cars draw.
-func _rebuild() -> void:
-	for tg in _targets:
-		var mesh: ArrayMesh = tg.mesh
-		var mi: MeshInstance3D = tg.mi
-		# a MeshInstance3D forgets the materials it overrides as soon as its mesh loses its surfaces: keep them
-		var keep: Array = []
-		if is_instance_valid(mi):
-			for s in mi.get_surface_override_material_count():
-				keep.append(mi.get_surface_override_material(s))
-		mesh.clear_surfaces()
-		for sf in tg.surfs:
-			mesh.add_surface_from_arrays(sf.prim, sf.arrays)
-		if is_instance_valid(mi):
-			for s in mini(keep.size(), mi.get_surface_override_material_count()):
-				if keep[s] != null:
-					mi.set_surface_override_material(s, keep[s])
+## Put the pressed vertices of one of the car's meshes into the mesh the car draws (given to the card now, if it is the first
+## time: until then the car drew the kit's mesh), if a dent of the batch touched it.
+func _put_in(ti: int) -> void:
+	var tg: Dictionary = _targets[ti]
+	if not bool(tg.moved):
+		return
+	tg.moved = false
+	var t0 := PerfProbe.t()
+	var mesh: ArrayMesh = tg.mesh
+	var mi: MeshInstance3D = tg.mi
+	# a MeshInstance3D forgets the materials it overrides as soon as its mesh loses its surfaces or is changed: keep them
+	var keep: Array = []
+	if is_instance_valid(mi):
+		for s in mi.get_surface_override_material_count():
+			keep.append(mi.get_surface_override_material(s))
+	mesh.clear_surfaces()
+	for sf in tg.surfs:
+		mesh.add_surface_from_arrays(sf.prim, sf.arrays)
+	if is_instance_valid(mi):
+		if mi.mesh != mesh:
+			mi.mesh = mesh
+		for s in mini(keep.size(), mi.get_surface_override_material_count()):
+			if keep[s] != null:
+				mi.set_surface_override_material(s, keep[s])
+	PerfProbe.note("damage: put a mesh in", t0)

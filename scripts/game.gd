@@ -379,6 +379,16 @@ func _ready() -> void:
 			perf = PerfProbe.new()
 			if a.begins_with("--perf="):
 				perf.every = maxi(1, int(a.substr(7)))
+		if a.begins_with("--hitch="):  # print every frame that takes this many ms or more, and what was happening in it (test aid)
+			if perf == null:
+				perf = PerfProbe.new()
+				perf.every = 1 << 30
+			perf.hitch_ms = float(a.substr(8))
+			if OS.get_environment("HITCH_ALL") != "":
+				perf.skip_frames = 0  # (HITCH_ALL=1: the first frames count too: what a run's start costs)
+			if OS.get_environment("HITCH_SKIP") != "":
+				perf.skip_frames = int(OS.get_environment("HITCH_SKIP"))
+			PerfProbe.on = true
 		if a.begins_with("--seed="):  # the same random world every run (test aid; with --fixed-fps a run repeats exactly)
 			seed(int(a.substr(7)))
 		if a.begins_with("--shot-frame="):  # FRAME:PATH: a screenshot at that frame (test aid)
@@ -921,10 +931,12 @@ func _spawn_car(shape: String, lane: int, z: float, v_override := 0.0) -> Vehicl
 	c.ahead = z > player.z + player.l
 	c.b_ahead = boss != null and z > boss.z + boss.l
 	c.model = CarModel.new()
+	var t_build := PerfProbe.t()
 	if c.truck:
 		c.model.build(shape, Color(Data.TRUCK_BOX_COLORS.pick_random()), Color(Data.TRUCK_CAB_COLORS.pick_random()), CarModel.traffic_style(shape))
 	else:
 		c.model.build(shape, Color(Data.TRAFFIC_COLORS.pick_random()), Color("#b5322a"), CarModel.traffic_style(shape))
+	PerfProbe.note("build traffic " + shape, t_build)
 	c.model.position = Vector3(c.x, 0.0, -(c.z - player.z))  # place before it is first drawn
 	add_child(c.model)
 	_register(c)
@@ -1552,7 +1564,10 @@ func _start_boss() -> void:
 	boss.tlane = boss.lane
 	boss.title = bi.full
 	boss.model = CarModel.new()
+	var t_build := PerfProbe.t()
 	boss.model.build(car.shape, Color(car.color), Color("#b5322a"), car.style)
+	PerfProbe.note("build boss " + String(bi.car), t_build)
+	var t_tag := PerfProbe.t()
 	var tag := Label3D.new()
 	tag.text = String(bi.full).to_upper()
 	tag.font_size = 72
@@ -1566,6 +1581,7 @@ func _start_boss() -> void:
 	boss.model.add_child(tag)
 	boss.model.position = Vector3(boss.x, 0.0, -(boss.z - player.z))  # place before it is first drawn
 	add_child(boss.model)
+	PerfProbe.note("boss tag and add_child", t_tag)
 	_register(boss)
 	run.phase = "boss"
 	run.b_dist = 0.0
@@ -2854,6 +2870,50 @@ func _set_route(i: int) -> void:
 	scenery.set_biome(land)
 
 
+# ---------------------------------------------------------------- things built before they are needed
+
+## Work that would stop the game for a moment if it were first done when it was needed: building the body of a kind of
+## car (a boss's, a van's) or the wheels of a kind of car, the first time one comes along. It is done while the player is in the
+## garage, a piece a frame (`_warm_step`), and what is left when a run starts is done then, before its first frame
+## (`_warm_finish`), so that none of it happens in the middle of a race. (A boss's body took 0.2 to 0.7 s to build, a
+## wheel 4 ms, as the first one of every wheel, rim style and colour the session had not met came along: on a phone,
+## about four times that, and the game froze for it.)
+var _warm: Array = []
+var _warm_made := false
+
+
+func _warm_up_list() -> void:
+	_warm_made = true
+	var shapes := ["sedan", "hatch", "suv", "van", "truck"]
+	for shape in shapes:
+		_warm.append(CarModel.warm_kit.bind(shape))
+	for b in Data.BOSSES:
+		var car := Data.car_by_id(b.car)
+		_warm.append(CarModel.warm_kit.bind(String(car.shape), car.style))
+		_warm.append(CarModel.warm_wheels.bind(String(car.shape), String(car.style.get("rim", "steel" if car.shape == "truck" else "5spoke")), car.style))
+	for shape in shapes:
+		for style in CarModel.traffic_rims(shape):
+			_warm.append(CarModel.warm_wheels.bind(shape, style))
+
+
+## Build things from the list for about `budget_us` microseconds (at least one).
+func _warm_step(budget_us: int) -> void:
+	if not _warm_made:
+		_warm_up_list()
+	var t0 := Time.get_ticks_usec()
+	while not _warm.is_empty():
+		var t1 := PerfProbe.t()
+		(_warm.pop_front() as Callable).call()
+		PerfProbe.note("warm-up item", t1)
+		if Time.get_ticks_usec() - t0 >= budget_us:
+			break
+
+
+## Everything left on the list now (a run is about to start).
+func _warm_finish() -> void:
+	_warm_step(1 << 40)
+
+
 func _start_run() -> void:
 	_odo_next = _odo_every
 	if Save.wrecked(String(Save.data.selected)) and not godmode:
@@ -2863,6 +2923,7 @@ func _start_run() -> void:
 		elif _wrecked_block():
 			return
 	_leave_garage()
+	_warm_finish()
 	_set_route(int(Save.data.get("route_sel", 0)))
 	_boss_music(false, 0.5)
 	_apply_time(_hour)
@@ -3098,7 +3159,9 @@ func _start_cop(gap := COP_GAP, from_trap := false) -> void:
 	_cop_drv.reset(boss)
 	_cop_reversing = false
 	boss.model = CarModel.new()
+	var t_build := PerfProbe.t()
 	boss.model.build("sedan", Color("#f2f3f5"), Color("#b5322a"), {"rim": "steel", "badge": "POLICE", "plate": "PD 911"})
+	PerfProbe.note("build police car", t_build)
 	boss.model.add_lightbar(sh.t)
 	var tag := Label3D.new()
 	tag.text = "POLICE"
@@ -3567,10 +3630,12 @@ func _apply_time(hour: float, part := -1) -> void:
 	var num := func(n: String) -> float: return lerpf(float(a[n]), float(b[n]), f)
 	if part < 0 or part == 0:
 		# the sun crosses from east to west by day; the moon hangs high at night
+		var t_sun := PerfProbe.t()
 		var day_t := clampf((hour - 6.0) / 14.0, 0.0, 1.0)
 		_sun.rotation_degrees = Vector3(-num.call("elev"), lerpf(-115.0, 75.0, day_t), 0.0)
 		_sun.light_color = col.call("sun")
 		_sun.light_energy = num.call("e")
+		PerfProbe.note("time: sun", t_sun)
 	var sm := _sky.sky_material as ProceduralSkyMaterial
 	var top: Color
 	var hor: Color
@@ -3578,6 +3643,7 @@ func _apply_time(hour: float, part := -1) -> void:
 		top = col.call("top")
 		hor = col.call("hor")
 	if part < 0 or part == 1:
+		var t_sky := PerfProbe.t()
 		if sm:
 			sm.sky_top_color = top
 			sm.sky_horizon_color = hor
@@ -3589,16 +3655,21 @@ func _apply_time(hour: float, part := -1) -> void:
 		_lights = num.call("lights")
 		_env.adjustment_saturation = lerpf(1.12, 0.9, _lights)
 		_env.glow_intensity = lerpf(0.45, 1.0, _lights)  # lamps bloom more in the dark
+		PerfProbe.note("time: sky and environment", t_sky)
 	if part < 0 or part == 2:
+		var t_night := PerfProbe.t()
 		CarModel.set_night(smoothstep(0.0, 1.0, _lights), _sun.global_transform.basis.z.normalized(), top, hor)
+		PerfProbe.note("time: CarModel.set_night (%d materials)" % CarModel._mats.size(), t_night)
 		for sp in _head_spots:
 			if is_instance_valid(sp):
 				sp.visible = _lights > 0.02
 				sp.light_energy = 6.0 * smoothstep(0.0, 1.0, _lights)
 	if part < 0 or part == 3:
+		var t_sc := PerfProbe.t()
 		if scenery:
 			scenery.set_sky_tint(col.call("far"), col.call("haze"))
 			scenery.set_night(smoothstep(0.3, 1.0, _lights))
+		PerfProbe.note("time: scenery tint and night", t_sc)
 		if sm and sm.sky_cover:
 			sm.sky_cover_modulate = Color(1, 1, 1, smoothstep(0.7, 1.0, _lights) * 0.9)  # stars
 		_time_applied = hour
@@ -3804,6 +3875,8 @@ func _update_frame_cap() -> void:
 func _process(delta: float) -> void:
 	_frame += 1
 	_update_frame_cap()
+	if (state == S.MENU or state == S.GARAGE) and showroom == "" and not autotest:
+		_warm_step(3000)  # (the garage is where the things a run will need are built: see _warm_up_list)
 	if perf:
 		perf.begin()
 	if showroom != "":
@@ -3888,12 +3961,18 @@ func _process(delta: float) -> void:
 		perf.mark("replay record")
 	if state == S.REFUEL and run:
 		_pump_frame(delta)
+	var t_p := PerfProbe.t()
 	_probe_gfx(delta)
+	PerfProbe.note("_probe_gfx", t_p)
+	t_p = PerfProbe.t()
 	_damage_work(delta)
+	PerfProbe.note("_damage_work", t_p)
 	if _test_dent != "" and garage.car != null and garage.active and _frame > 8:
 		_apply_test_dents()
 	if _sim_running():
+		t_p = PerfProbe.t()
 		_update_time(delta)
+		PerfProbe.note("_update_time", t_p)
 	if perf:
 		perf.mark("time of day")
 	_post_speed()
@@ -3958,6 +4037,7 @@ func _process(delta: float) -> void:
 					Time.get_ticks_msec() / 1000.0, run.stage, run.phase, run.lives, run.score, player.v * 3.6, run.dist, traffic.size()])
 		if crash:
 			print("[autotest] crash t=%.2f x=%.2f vel=%s yaw=%.2f roll=%.2f rr=%.2f air=%.2f settled=%s" % [crash.t, player.x, crash.vel, crash.yaw, crash.roll, crash.roll_rate, crash.air, crash.settled])
+	_hitch_monitor()
 	if demo_pops and run:
 		_demo_t += delta
 		if _demo_t > 0.4:
@@ -3985,6 +4065,57 @@ func _print_state() -> void:
 		r = " | score=%d lives=%d dist=%.4f stage=%d phase=%s combo=%d fuel=%.4f" % [run.score, run.lives, run.dist, run.stage, run.phase, run.combo, run.fuel]
 	print("[state] f=%d player x=%.6f z=%.6f v=%.6f vx=%.6f yaw=%.6f course=%.6f | traffic n=%d x=%.6f z=%.6f v=%.6f vx=%.6f%s" % [
 		_frame, player.x, player.z, player.v, player.vx, player.yaw, player.course, traffic.size(), sx, sz, sv, svx, r])
+
+
+# ---------------------------------------------------------------- the hitch log (Settings > DEV > Hitch log)
+
+const HITCH_LOG_MS := 45.0
+var _hm_last := 0       # when the last frame ended, microseconds
+var _hm_count := 0      # how many frames took HITCH_LOG_MS or more since it was switched on, and the worst
+var _hm_worst := 0.0
+var _hm_until := 0.0    # the message stays up until then (seconds on the clock)
+
+
+## With the developer tool on, says on the screen when a frame takes much longer than it should (the time from one frame
+## to the next, so the graphics card and the phone are in it, not only the game) and what the game noted in it (see
+## PerfProbe.note: a car being built, a mesh being put in, the save being written). A frame with nothing noted was the
+## engine, the graphics card or the phone: a shader being compiled the first time something is drawn, say.
+func _hitch_monitor() -> void:
+	var on := bool(Save.setting("dev_hitch"))
+	PerfProbe.on = on or (perf != null and perf.hitch_ms > 0.0)
+	if not on:
+		_hm_last = 0
+		if hud.hitch_label.visible:
+			hud.hitch_label.visible = false
+		if not (perf != null and perf.hitch_ms > 0.0):
+			PerfProbe.events.clear()
+		return
+	var now := Time.get_ticks_usec()
+	var clock := float(Time.get_ticks_msec()) / 1000.0
+	# (a frame is expected to take as long as the frame rate cap says: a hitch is well over that)
+	var limit := maxf(HITCH_LOG_MS, 1500.0 / float(_cap_now) if _cap_now > 0 else 0.0)
+	if _hm_last > 0 and _frame > 120 and state == S.PLAY:
+		var gap := float(now - _hm_last) / 1000.0
+		if gap >= limit and gap < 20000.0:
+			_hm_count += 1
+			_hm_worst = maxf(_hm_worst, gap)
+			var ev: Array = PerfProbe.events.duplicate()
+			ev.sort_custom(func(a: Array, b: Array) -> bool: return float(a[1]) > float(b[1]))
+			var what := ""  # (what the game noted that was big enough to matter: a car being built, a mesh being put in...)
+			var all := ""
+			for e: Array in ev.slice(0, 4):
+				var one := "%s %.0f" % [String(e[0]).strip_edges().trim_prefix("_").replace("_", " "), float(e[1])]
+				all += ("; " if all != "" else "") + "%s %.1f" % [String(e[0]).strip_edges(), float(e[1])]
+				if float(e[1]) >= maxf(2.0, gap * 0.1) and what.length() < 60:
+					what += (" | " if what != "" else "") + one
+			hud.hitch_label.text = "HITCH %.0f ms\n%s\n%d so far, the worst %.0f ms" % [gap, what if what != "" else "none of the game's work: the engine, graphics or phone", _hm_count, _hm_worst]
+			hud.hitch_label.visible = true
+			_hm_until = clock + 7.0
+			print("[hitch] %.0f ms in a run (noted: %s)" % [gap, all if all != "" else "nothing"])
+	_hm_last = Time.get_ticks_usec()
+	PerfProbe.events.clear()
+	if hud.hitch_label.visible and clock > _hm_until:
+		hud.hitch_label.visible = false
 
 
 func _check_shots() -> void:
@@ -4666,6 +4797,8 @@ func _notification(what: int) -> void:
 func _exit_tree() -> void:
 	if autotest and _tb.steps > 0:
 		print("[autotest] " + _brake_line())  # (--quit-after stops the engine without a word: this is where a test run's totals come out)
+	if perf and perf.hitch_ms > 0.0:
+		print(perf.summary())
 	_flush_damage()
 	CarDamage.finish_all()  # (no batch of dents is left on the worker threads when the game closes)
 

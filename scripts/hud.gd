@@ -66,6 +66,7 @@ var _over := {}
 var garage_tab := "cars"
 var _solid: Array[Control] = []  # panels on sheet screens (drags elsewhere turn the garage camera)
 var fps_label: Label
+var hitch_label: Label  # (the developer tool "Hitch log": the last frame that took too long, and what was in it)
 var _fuel_bar: ProgressBar
 var _fuel_val: Label
 var _trk: PanelContainer      # the fuel stop tracker: top right under the buttons, above the notification bands
@@ -140,6 +141,15 @@ func _ready() -> void:
 	fps_label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.8))
 	fps_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(fps_label)
+	hitch_label = _label("", 20, Color("#ffb199"), mono_font)
+	hitch_label.position = Vector2(22, 0)
+	hitch_label.anchor_top = 0.19
+	hitch_label.anchor_bottom = 0.19
+	hitch_label.add_theme_color_override("font_outline_color", Color(0.1, 0.0, 0.0, 0.95))
+	hitch_label.add_theme_constant_override("outline_size", 6)
+	hitch_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hitch_label.visible = false
+	root.add_child(hitch_label)
 	get_viewport().size_changed.connect(_apply_safe_area)
 	_apply_safe_area()
 
@@ -2945,6 +2955,7 @@ func _build_settings() -> void:
 	pdev.add_child(_wrap("For testing. Unlocks change your saved progress.", 20, MUTED))
 	_option_row(pdev, "dev_lives", "Infinite lives", "")
 	_option_row(pdev, "dev_fps", "FPS counter", "")
+	_option_row(pdev, "dev_hitch", "Hitch log", "While you drive, says in the corner when the game stops for a moment: how long, and what it was doing. Say what it shows.")
 	_option_row(pdev, "dev_hitbox", "Show hit boxes", "")
 	var dev := GridContainer.new()
 	dev.columns = 2
@@ -3004,7 +3015,7 @@ func render_settings() -> void:
 		"fps_cap": {0: "SCREEN", 60: "60 FPS", 30: "30 FPS"}.get(int(Save.setting("fps_cap")), "SCREEN"),
 		"mirror": "ON" if Save.setting("mirror") else "OFF",
 		"dev_lives": "ON" if Save.setting("dev_lives") else "OFF", "dev_fps": "ON" if Save.setting("dev_fps") else "OFF",
-		"dev_hitbox": "ON" if Save.setting("dev_hitbox") else "OFF",
+		"dev_hitbox": "ON" if Save.setting("dev_hitbox") else "OFF", "dev_hitch": "ON" if Save.setting("dev_hitch") else "OFF",
 	}
 	for key in states:
 		var b: Button = _set["t_" + key]

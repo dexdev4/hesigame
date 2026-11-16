@@ -188,9 +188,10 @@ const MAX_LIVES := 6
 
 # Fuel. The cheaper cars run on regular, the middle ones on mid-grade and the
 # fastest on premium. Every station sets its own prices; on average mid-grade
-# costs $5 a litre more than regular and premium $15 more. How far a full tank
-# goes is the car's own `range` (km, driven flat out, longer driven gently); its
-# `tank` (litres) is what a fill costs.
+# costs $5 a litre more than regular and premium $15 more at the first stop of a
+# run, and every stop after it costs 5 to 25% more than the one before. How far a
+# full tank goes is the car's own `range` (km, driven flat out, longer driven
+# gently); its `tank` (litres) is what a fill costs.
 const FUEL_GRADES := {
 	"regular": {"name": "Regular", "short": "REG", "add": 0.0},
 	"mid": {"name": "Mid-grade", "short": "MID", "add": 5.0},
@@ -201,6 +202,26 @@ const STATION_EVERY_KM := 10.0 # a fuel stop about every 10 km
 const STATION_NAMES := ["Sunset Fuel", "Pump & Go", "Interstate Oil", "Blue Flame Gas", "Crossroads Fuel",
 	"Mesa Petroleum", "Lucky Stop", "Northstar Gas", "Prairie Pumps", "Redline Fuel", "Last Chance Gas", "Eagle Fuel"]
 const STATION_COLORS := ["#c62828", "#1f4e8c", "#2e7d32", "#ef6c00", "#6a1b9a", "#00838f", "#c9a227", "#37474f"]
+
+# Fuel gets dearer as a run goes on: every fuel stop asks 5 to 25% more than the one before it (see raised_price), whether
+# or not the run stopped at that one. The first stop of a run charges the prices above.
+const PRICE_RISE_MIN := 0.05
+const PRICE_RISE_MAX := 0.25
+
+
+## A price as a pump shows it: a whole number of tenths of a dollar and a 9 (3.49, 18.99).
+static func pump_price(v: float) -> float:
+	return snappedf(floorf(v * 10.0 + 1e-6) / 10.0 + 0.09, 0.01)
+
+
+## What a fuel stop asks when the one before asked `p` for the same grade and this stop's rise is `rise` (a fraction, 0.05
+## to 0.25): the pump price nearest p x (1 + rise), but never less than 5% or more than 25% above p, whatever the
+## rounding does (pump prices move in steps of ten cents, so $3.49 cannot rise by exactly 6%).
+static func raised_price(p: float, rise: float) -> float:
+	var k := roundf((p * (1.0 + rise) - 0.09) / 0.1)
+	var hi := floorf((p * (1.0 + PRICE_RISE_MAX) - 0.09) / 0.1 + 1e-6)
+	var lo := minf(ceilf((p * (1.0 + PRICE_RISE_MIN) - 0.09) / 0.1 - 1e-6), hi)
+	return snappedf(clampf(k, lo, hi) * 0.1 + 0.09, 0.01)
 
 ## Shrinks the distance between fuel stops (and the tank range with it). Only
 ## changed by the --stations test flag.

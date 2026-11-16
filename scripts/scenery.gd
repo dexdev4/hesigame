@@ -163,7 +163,7 @@ static func site_clear(pz: float, x: float) -> bool:
 	if x < Data.RAIL + 14.5 and rel > -GasStation.FORE - 25.0 and rel < GasStation.FORE + 15.0:
 		return true  # forecourt, kiosk and price pylon, back to the farm fence
 	for sign_rel in [-300.0, 0.0]:  # the approach signs (the one 600 m out lands on the previous site)
-		if x < Data.RAIL + 5.0 and absf(rel - sign_rel) < 8.0:
+		if x < Data.RAIL + 9.4 and absf(rel - sign_rel) < 10.0:
 			return true
 	return false
 
@@ -706,6 +706,8 @@ func set_night(k: float) -> void:
 	(M.lamp as StandardMaterial3D).albedo_color = Color("#9a9a92").lerp(Color("#f4ecc8"), k)
 	(M.amber as StandardMaterial3D).emission_energy_multiplier = lerpf(1.2, 4.0, k)
 	(M.amber_cut as ShaderMaterial).set_shader_parameter("glow", lerpf(1.2, 4.0, k))
+	for gs in _station_nodes:
+		gs.set_night(k)  # (the fuel stops' LED prices and lit signs)
 	if _pool_mat:
 		_pool_mat.albedo_color = Color(1, 1, 1, k)
 		_pools.visible = k > 0.02

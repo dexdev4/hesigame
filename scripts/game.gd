@@ -35,6 +35,10 @@ class Vehicle:
 	var id := 0
 	var yielding := false  # pulling over for the police
 	var hold_t := 0.0      # how long it has waited at the lane line for the lane it is moving into to clear
+	var acc := 0.0         # a traffic car's speeding up (+) or braking (-), m/s²: the pedal, which eases on and off (see _update_traffic)
+	var m_a := 0.0         # test aid (_brake_stats): that, as a passenger feels it (smoothed over about 0.12 s)...
+	var m_lvl := 0         # ...how hard it is braking by that (0 not, 1 hard: 7 m/s² or more, 2 beyond what a car can do: 10 or more)...
+	var m_fast := 99.0     # ...and how long ago it last went faster than 12 m/s
 	var shape_id := "sedan"  # which outline its hit box has (Data.SHAPES, HitShape)
 	var mass := 0.0          # how heavy it is in a crash against an ordinary car (CarStats.REF_KG): 0 = what its shape weighs (Wreck.MASS)
 	var wreck: Wreck = null  # once it has been hit: a rigid body that slides and spins by itself (no longer driven)
@@ -960,6 +964,14 @@ func _lane_open_for(c: Vehicle, nl: int, tight := false) -> bool:
 			if tight:
 				rear = 5.0 + clampf((o.v - c.v) * 0.6, 0.0, 9.0)
 				front = 6.0 + clampf((c.v - o.v) * 0.5, 0.0, 8.0)
+			else:
+				# (a car that moves over leaves the room the one coming up behind it, or the one it will come up
+				# behind, needs to settle in at the steady braking traffic starts with: the road they close by
+				# while it drifts across, about 2 s, and 0.2 m a (m/s)² for the braking itself)
+				var up := maxf(o.v - c.v, 0.0)
+				var down := maxf(c.v - o.v, 0.0)
+				rear += clampf(2.0 * up + 0.2 * up * up, 0.0, 80.0)
+				front += clampf(2.0 * down + 0.2 * down * down, 0.0, 80.0)
 			if o.z + o.l > c.z - rear and o.z < c.z + c.l + front:
 				return false
 	var others: Array[Vehicle] = [player]
@@ -1067,6 +1079,49 @@ func _make_way(c: Vehicle) -> float:
 	return best_v
 
 
+## Test aid: how hard the traffic brakes. A car that slams to a stop shows as a huge, brief deceleration (felt over about
+## a tenth of a second), as a stop from speed in under a second, or as its speed snapped to the car ahead's (`snap`, m/s).
+func _brake_stats(c: Vehicle, v_was: float, snap: float, dt: float, lead: Vehicle = null, gap := 0.0) -> void:
+	var a := (c.v - v_was) / dt
+	var af := c.m_a + (a - c.m_a) * minf(dt / 0.12, 1.0)
+	_tb.jerk = minf(_tb.jerk, (af - c.m_a) / dt)  # (the quickest the brake came on)
+	c.m_a = af
+	if v_was > 2.0:
+		_tb.steps += 1
+		if af < -1.0:
+			_tb.braking += 1
+		if af < -7.0:
+			_tb.hard += 1
+		_tb.worst = maxf(_tb.worst, -af)
+	var lvl := 2 if af < -10.0 else (1 if af < -7.0 else 0)
+	if lvl == 2 and c.m_lvl < 2:
+		_tb.slams += 1
+	if (lvl > c.m_lvl or snap > 0.5) and OS.get_environment("BRAKE_DEBUG") != "":  # (BRAKE_DEBUG=1: where and why the hard braking is)
+		var who := "nothing"
+		if lead:
+			who = "the player" if lead == player else ("the boss" if lead == boss else ("a wreck" if lead.wreck else "a car"))
+		print("[brake] t=%.1f lvl %d%s: car z %.1f x %.2f v %.1f -> %.1f acc %.1f (felt %.1f) lane %d>%d sig %.1f | lead %s gap %.1f v %.1f x %.2f lane %d>%d | player z %.1f v %.1f" % [
+			t, lvl, " SNAP %.1f" % snap if snap > 0.5 else "", c.z, c.x, v_was, c.v, c.acc, af, c.lane, c.tlane, c.sig_t, who, gap, lead.v if lead else 0.0,
+			lead.x if lead else 0.0, lead.lane if lead else 0, lead.tlane if lead else 0, player.z, player.v])
+	c.m_lvl = lvl
+	if snap > 0.5:
+		_tb.snaps += 1
+	if v_was > 12.0:
+		c.m_fast = 0.0
+	else:
+		c.m_fast += dt
+	if c.v < 0.5 and v_was >= 0.5 and c.m_fast < 0.7:
+		_tb.stops += 1
+
+
+func _brake_line() -> String:
+	return "traffic braking: %d car-steps moving, %.1f%% braking, %.2f%% harder than 7 m/s², %d slams (over 10 m/s²), hardest %.1f m/s², brake onset up to %.0f m/s³, %d last-resort snaps, %d stops from speed in under 0.7 s, cars overlapped %d frames" % [
+		_tb.steps, 100.0 * _tb.braking / maxf(_tb.steps, 1), 100.0 * _tb.hard / maxf(_tb.steps, 1), _tb.slams, _tb.worst, -_tb.jerk, _tb.snaps, _tb.stops, _overlaps]
+
+
+var _tdrv := CarDriver.traffic_driver()  # how the traffic's cars speed up and brake (all of them the same)
+var _p_v_prev := 0.0  # the player's speed a step ago, and how it is speeding up (-: braking), smoothed: what the cars behind read from its brake lights
+var _p_acc := 0.0
 var _everyone: Array[Vehicle] = []  # every vehicle on the road, rebuilt by _update_traffic
 var _ez := PackedFloat64Array()     # ...and for each of them where its rearmost point is and how far it reaches
 var _eh := PackedFloat64Array()     # sideways (arrays are read much faster than the vehicles' fields)
@@ -1097,20 +1152,22 @@ func _update_traffic(dt: float) -> void:
 	var eh := _eh
 	var cop_on := boss != null and boss.is_cop and run != null and run.phase == "cop"
 	var wrecks := 0
+	_p_acc += ((player.v - _p_v_prev) / dt - _p_acc) * minf(dt / 0.15, 1.0)
+	_p_v_prev = player.v
 	for c in traffic:
 		if c.wreck:
 			_update_wreck_car(c, dt)  # hit: it slides and spins by itself and is no longer driven
 			wrecks += 1
 			continue
-		# the car ahead in its way: the nearest that overlaps its lane. Only one less than 45 m ahead
-		# makes it do anything (so none further off than that, plus a metre to be sure, is looked at).
+		# the car ahead in its way: the nearest that overlaps its lane, as far ahead as it takes to settle in behind
+		# it at the steady braking a traffic car starts with (the faster it goes, the further: see look_ahead)
 		var gap := 1e9
 		var lead: Vehicle = null
 		var cx := c.x
 		var cz := c.z
 		var cend := cz + c.l
 		var cw2 := c.w / 2.0
-		var far := cend + 46.0
+		var far := cend + _tdrv.look_ahead(c.v)
 		for j in n_all:
 			var oz := ez[j]
 			if oz > cz and oz < far:
@@ -1126,14 +1183,36 @@ func _update_traffic(dt: float) -> void:
 			var yv := _make_way(c)  # (moves it over if it can, else the speed that lines it up with a gap)
 			if yv >= 0.0:
 				want = clampf(yv, 0.0, c.cruise * 1.2)
-		if lead and gap < 45.0:
-			want = minf(want, lead.v + (gap - 9.0) * 0.35)
-		var dv := want - c.v
-		c.v += minf(dv, 2.2 * dt) if dv > 0.0 else maxf(dv, -(9.0 if gap < 6.0 else 5.0) * dt)
-		if lead and gap < 0.6:
-			c.v = minf(c.v, lead.v)
-		c.v = maxf(0.0, c.v)
-		c.braking = dv < -0.6
+		# Speed: the bosses' law (CarDriver.accel_step). It speeds up smoothly to the pace it wants, and behind a slower
+		# car or one that has stopped brakes with one steady squeeze that begins early, as hard as the room it has needs
+		# and no harder, and eases onto the brake over a few tenths of a second: it never stops on the spot. (It used to
+		# look 46 m ahead and to snap its speed to the car's in front when it got within 60 cm, which was a stop dead.)
+		var v_was := c.v
+		var vc := 0.0
+		if lead:
+			# (it reads the brake lights of the car ahead: one that is braking will be going slower in half a second)
+			vc = lead.v
+			if lead == player:
+				vc += minf(_p_acc, 0.0) * 0.5
+			elif lead.wreck == null:
+				vc += minf(lead.acc, 0.0) * 0.5
+			vc = maxf(vc, 0.0)
+		c.acc = _tdrv.accel_step(c.v, c.acc, want, gap if lead else 1.0e9, vc, dt)
+		c.v = maxf(0.0, c.v + c.acc * dt)
+		if c.v == 0.0 and c.acc < 0.0:
+			c.acc = 0.0
+		var snap := 0.0
+		if lead and gap < 0.6 and c.v > lead.v and lead.wreck == null:
+			# the last resort, for a car that is all but touching the car in front, or yours, or the rival's (something pulled
+			# in on top of it, or you stopped dead right in front of it): it cannot be allowed to drive through it, and it is
+			# not you it may hit. It should next to never be needed (see the traffic braking test). A car that comes upon a
+			# crash too late to stop, though, is not saved: it runs into the wreck, which is a crash (_wreck_contacts).
+			snap = c.v - lead.v
+			c.v = lead.v
+			c.acc = minf(c.acc, 0.0)
+		if autotest:
+			_brake_stats(c, v_was, snap, dt, lead, gap)
+		c.braking = c.acc < (-0.4 if c.braking else -1.0)  # (the lights come on at 1 m/s² of braking and go off at 0.4)
 		c.z += c.v * dt
 		c.vx = 0.0
 		if c.tlane == c.lane:
@@ -1151,7 +1230,7 @@ func _update_traffic(dt: float) -> void:
 			var tx: float = Data.LANES[c.tlane]
 			var d := tx - c.x
 			var may_move := true
-			if absf(c.x - Data.LANES[c.lane]) < 1.7 and not _lane_open_for(c, c.tlane, true):
+			if absf(c.x - Data.LANES[c.lane]) < 1.7 and not _lane_open_for(c, c.tlane, c.yielding):  # (only a car making way for the police may be let in tight)
 				# the lane it is moving into has filled up while it signalled: wait at the line, or give up
 				c.hold_t += dt
 				if c.hold_t > 1.2:
@@ -2958,6 +3037,7 @@ func _apply_boon(id: String) -> void:
 var _cop_aim := 0.0
 var _yields := 0
 var _overlaps := 0      # test aid: frames in which two cars on the road were more than 30 cm inside each other
+var _tb := {"steps": 0, "braking": 0, "hard": 0, "slams": 0, "snaps": 0, "stops": 0, "worst": 0.0, "jerk": 0.0}  # test aid: how the traffic brakes (see _brake_stats)
 var _cop_reach := -1.0  # test aid: seconds into the pursuit when the cop first came within 12 m
 var _cop_held := 0.0    # test aid: seconds the cop had a car in its way less than 25 m ahead
 const COP_TIME := 40.0    # seconds to survive to escape
@@ -4584,6 +4664,8 @@ func _notification(what: int) -> void:
 
 
 func _exit_tree() -> void:
+	if autotest and _tb.steps > 0:
+		print("[autotest] " + _brake_line())  # (--quit-after stops the engine without a word: this is where a test run's totals come out)
 	_flush_damage()
 	CarDamage.finish_all()  # (no batch of dents is left on the worker threads when the game closes)
 
@@ -4966,6 +5048,12 @@ func _on_act(action: String, arg: String) -> void:
 		"pick_demo":  # test aid (--open=pick_demo): the upgrade pick screen with the wordiest upgrades, to see how it fits
 			hud.show_pick("Copperhead beaten · +$200 prize", "The Copperhead is now for sale in the Garage. Choose one upgrade for the rest of this run.",
 				[Data.BOONS[12], Data.BOONS[10], Data.BOONS[9]])
+		"refuel_demo":  # test aid (--open=refuel_demo): the pump screen at a stop where the prices have climbed a long way, to see how it fits
+			hud.show_refuel({"name": "Interstate Oil", "grade": "premium", "prices": {"regular": 41.59, "mid": 46.59, "premium": 56.59}, "rise": 0.17,
+				"fuel": 9.5, "tank": 52.0, "litres": 12.3, "bill": 696.0, "pumping": false, "bank": 12400, "run": 3400, "total": 15800, "to_fill": 2410.0,
+				"price": 56.59, "msg": "", "car": "Halcyon"})
+		"fuel_warn_demo":  # test aid (--open-at=2:fuel_warn_demo with --autotest): the 1 km warning at a stop where the prices have climbed, to see how it fits
+			hud.fuel_warning("FUEL STOP IN 1 KM", "INTERSTATE OIL · PREM $56.59/L\nPRICES UP 17% ON THE LAST STOP")
 		"pause":
 			_pause()
 		"cam_cycle":
@@ -5441,13 +5529,27 @@ func _new_station(after_z: float) -> void:
 	if _test_first_station > 0.0 and station.is_empty():
 		km = _test_first_station / 1000.0
 	var n := ceili((after_z + km * 1000.0 - Scenery.SITE) / Scenery.TREE_PERIOD)
-	var reg := randf_range(2.4, 4.4)
-	var price := func(v: float) -> float:
-		return floorf(v * 10.0) / 10.0 + 0.09  # pump prices end in 9
+	var pr := _station_prices(last_station.get("prices", {}))
 	station = {"z": Scenery.site_z(n), "name": Data.STATION_NAMES.pick_random(), "color": Data.STATION_COLORS.pick_random(),
-		"prices": {"regular": price.call(reg), "mid": price.call(reg + 5.0 + randf_range(-0.8, 0.8)),
-			"premium": price.call(reg + 15.0 + randf_range(-1.6, 1.6))}}
+		"prices": pr.prices, "rise": pr.rise, "n": int(last_station.get("n", 0)) + 1}
 	_send_stations()
+
+
+## The prices at the next fuel stop, from the ones at the stop before it (empty for the first of a run). The first stop
+## charges what a station does (regular $2.40 to $4.40 a litre, mid-grade about $5 and premium about $15 more); every
+## stop after it asks 5 to 25% more than the one before (one rise for the whole board, rolled for each stop, and counted
+## from the pump prices on the sign: Data.raised_price), whether or not the run stopped there, so the further a run goes
+## the more fuel costs. Returns {"prices": {grade: $/L}, "rise": how much more regular is than at the stop before, as a fraction}.
+func _station_prices(prev: Dictionary) -> Dictionary:
+	if prev.is_empty():
+		var reg := randf_range(2.4, 4.4)
+		return {"prices": {"regular": Data.pump_price(reg), "mid": Data.pump_price(reg + 5.0 + randf_range(-0.8, 0.8)),
+			"premium": Data.pump_price(reg + 15.0 + randf_range(-1.6, 1.6))}, "rise": 0.0}
+	var rise := randf_range(Data.PRICE_RISE_MIN, Data.PRICE_RISE_MAX)
+	var out := {}
+	for g in Data.FUEL_ORDER:
+		out[g] = Data.raised_price(float(prev[g]), rise)
+	return {"prices": out, "rise": float(out.regular) / float(prev.regular) - 1.0}
 
 
 func _send_stations() -> void:
@@ -5568,7 +5670,10 @@ func _update_fuel(dt: float) -> void:
 		if to_lane < 1000.0 and to_lane > 100.0 and run.heads_up != float(station.z):
 			run.heads_up = float(station.z)
 			var g: String = st.grade
-			hud.fuel_warning("FUEL STOP IN 1 KM", "%s · %s $%.2f/L" % [String(station.name).to_upper(), Data.FUEL_GRADES[g].short, station.prices[g]])
+			var sub := "%s · %s $%.2f/L" % [String(station.name).to_upper(), Data.FUEL_GRADES[g].short, station.prices[g]]
+			if float(station.rise) > 0.0:
+				sub += "\nPRICES UP %d%% ON THE LAST STOP" % roundi(float(station.rise) * 100.0)
+			hud.fuel_warning("FUEL STOP IN 1 KM", sub)
 		if ahead < -GasStation.MERGE_END - 30.0 and run.pit.is_empty():
 			_new_station(float(station.z))
 	if run.fuel <= 0.0 and run.pit.is_empty():
@@ -5708,7 +5813,7 @@ func _open_refuel() -> void:
 	hud.show_refuel(_refuel_view())
 	sound.play("ding", 0.8, -6.0)
 	if autotest:
-		print("[autotest] fuel stop %s: %.1f of %.0f L, %s $%.2f/L, funds $%d, car centre %.2f m from a pump, x %.1f" % [station.name, run.fuel, st.tank, st.grade, station.prices[st.grade], _funds().total,
+		print("[autotest] fuel stop %d %s: %.1f of %.0f L, %s $%.2f/L (%+.0f%% on the stop before), funds $%d, car centre %.2f m from a pump, x %.1f" % [station.n, station.name, run.fuel, st.tank, st.grade, station.prices[st.grade], float(station.rise) * 100.0, _funds().total,
 			minf(absf(player.z + player.l * 0.5 - float(station.z) - GasStation.PUMPS[0]), absf(player.z + player.l * 0.5 - float(station.z) - GasStation.PUMPS[1])), player.x])
 
 
@@ -5740,7 +5845,7 @@ func _pump_frame(dt: float) -> void:
 func _refuel_view() -> Dictionary:
 	var f := _funds()
 	var price: float = station.prices[st.grade]
-	return {"name": station.name, "grade": st.grade, "prices": station.prices, "fuel": run.fuel, "tank": st.tank,
+	return {"name": station.name, "grade": st.grade, "prices": station.prices, "rise": station.rise, "fuel": run.fuel, "tank": st.tank,
 		"litres": pump.litres, "bill": pump.bill, "pumping": pump.on, "bank": f.bank, "run": f.run, "total": f.total,
 		"to_fill": (st.tank - run.fuel) * price, "price": price, "msg": pump.msg,
 		"car": Data.car_by_id(Save.data.selected).name}

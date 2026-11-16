@@ -3228,6 +3228,9 @@ func show_refuel(d: Dictionary) -> void:
 
 func update_refuel(d: Dictionary) -> void:
 	_rf.name.text = String(d.name).to_upper()
+	var rise := roundi(float(d.get("rise", 0.0)) * 100.0)  # (how much dearer the fuel is than at the stop before: said in the heading, in amber)
+	_rf.eyebrow.text = "FUEL STOP · PRICES UP %d%% ON THE LAST STOP" % rise if rise > 0 else "FUEL STOP"
+	_rf.eyebrow.add_theme_color_override("font_color", AMBER if rise > 0 else MUTED)
 	var p: Dictionary = d.prices
 	for g in Data.FUEL_ORDER:
 		var row: Array = _rf["row_" + g]

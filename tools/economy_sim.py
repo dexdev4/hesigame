@@ -54,7 +54,9 @@ def car_table():
     return out
 
 
-FUEL_PRICE = {"regular": 3.4, "mid": 8.4, "premium": 18.4}   # average $ a litre (Data.FUEL_GRADES: +$5 and +$15 on regular)
+FUEL_PRICE = {"regular": 3.4, "mid": 8.4, "premium": 18.4}   # average $ a litre at the first fuel stop of a run (Data.FUEL_GRADES: +$5 and +$15 on regular).
+# Every stop after that asks 5 to 25% more than the one before (15% on average: Data.raised_price), so these are right for a stage or two,
+# which is as far as the tool drives (a stop is about 10 km on, and a stage about 5 km), and fuel costs more in a long run.
 
 
 def car_fuel_grade():

@@ -38,6 +38,8 @@ var crash_buf := 1.5             # the room it must have left, m, plus crash_t s
 var crash_t := 0.2
 var react_t := 0.8               # and, closing on a slower car, the road it covers in this many seconds at the speed it closes at
                                  # (the room to stop short if that car makes a move it had no warning of)
+var soft_floor := false          # a car that has pulled in closer than the room it needs is braked for in proportion to how fast it is closed on
+                                 # (in the half metre that is left), instead of standing on the brake at once: the traffic, where that is a lane change
 var pts_weight := 0.05           # metres of road a point of passing score is worth to it (0: it does not care)
 var pull_x := 0.0                # a place across the road it would like to be in (pull_w metres of road per metre away from it)
 var pull_w := 0.0
@@ -479,7 +481,13 @@ func _approach(v: float, gap: float, vc: float) -> float:
 		return -minf(short * 0.9, b_comf) if short > 0.0 else 1.0e9
 	var room := gap - s_min - react_t * dv
 	if room <= 0.5:
-		return -b_max
+		if not soft_floor:
+			return -b_max
+		# (a car that has pulled in: brake for how fast it is closed on in the room that is left, and at least enough
+		# to open the gap again, which is a courtesy and no harder than b_comf)
+		var a_phys := dv * dv / (2.0 * maxf(minf(0.5, gap - 1.0), 0.25))
+		var a_gap := minf((0.5 - room) * 0.9, b_comf)
+		return -clampf(maxf(a_phys * 1.1, a_gap), 0.0, b_max)
 	var a_req := dv * dv / (2.0 * room)
 	var u := a_req / brake_start
 	if u < 1.0:
@@ -495,6 +503,39 @@ func _rate(a_target: float, a_now: float) -> float:
 	if a_target > a_now:
 		return 14.0
 	return lerpf(brake_jerk, 45.0, clampf((-a_target - 3.0) / 5.0, 0.0, 1.0))
+
+
+## The way the ordinary traffic speeds up and brakes: the cars follow their lane without planning lines, but along it they
+## drive as the bosses do (see accel_step), as a calm driver who looks a long way ahead, so braking, however much of it
+## there is to do, begins early and builds up steadily.
+static func traffic_driver() -> CarDriver:
+	var d := CarDriver.new()
+	d.a_max = 2.2        # (the most a traffic car has always sped up by)
+	d.b_max = 9.0        # what a car's tyres give on a dry road: braking harder than that is not something a car does
+	d.b_comf = 4.5       # the hardest it lets off to a slower pace than it wants (making way for the police, say)
+	d.brake_start = 2.2  # it begins to brake when matching a slower car's speed in the room it has takes this much (m/s²), and then brakes as hard as that takes
+	d.brake_jerk = 10.0  # eases onto the brake over a few tenths of a second (45 m/s³ only when it has to hurry)
+	d.follow_gap = 4.0   # stops 4 m behind a stopped car, and follows a moving one 4 m plus
+	d.follow_t = 0.1     # ...a tenth of a second of its speed behind it (7 m at 30 m/s: where the traffic has always followed)
+	d.react_t = 0.3
+	d.soft_floor = true  # a car that pulls in closer than that is braked for as hard as it takes, not stood on
+	return d
+
+
+## How far ahead a car going at v has to look to be able to settle in behind a stopped car with the steady braking it
+## starts with (see _approach), and a little more, so that no braking ever begins with a jolt.
+func look_ahead(v: float) -> float:
+	return clampf(v * v / (2.0 * brake_start) * 1.2 + 40.0, 80.0, 320.0)
+
+
+## One step of the speed of a car that follows its lane, the same law as _drive's: a smooth approach to the speed it
+## wants (v_want), early and steady braking behind a slower car (`gap` metres ahead of it, going at `vc`: 1e9 for none),
+## and the acceleration eased on and off by a limit on how fast it may change (m/s³). `a_now` is what the car is doing
+## now; returns what it does next (m/s², below zero is braking), which the caller applies to its speed.
+func accel_step(v: float, a_now: float, v_want: float, gap: float, vc: float, dt: float) -> float:
+	var a_int := _idm_int(v, gap, vc) if gap < 1.0e8 else 1.0e9
+	var a_t: float = clampf(minf(_idm_free(v, v_want), a_int), -b_max, a_max)
+	return move_toward(a_now, a_t, _rate(a_t, a_now) * dt)
 
 
 ## Speed up and brake the way the intelligent driver model does (a smooth approach to the speed it wants, early and

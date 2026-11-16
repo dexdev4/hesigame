@@ -7,7 +7,7 @@ extends Node3D
 ## is always at the scene origin), so the highway never runs out and floats
 ## never lose precision.
 
-enum S { MENU, GARAGE, PLAY, PAUSED, BOSS_INTRO, PICK, OVER, REPLAY, REFUEL }
+enum S { MENU, GARAGE, PLAY, PAUSED, PICK, OVER, REPLAY, REFUEL }
 
 
 class Vehicle:
@@ -179,6 +179,7 @@ var auto_quit := 0.0
 var showroom := ""  # --showroom=rear|front: every player car parked in a row, simulation frozen (test view)
 var _inspect_finish := ""  # --inspect-finish=ID: the car shown by --inspect is in this paint finish (test aid)
 var _test_hold_over := false  # --hold-over: with --autotest, stay on the run-over screen rather than start the next run (test aid)
+var _test_hold_pick := false  # --hold-pick: with --autotest, stay on the upgrade pick screen rather than take the first upgrade (test aid)
 var _test_wear := -1.0  # --wear=F: the selected car starts this worn, 0 to 1 (test aid; the save keeps it)
 var _sc_base := 0.0     # --sc-base=M: the showroom view is of the road M metres in (test aid: signs, stations)
 var _sc_finish := -1.0  # --sc-finish=M: ... with the finish gantry at M metres (test aid)
@@ -295,6 +296,8 @@ func _ready() -> void:
 			showroom = a.substr(11) if a.length() > 11 else "rear"
 		if a.begins_with("--inspect-finish="):
 			_inspect_finish = a.substr(17)
+		if a == "--hold-pick":
+			_test_hold_pick = true
 		if a == "--hold-over":
 			_test_hold_over = true
 		if a.begins_with("--wear="):
@@ -2889,9 +2892,11 @@ func _show_pick(bi: Dictionary, unlocked_new: bool) -> void:
 	elif not Save.is_unlocked(bi.car) and Data.car_unlock_route(boss_car) >= 0:
 		line = "The %s goes on sale when you clear %s. " % [boss_car.name, Data.route_info(Data.car_unlock_route(boss_car)).title] + line
 	hud.show_pick("%s beaten · +$%s prize" % [bi.full, Fmt.num(200 * run.stage)], line, opts)
-	if autotest:
+	if autotest and _test_hold_pick:
+		print("[autotest] beat %s, holding the pick screen (frame %d)" % [bi.full, _frame])
+	if autotest and not _test_hold_pick:
 		var pick: String = _test_boon if _test_boon != "" else opts[0].id
-		print("[autotest] beat %s, picking %s" % [bi.full, pick])
+		print("[autotest] beat %s, picking %s (frame %d)" % [bi.full, pick, _frame])
 		_apply_boon(pick)
 
 
@@ -3592,15 +3597,6 @@ func _begin_incoming(cop: bool) -> void:
 	sound.play("ding", 1.2, -2.0)
 	if autotest:
 		print("[autotest] %s incoming stage %d" % ["police" if cop else "boss", run.stage])
-
-
-func _show_boss_intro() -> void:
-	state = S.BOSS_INTRO
-	var bi := Data.boss_info(run.stage)
-	hud.show_boss_intro("Stage %d boss" % run.stage, bi.full, bi.line, Data.boss_skill_name(run.stage), Data.car_by_id(bi.car).name)
-	if autotest:
-		print("[autotest] boss intro stage %d: %s" % [run.stage, bi.full])
-		_on_act("race", "")
 
 
 var _req_stage := -1  # the distance and points this stage asks for, worked out once per stage and highway
@@ -4478,7 +4474,7 @@ func _edge_swipe(event: InputEvent) -> bool:
 	if event is InputEventScreenTouch:
 		var e := event as InputEventScreenTouch
 		var w := get_viewport().get_visible_rect().size.x
-		if e.pressed and (e.position.x < EDGE or e.position.x > w - EDGE):
+		if e.pressed and (e.position.x < EDGE or e.position.x > w - EDGE) and not hud.over_slider(e.position):  # (a slider's knob at the end of its track is not a swipe)
 			_edge = {"i": e.index, "x0": e.position.x, "dir": 1.0 if e.position.x < EDGE else -1.0}
 		elif not e.pressed and not _edge.is_empty() and e.index == _edge.i:
 			_edge = {}
@@ -4600,6 +4596,8 @@ func _go_back() -> void:
 		_pay_and_go()
 	elif hud.screens.pedals.visible:
 		_on_act("pedal_done", "")
+	elif hud.screens.camadj.visible:
+		_on_act("cam_done", "")
 	elif hud.screens.settings.visible:
 		_on_act("settings_back", "")
 	elif hud.screens.help.visible or hud.screens.map.visible:
@@ -4846,8 +4844,12 @@ func _on_act(action: String, arg: String) -> void:
 			hud.render_garage()
 		"settings":
 			_leave_garage()
+			if arg == "camera":  # (--open=settings:camera) the camera adjuster is not a page of the sheet
+				hud.render_settings()
+				hud.enter_cam_adjust()
+				return
 			if arg != "":
-				hud.settings_tab = arg  # e.g. --open=settings:camera
+				hud.settings_tab = arg  # e.g. --open=settings:display
 			hud.render_settings()
 			hud.show_screen("settings")
 		"settings_back":
@@ -4856,6 +4858,13 @@ func _on_act(action: String, arg: String) -> void:
 				hud.show_screen("pause")
 			else:
 				_go_menu()
+		"cam_adjust":
+			hud.enter_cam_adjust()
+		"cam_done":
+			Save.persist()
+			hud.leave_cam_adjust()
+			hud.render_settings()
+			hud.show_screen("settings")
 		"set":
 			var kv := arg.split("=")
 			Save.data.settings[kv[0]] = float(kv[1])
@@ -4951,14 +4960,12 @@ func _on_act(action: String, arg: String) -> void:
 			Save.data.assist = not Save.data.assist
 			Save.persist()
 			hud.render_menu()
-		"race":
-			if state == S.BOSS_INTRO:
-				state = S.PLAY
-				hud.show_screen("")
-				_start_boss()
 		"boon":
 			if state == S.PICK:
 				_apply_boon(arg)
+		"pick_demo":  # test aid (--open=pick_demo): the upgrade pick screen with the wordiest upgrades, to see how it fits
+			hud.show_pick("Copperhead beaten · +$200 prize", "The Copperhead is now for sale in the Garage. Choose one upgrade for the rest of this run.",
+				[Data.BOONS[12], Data.BOONS[10], Data.BOONS[9]])
 		"pause":
 			_pause()
 		"cam_cycle":

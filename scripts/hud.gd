@@ -55,7 +55,6 @@ var _fill_red: StyleBoxFlat
 # menu widgets that get refreshed
 var _menu := {}
 var _garage := {}
-var _boss := {}
 var _pick := {}
 var _pause := {}
 var _set := {}
@@ -126,11 +125,11 @@ func _ready() -> void:
 	_build_menu()
 	_build_garage()
 	_build_map()
-	_build_boss()
 	_build_pick()
 	_build_pause()
 	_build_over()
 	_build_settings()
+	_build_camadj()
 	_build_pedal_editor()
 	_build_replay()
 	_build_refuel()
@@ -333,8 +332,9 @@ func _screen_in(scr: Control) -> void:
 	scr.modulate.a = 0.0
 	var tw := scr.create_tween().set_parallel(true)
 	tw.tween_property(scr, "modulate:a", 1.0, 0.2)
-	if scr.has_meta("panel"):
-		var panel: Control = scr.get_meta("panel")
+	var pk := "panel" if scr.has_meta("panel") else ("pop" if scr.has_meta("pop") else "")
+	if pk != "":
+		var panel: Control = scr.get_meta(pk)
 		panel.pivot_offset = Vector2(panel.size.x / 2.0, panel.size.y)
 		panel.scale = Vector2(0.975, 0.975)
 		tw.tween_property(panel, "scale", Vector2.ONE, 0.26).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
@@ -355,7 +355,20 @@ func _apply_safe_area() -> void:
 	layout_pedals()
 	_kmh.get_parent().offset_bottom = -(26 + bottom)
 	# menu panels fill the width on phones and stay readable on wide screens
+	if _rp.has("ra"):
+		(_rp.ra as BoxContainer).vertical = vp.y > vp.x
 	for k in screens:
+		if screens[k].has_meta("modal"):
+			_layout_modal(screens[k], vp, top, bottom)
+			continue
+		if k == "camadj":
+			_layout_camadj(vp, top, bottom)
+			continue
+		if k == "pedals":
+			_layout_pedal_bar(vp, top)
+			continue
+		if k == "pick":  # the three upgrades stand side by side on a wide screen, where one above the other ran off the bottom
+			(_pick.list as BoxContainer).vertical = vp.y > vp.x
 		if screens[k].has_meta("sheet"):
 			_layout_sheet(screens[k], vp, top, bottom)
 			continue
@@ -394,7 +407,7 @@ func _layout_sheet(scr: Control, vp: Vector2, top: float, bottom: float) -> void
 		var wm: Control = _map.map
 		var pnl: Control = scr.get_meta("panel")
 		var ph := pnl.size.y if pnl.size.y > 10.0 else 430.0
-		wm.offset_top = 120.0 + top
+		wm.offset_top = 134.0 + top
 		if portrait:
 			wm.offset_bottom = -(ph + 20.0 + bottom)
 			wm.offset_right = 0.0
@@ -756,7 +769,7 @@ func _draw_lives() -> void:
 
 func set_play_visible(on: bool) -> void:
 	_play_on = on
-	if not _editing:
+	if not _editing and not _cam_adjusting:
 		play_layer.visible = on
 	if not on:  # (a warning that is still up does not carry over into the next run)
 		if _warn_tween:
@@ -1377,26 +1390,44 @@ func _build_menu() -> void:
 
 
 func _build_help() -> void:
-	var v := _screen("help")
-	v.add_child(_eyebrow("Driver's handbook"))
-	v.add_child(_label("HOW TO PLAY", 72, LINE, display_font))
+	var m := _modal("help", 820.0)
+	var title := VBoxContainer.new()
+	title.add_theme_constant_override("separation", 0)
+	title.add_child(_eyebrow("Driver's handbook"))
+	var tl := _label("HOW TO PLAY", 60, LINE, display_font)
+	title.add_child(tl)
+	(m.scr as Control).set_meta("title", tl)
+	(m.head as VBoxContainer).add_child(title)
 	var how := RichTextLabel.new()
 	how.bbcode_enabled = true
 	how.fit_content = true
 	how.scroll_active = false
 	how.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	how.add_theme_font_size_override("normal_font_size", 23)
-	how.add_theme_font_size_override("bold_font_size", 23)
+	how.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	how.add_theme_font_size_override("normal_font_size", 22)
+	how.add_theme_font_size_override("bold_font_size", 22)
 	how.add_theme_color_override("default_color", MUTED)
-	how.text = ("• [b][color=#f3f5ef]Gas[/color][/b] pedal on the right, [b][color=#f3f5ef]brake[/color][/b] pedal on the left.\n\n"
-		+ "• [b][color=#f3f5ef]Steer[/color][/b] like a real car: it keeps going the way it points, so straighten up yourself. Change the steering method in Settings › Controls.\n\n"
-		+ "• Pass cars inside 1 m for a [b][color=#f3f5ef]near miss[/color][/b]. Change lanes right beside a car for a [b][color=#f3f5ef]close cut[/color][/b]. Chains build your multiplier.\n\n"
-		+ "• Cover the distance or hit the points target and the [b][color=#f3f5ef]boss[/color][/b] (or the police) arrives 10 seconds later. Out-score the boss before the finish gantry.\n\n"
-		+ "• Watch the [b][color=#f3f5ef]fuel[/color][/b] gauge and pull into the fuel stops on the right.\n\n"
-		+ "• Crashes [b][color=#f3f5ef]damage[/color][/b] your car, and a damaged car is slower until you pay to have it fixed in the garage's Repair tab.\n\n"
-		+ "• Spend your winnings in the [b][color=#f3f5ef]garage[/color][/b]: new cars, upgrades, paint, wheels and repairs.")
-	v.add_child(how)
-	v.add_child(_button("BACK", "light", "menu"))
+	var w := "[b][color=#f3f5ef]"
+	var e := "[/color][/b]"
+	var h := "[b][color=#f5b52e]"
+	how.text = (h + "CONTROLS" + e + "\n"
+		+ "• " + w + "Gas" + e + " on the right, " + w + "brake" + e + " on the left.\n"
+		+ "• " + w + "Steer" + e + " like a real car: it keeps going the way it points, so straighten up yourself. Change the steering method in Settings › Controls.\n\n"
+		+ h + "SCORING" + e + "\n"
+		+ "• Pass cars close to score: inside 1 m is a " + w + "near miss" + e + ", inside 35 cm a " + w + "razor pass" + e + ", and changing lanes right beside a car a " + w + "close cut" + e + ". Each one builds your multiplier, so keep the chain going.\n"
+		+ "• Going faster than 120 km/h (75 mph) earns a speed bonus.\n\n"
+		+ h + "BOSSES" + e + "\n"
+		+ "• Cover the distance or hit the points target and a " + w + "boss" + e + " turns up 10 seconds later. Out-score it over 2 km before the finish gantry. Win for prize money, an upgrade, and the boss's car goes on sale in the garage; lose and it costs a life, then it is a rematch.\n\n"
+		+ h + "POLICE" + e + "\n"
+		+ "• A " + w + "police car" + e + " waits outside the barrier every 5 to 15 km. Go past it faster than 120 km/h (75 mph) and the chase starts: stay untouched for 40 seconds and you earn a life, get rammed and you lose one.\n"
+		+ "• The " + w + "radar jammer" + e + ", one of the upgrades a beaten boss can give you, warns you 250 m before a speed check.\n\n"
+		+ h + "FUEL AND DAMAGE" + e + "\n"
+		+ "• Watch the " + w + "fuel" + e + " gauge and pull into the fuel stops on the right.\n"
+		+ "• Crashes " + w + "damage" + e + " your car, and a damaged car is slower until you pay to fix it in the garage's Repair tab. At 100% it is a wreck and the run ends.\n\n"
+		+ h + "GARAGE" + e + "\n"
+		+ "• Spend your winnings in the " + w + "garage" + e + ": new cars, upgrades, paint, wheels and repairs.")
+	(m.content as VBoxContainer).add_child(how)
+	(m.foot as VBoxContainer).add_child(_button("BACK", "light", "menu"))
 
 
 func _toggle(text: String, action: String) -> Button:
@@ -1566,6 +1597,7 @@ func _build_garage() -> void:
 	cv.alignment = BoxContainer.ALIGNMENT_END
 	var ce := _eyebrow("Cash")
 	ce.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	ce.autowrap_mode = TextServer.AUTOWRAP_OFF  # (beside a small amount, "$0", it wrapped to CAS / H)
 	cv.add_child(ce)
 	_garage["cash"] = _label("$0", 34, AMBER, mono_font)
 	_garage.cash.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
@@ -2255,45 +2287,16 @@ func _render_repair(list: VBoxContainer, sel_car: Dictionary) -> void:
 	list.add_child(_wrap("Repairs fix your %s only. Every car keeps its own damage." % sel_car.name, 19, MUTED))
 
 
-func _build_boss() -> void:
-	var v := _screen("boss", RED_SIGN)
-	_boss["eyebrow"] = _eyebrow("Stage 1 boss")
-	v.add_child(_boss.eyebrow)
-	_boss["name"] = _label("COPPERHEAD", 84, LINE, display_font)
-	_boss.name.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	v.add_child(_boss.name)
-	_boss["line"] = _wrap("", 26)
-	v.add_child(_boss.line)
-	var stats := _row(12)
-	v.add_child(stats)
-	var a := _stat("—", "Rival skill", AMBER)
-	var b := _stat("2.0 km", "Race length")
-	var c := _stat("—", "Rival car")
-	for s in [a, b, c]:
-		stats.add_child(s[0])
-	_boss["target"] = a[1]
-	_boss["car"] = c[1]
-	v.add_child(_wrap("The rival scores the same way you do: near misses, razor passes, close cuts and combos. Out-score them before the finish gantry. Lose and it costs a life, then you get a rematch.", 21, MUTED))
-	v.add_child(_button("RACE  →", "amber", "race"))
-
-
-func show_boss_intro(eyebrow: String, name: String, line: String, target: String, car: String) -> void:
-	_boss.eyebrow.text = eyebrow.to_upper()
-	_boss.name.text = name.to_upper()
-	_boss.line.text = line
-	_boss.target.text = target
-	_boss.car.text = car
-	show_screen("boss")
-
-
 func _build_pick() -> void:
-	var v := _screen("pick", SIGN, 720)
+	var v := _screen("pick", SIGN, 1100)  # (wide: on a wide screen the three upgrades stand side by side)
 	_pick["eyebrow"] = _eyebrow("Boss beaten")
 	v.add_child(_pick.eyebrow)
-	v.add_child(_label("PICK AN UPGRADE", 68, LINE, display_font))
+	var pt := _label("PICK AN UPGRADE", 56, LINE, display_font)
+	pt.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART  # (so a wide font can never make the panel wider than the screen)
+	v.add_child(pt)
 	_pick["line"] = _wrap("", 24)
 	v.add_child(_pick.line)
-	_pick["list"] = VBoxContainer.new()
+	_pick["list"] = BoxContainer.new()  # (one above the other on a tall screen, side by side on a wide one: see _apply_safe_area)
 	_pick.list.add_theme_constant_override("separation", 14)
 	v.add_child(_pick.list)
 
@@ -2321,11 +2324,20 @@ func show_pick(eyebrow: String, line: String, boons: Array) -> void:
 		vb.offset_top = 14
 		vb.offset_right = -20
 		vb.offset_bottom = -14
+		var vp := get_viewport().get_visible_rect().size
+		var wide := vp.x > vp.y
 		vb.add_child(_label(b.tag, 16, AMBER, mono_font))
-		vb.add_child(_label(String(b.name).to_upper(), 40, LINE, display_font))
-		vb.add_child(_label(b.desc, 21, MUTED))
+		var nl := _label(String(b.name).to_upper(), 36 if wide else 40, LINE, display_font)
+		nl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		nl.custom_minimum_size.x = 80
+		vb.add_child(nl)
+		var dl := _label(b.desc, 21, MUTED)
+		dl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		dl.custom_minimum_size.x = 80
+		vb.add_child(dl)
 		btn.add_child(vb)
-		btn.custom_minimum_size = Vector2(0, 140)
+		btn.custom_minimum_size = Vector2(0, 230 if wide else 164)
+		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		var id: String = b.id
 		btn.pressed.connect(func() -> void: act.emit("boon", id))
 		_pick.list.add_child(btn)
@@ -2377,9 +2389,9 @@ func render_cam() -> void:
 	var cfg := Save.cam(mode)
 	var rng: Dictionary = Data.CAM_RANGES[mode]
 	for m in Data.CAM_MODES:
-		(_set["mode_" + m] as Button).modulate = Color(1, 1, 1, 1) if m == mode else Color(1, 1, 1, 0.45)
-	var names := {"fov": "Field of view", "height": "Height", "dist": "Distance" if mode == "chase" else "Forward",
-		"angle": "Angle"}
+		_style_tab(_set["mode_" + m] as Button, m == mode)
+	var names := {"fov": "FIELD OF VIEW", "height": "HEIGHT", "dist": "DISTANCE" if mode == "chase" else "FORWARD",
+		"angle": "ANGLE"}
 	_cam_lock = true
 	for key in ["fov", "height", "dist", "angle"]:
 		var sl: HSlider = _set["s_" + key]
@@ -2392,6 +2404,237 @@ func render_cam() -> void:
 		var fmt := "%d" if unit == "°" else "%.2f"
 		_set["v_" + key].text = (fmt % cfg[key]) + unit
 	_cam_lock = false
+
+
+# ---------------------------------------------------------------- camera adjuster
+
+var _cam_adjusting := false  # the camera adjuster is open: the play HUD is put away so the view shows whole
+var _camadj := {}
+
+
+## The camera settings are two slim bars rather than a page of the settings sheet, which covered the view being adjusted:
+## along the top, which view and its field of view and angle; along the bottom, its height and distance, and reset,
+## shake and done. Everything between them is the game, as it will be driven.
+func _build_camadj() -> void:
+	var scr := Control.new()
+	scr.set_anchors_preset(Control.PRESET_FULL_RECT)
+	scr.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	scr.set_meta("sheet", true)
+	scr.visible = false
+	root.add_child(scr)
+	screens["camadj"] = scr
+	# the top bar: the three views, then field of view and angle (side by side on a wide screen, one above the other on a tall one)
+	var top := _cam_bar(true)
+	scr.add_child(top)
+	var tb := BoxContainer.new()
+	tb.add_theme_constant_override("separation", 12)
+	top.add_child(tb)
+	var modes := _row(8)
+	modes.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	modes.size_flags_stretch_ratio = 0.85
+	tb.add_child(modes)
+	for m in Data.CAM_MODES:
+		var mb := Button.new()
+		mb.text = String(Data.CAM_NAMES[m]).to_upper()
+		mb.add_theme_font_override("font", display_font)
+		mb.add_theme_font_size_override("font_size", 24)
+		mb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		mb.custom_minimum_size.y = 54
+		var id: String = m
+		mb.pressed.connect(func() -> void: act.emit("cam_mode", id))
+		modes.add_child(mb)
+		_set["mode_" + m] = mb
+	var pair_a := _row(16)
+	pair_a.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	pair_a.size_flags_stretch_ratio = 1.15
+	tb.add_child(pair_a)
+	pair_a.add_child(_cam_slider("fov"))
+	pair_a.add_child(_cam_slider("angle"))
+	# the bottom bar: height and distance, then reset, shake and done
+	var bottom := _cam_bar(false)
+	scr.add_child(bottom)
+	var bb := BoxContainer.new()
+	bb.add_theme_constant_override("separation", 12)
+	bottom.add_child(bb)
+	var pair_b := _row(16)
+	pair_b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	pair_b.size_flags_stretch_ratio = 1.15
+	bb.add_child(pair_b)
+	pair_b.add_child(_cam_slider("height"))
+	pair_b.add_child(_cam_slider("dist"))
+	var acts := _row(8)
+	acts.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	acts.size_flags_stretch_ratio = 0.85
+	bb.add_child(acts)
+	var reset := _button("RESET", "ghost", "cam_reset")
+	reset.add_theme_font_size_override("font_size", 22)
+	reset.custom_minimum_size.y = 54
+	acts.add_child(reset)
+	var shake := _button("SHAKE", "ghost", "toggle", "shake")
+	shake.add_theme_font_size_override("font_size", 22)
+	shake.custom_minimum_size.y = 54
+	shake.set_meta("base", "SHAKE")
+	acts.add_child(shake)
+	_set["t_shake"] = shake
+	var done := _button("DONE", "amber", "cam_done")
+	done.add_theme_font_size_override("font_size", 26)
+	done.custom_minimum_size.y = 54
+	acts.add_child(done)
+	# a hint under the top bar for the first few seconds, and a pill at the bottom while the bars are put away
+	var hint := _cam_pill("TAP THE VIEW TO HIDE THE BARS")
+	hint.anchor_top = 0.0
+	hint.anchor_bottom = 0.0
+	hint.grow_vertical = Control.GROW_DIRECTION_END
+	hint.visible = false
+	scr.add_child(hint)
+	var away := _cam_pill("TAP ANYWHERE TO ADJUST")
+	away.anchor_top = 1.0
+	away.anchor_bottom = 1.0
+	away.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	away.visible = false
+	scr.add_child(away)
+	_camadj = {"top": top, "bottom": bottom, "top_box": tb, "bottom_box": bb, "hint": hint, "away": away}
+
+
+## A small dark pill with a line of text, in the middle of the screen's width; it takes no touches.
+func _cam_pill(text: String) -> PanelContainer:
+	var p := PanelContainer.new()
+	var sb := _flat(Color(0.035, 0.045, 0.055, 0.78), 18)
+	sb.content_margin_left = 18.0
+	sb.content_margin_right = 18.0
+	sb.content_margin_top = 8.0
+	sb.content_margin_bottom = 8.0
+	p.add_theme_stylebox_override("panel", sb)
+	p.anchor_left = 0.5
+	p.anchor_right = 0.5
+	p.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	p.add_child(_label(text, 17, LINE, mono_font))
+	return p
+
+
+## One of the bars: the sign's green, with only the edge that faces the game rounded and outlined.
+func _cam_bar(top: bool) -> PanelContainer:
+	var p := PanelContainer.new()
+	var sb := _flat(Color(SIGN, 0.94), 0)
+	if top:
+		sb.corner_radius_bottom_left = 22
+		sb.corner_radius_bottom_right = 22
+		sb.border_width_bottom = 3
+	else:
+		sb.corner_radius_top_left = 22
+		sb.corner_radius_top_right = 22
+		sb.border_width_top = 3
+	sb.border_color = Color(LINE, 0.9)
+	sb.content_margin_left = 16.0
+	sb.content_margin_right = 16.0
+	sb.content_margin_top = 12.0
+	sb.content_margin_bottom = 12.0
+	sb.shadow_color = Color(0, 0, 0, 0.35)
+	sb.shadow_size = 12
+	sb.shadow_offset = Vector2(0, 5 if top else -5)
+	p.add_theme_stylebox_override("panel", sb)
+	p.anchor_left = 0.0
+	p.anchor_right = 1.0
+	p.anchor_top = 0.0 if top else 1.0
+	p.anchor_bottom = 0.0 if top else 1.0
+	p.grow_vertical = Control.GROW_DIRECTION_END if top else Control.GROW_DIRECTION_BEGIN
+	p.mouse_filter = Control.MOUSE_FILTER_STOP  # (the bars take the touches; the view between them takes none)
+	return p
+
+
+## A slider cell for a bar: its name and value on one line and the slider under them, so it is small enough to leave the view alone.
+func _cam_slider(key: String) -> VBoxContainer:
+	var cell := VBoxContainer.new()
+	cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	cell.add_theme_constant_override("separation", 0)
+	var line := _row(6)
+	var nm := _label("", 16, MUTED, mono_font)
+	nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	line.add_child(nm)
+	var val_l := _label("", 19, LINE, mono_font)
+	val_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	line.add_child(val_l)
+	cell.add_child(line)
+	var sl := _make_slider(key, "cam_set", "cam_save")
+	sl.custom_minimum_size.y = 42
+	cell.add_child(sl)
+	_set["n_" + key] = nm
+	_set["s_" + key] = sl
+	_set["v_" + key] = val_l
+	return cell
+
+
+func _layout_camadj(vp: Vector2, top: float, bottom: float) -> void:
+	var portrait := vp.y > vp.x
+	(_camadj.top as Control).offset_top = top
+	(_camadj.bottom as Control).offset_bottom = -bottom
+	(_camadj.top_box as BoxContainer).vertical = portrait
+	(_camadj.bottom_box as BoxContainer).vertical = portrait
+	(_camadj.away as Control).offset_bottom = -(bottom + 28.0)
+	(_camadj.hint as Control).offset_top = top + (150.0 if portrait else 92.0)
+
+
+var _cam_peek := false      # the bars are put away to look at the whole view
+var _cam_hint_tween: Tween
+
+
+## Open the adjuster over the game: the play HUD is put away so that nothing but the two bars is over the view.
+func enter_cam_adjust() -> void:
+	_cam_adjusting = true
+	play_layer.visible = false
+	_set_cam_peek(false)
+	render_cam()
+	show_screen("camadj")
+	# (once the bars have their size) a line under the top bar saying the bars can be put away, which goes by itself
+	var hint: Control = _camadj.hint
+	hint.visible = true
+	hint.modulate.a = 1.0
+	if _cam_hint_tween:
+		_cam_hint_tween.kill()
+	_cam_hint_tween = create_tween()
+	_cam_hint_tween.tween_interval(3.5)
+	_cam_hint_tween.tween_property(hint, "modulate:a", 0.0, 0.6)
+	_cam_hint_tween.tween_callback(func() -> void: hint.visible = false)
+
+
+func leave_cam_adjust() -> void:
+	_cam_adjusting = false
+	_set_cam_peek(false)
+	if _cam_hint_tween:
+		_cam_hint_tween.kill()
+	(_camadj.hint as Control).visible = false
+	if not _editing:
+		play_layer.visible = _play_on
+
+
+## Put the two bars away to see the whole view, or bring them back.
+func _set_cam_peek(on: bool) -> void:
+	_cam_peek = on
+	(_camadj.top as Control).visible = not on
+	(_camadj.bottom as Control).visible = not on
+	(_camadj.away as Control).visible = on
+	if on:
+		(_camadj.hint as Control).visible = false
+	else:
+		for bar in [_camadj.top, _camadj.bottom]:
+			(bar as Control).modulate.a = 0.0
+			(bar as Control).create_tween().tween_property(bar, "modulate:a", 1.0, 0.18)
+
+
+## A tap on the view (not on a bar) puts the bars away; a tap while they are away brings them back.
+func _cam_peek_input(event: InputEvent) -> void:
+	if not (event is InputEventScreenTouch) or not (event as InputEventScreenTouch).pressed:
+		return
+	var pos := (event as InputEventScreenTouch).position
+	if _cam_peek:
+		_set_cam_peek(false)
+		get_viewport().set_input_as_handled()
+		return
+	for bar in [_camadj.top, _camadj.bottom]:
+		if (bar as Control).get_global_rect().has_point(pos):
+			return
+	_set_cam_peek(true)
 
 
 func show_pause(score: String, dist: String, stage: String) -> void:
@@ -2444,13 +2687,9 @@ func show_over(reason: String, score: String, dist: String, bosses: String, cash
 
 # ---------------------------------------------------------------- settings
 
-func _slider_row(parent: Control, key: String, action: String, save_action: String) -> void:
-	var r := _row(12)
-	parent.add_child(r)
-	var nm := _label("", 22, LINE)
-	nm.custom_minimum_size.x = 165
-	nm.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	r.add_child(nm)
+## A slider as the menus draw it (an amber fill, a round knob), reporting every change as `action` ("key=value") and the end
+## of a drag as `save_action`.
+func _make_slider(key: String, action: String, save_action: String) -> HSlider:
 	var sl := HSlider.new()
 	sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	sl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -2467,6 +2706,17 @@ func _slider_row(parent: Control, key: String, action: String, save_action: Stri
 		if not _cam_lock:
 			act.emit(action, "%s=%s" % [key, val]))
 	sl.drag_ended.connect(func(_changed: bool) -> void: act.emit(save_action, ""))
+	return sl
+
+
+func _slider_row(parent: Control, key: String, action: String, save_action: String) -> void:
+	var r := _row(12)
+	parent.add_child(r)
+	var nm := _label("", 22, LINE)
+	nm.custom_minimum_size.x = 165
+	nm.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	r.add_child(nm)
+	var sl := _make_slider(key, action, save_action)
 	r.add_child(sl)
 	var val_l := _label("", 20, LINE, mono_font)
 	val_l.custom_minimum_size.x = 96
@@ -2478,7 +2728,7 @@ func _slider_row(parent: Control, key: String, action: String, save_action: Stri
 	_set["r_" + key] = r
 
 
-const SETTINGS_TABS := [["controls", "CONTROLS"], ["camera", "CAMERA"], ["display", "DISPLAY & AUDIO"], ["dev", "DEVELOPER"]]
+const SETTINGS_TABS := [["controls", "CONTROLS"], ["camera", "CAMERA"], ["display", "DISPLAY"], ["dev", "DEV"]]
 var settings_tab := "controls"
 
 
@@ -2531,32 +2781,128 @@ func _group(parent: Control, title: String) -> void:
 	parent.add_child(line)
 
 
+## A modal sheet: a sign panel with a heading, a part that scrolls and a footer that stays where it is, so the button that
+## closes it is always in reach however long the page is. Returns {scr, panel, head, scroll, content, foot}; the panel is
+## sized by _layout_modal.
+func _modal(name: String, max_w: float) -> Dictionary:
+	var scr := Control.new()
+	scr.set_anchors_preset(Control.PRESET_FULL_RECT)
+	scr.mouse_filter = Control.MOUSE_FILTER_STOP
+	scr.set_meta("modal", true)
+	scr.set_meta("max_w", max_w)
+	scr.visible = false
+	var scrim := ColorRect.new()
+	scrim.color = Color(0.03, 0.04, 0.05, 0.5)
+	scrim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	scr.add_child(scrim)
+	var panel := PanelContainer.new()
+	var sb := _sign_style(SIGN)
+	sb.set_content_margin_all(24)
+	panel.add_theme_stylebox_override("panel", sb)
+	panel.anchor_left = 0.5
+	panel.anchor_right = 0.5
+	panel.anchor_top = 0.0
+	panel.anchor_bottom = 1.0
+	scr.add_child(panel)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 14)
+	panel.add_child(vb)
+	var head := VBoxContainer.new()
+	head.add_theme_constant_override("separation", 12)
+	vb.add_child(head)
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.scroll_deadzone = 100000  # touch scrolling is handled in _input instead
+	vb.add_child(scroll)
+	var content := VBoxContainer.new()
+	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content.add_theme_constant_override("separation", 14)
+	scroll.add_child(content)
+	var foot := VBoxContainer.new()
+	foot.add_theme_constant_override("separation", 10)
+	vb.add_child(foot)
+	scr.set_meta("scroll", scroll)
+	scr.set_meta("pop", panel)
+	scr.set_meta("foot", foot)
+	root.add_child(scr)
+	screens[name] = scr
+	return {"scr": scr, "panel": panel, "head": head, "scroll": scroll, "content": content, "foot": foot}
+
+
+## The sheet fills the height of the screen (a long page scrolls inside it) and is as wide as it may be.
+func _layout_modal(scr: Control, vp: Vector2, top: float, bottom: float) -> void:
+	var panel: PanelContainer = scr.get_meta("pop")
+	var portrait := vp.y > vp.x
+	var w := minf(vp.x - 52.0, float(scr.get_meta("max_w")))
+	var gap := 26.0 if portrait else 14.0
+	panel.offset_left = -w / 2.0
+	panel.offset_right = w / 2.0
+	panel.offset_top = gap + top
+	panel.offset_bottom = -(gap + bottom)
+	# a wide screen is not a tall one: the title is smaller, the title and the tabs share a line, and the footer button is slimmer
+	var sb := panel.get_theme_stylebox("panel") as StyleBoxFlat
+	sb.set_content_margin_all(24.0 if portrait else 16.0)
+	if scr.has_meta("title"):
+		(scr.get_meta("title") as Label).add_theme_font_size_override("font_size", 60 if portrait else 44)
+	if scr.has_meta("head_box"):
+		var hb: BoxContainer = scr.get_meta("head_box")
+		hb.vertical = portrait
+	var foot: Control = scr.get_meta("foot")
+	for b in foot.get_children():
+		if b is Button:
+			(b as Button).add_theme_font_size_override("font_size", 34 if portrait else 26)
+			for k in ["normal", "hover", "pressed", "disabled"]:
+				var bs := (b as Button).get_theme_stylebox(k) as StyleBoxFlat
+				if bs:
+					bs.set_content_margin_all(16.0 if portrait else 9.0)
+
+
 func _build_settings() -> void:
-	var v := _screen("settings", SIGN, 720)
-	v.add_child(_eyebrow("Glovebox · Owner's manual"))
-	v.add_child(_label("SETTINGS", 84, LINE, display_font))
-	# tabs: one area of settings at a time instead of one long list
-	var tabs := GridContainer.new()
-	tabs.columns = 2
-	tabs.add_theme_constant_override("h_separation", 8)
-	tabs.add_theme_constant_override("v_separation", 8)
-	v.add_child(tabs)
+	var m := _modal("settings", 900.0)
+	var hb := BoxContainer.new()  # (the title above the tabs on a tall screen, beside them on a wide one)
+	hb.add_theme_constant_override("separation", 14)
+	(m.head as VBoxContainer).add_child(hb)
+	(m.scr as Control).set_meta("head_box", hb)
+	var title := VBoxContainer.new()
+	title.add_theme_constant_override("separation", 0)
+	var eb := _eyebrow("Glovebox · Owner's manual")
+	eb.autowrap_mode = TextServer.AUTOWRAP_OFF  # (beside the tabs on a wide screen it wrapped to two lines)
+	title.add_child(eb)
+	var tl := _label("SETTINGS", 60, LINE, display_font)
+	title.add_child(tl)
+	(m.scr as Control).set_meta("title", tl)
+	hb.add_child(title)
+	# tabs: one area of settings at a time. CAMERA opens the camera adjuster rather than a page of the sheet: the sheet
+	# would cover the view that is being adjusted.
+	var tabs := _row(8)
+	tabs.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tabs.size_flags_vertical = Control.SIZE_SHRINK_END
+	hb.add_child(tabs)
 	var pages := {}
 	for t in SETTINGS_TABS:
-		var tb := _button(t[1], "light", "")
-		tb.add_theme_font_size_override("font_size", 26)
+		var tb := Button.new()
+		tb.text = t[1] + ("  ›" if t[0] == "camera" else "")
+		tb.add_theme_font_override("font", display_font)
+		tb.add_theme_font_size_override("font_size", 20)
+		tb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		var id: String = t[0]
+		var scroll: ScrollContainer = m.scroll
 		tb.pressed.connect(func() -> void:
+			if id == "camera":
+				act.emit("cam_adjust", "")
+				return
 			settings_tab = id
+			scroll.scroll_vertical = 0
 			render_settings())
 		tabs.add_child(tb)
 		_set["tab_" + id] = tb
-		var page := VBoxContainer.new()
-		page.add_theme_constant_override("separation", 14)
-		page.custom_minimum_size.y = 640  # the same height on every tab, so Done stays put
-		v.add_child(page)
-		pages[id] = page
-		_set["page_" + id] = page
+		if id != "camera":
+			var page := VBoxContainer.new()
+			page.add_theme_constant_override("separation", 14)
+			(m.content as VBoxContainer).add_child(page)
+			pages[id] = page
+			_set["page_" + id] = page
 
 	# --- controls
 	var pc: VBoxContainer = pages.controls
@@ -2579,23 +2925,6 @@ func _build_settings() -> void:
 	for b in [_button("SWAP PEDALS", "ghost", "pedal_swap"), _button("RESET LAYOUT", "ghost", "pedal_reset")]:
 		b.add_theme_font_size_override("font_size", 24)
 		pr.add_child(b)
-
-	# --- camera (the game keeps drawing underneath, so changes preview live)
-	var pcam: VBoxContainer = pages.camera
-	_group(pcam, "View")
-	var modes := _row(8)
-	pcam.add_child(modes)
-	for m in Data.CAM_MODES:
-		var mb := _button(String(Data.CAM_NAMES[m]).to_upper(), "light", "cam_mode", m)
-		mb.add_theme_font_size_override("font_size", 24)
-		modes.add_child(mb)
-		_set["mode_" + m] = mb
-	_group(pcam, "Adjust this view")
-	for key in ["fov", "height", "dist", "angle"]:
-		_slider_row(pcam, key, "cam_set", "cam_save")
-	pcam.add_child(_button("RESET THIS VIEW", "ghost", "cam_reset"))
-	_group(pcam, "Effects")
-	_option_row(pcam, "shake", "Camera shake", "Shake on bumps, crashes and at top speed.")
 
 	# --- display and audio
 	var pd: VBoxContainer = pages.display
@@ -2630,11 +2959,7 @@ func _build_settings() -> void:
 	_set["dev_note"] = _wrap("", 20, AMBER)
 	pdev.add_child(_set.dev_note)
 
-	var sp := Control.new()
-	sp.custom_minimum_size.y = 6
-	v.add_child(sp)
-	v.add_child(_button("DONE", "light", "settings_back"))
-	(screens.settings.get_child(0) as ColorRect).color = Color(0.03, 0.04, 0.05, 0.3)
+	(m.foot as VBoxContainer).add_child(_button("DONE", "light", "settings_back"))
 
 
 ## Feedback line under the developer tools.
@@ -2697,8 +3022,9 @@ func render_settings() -> void:
 	(_set.r_tilt_invert as Control).modulate = Color(1, 1, 1, 1.0 if tilt else 0.45)
 	for t in SETTINGS_TABS:
 		var on: bool = settings_tab == t[0]
-		(_set["page_" + t[0]] as Control).visible = on
-		(_set["tab_" + t[0]] as Button).modulate = Color(1, 1, 1, 1.0 if on else 0.5)
+		if _set.has("page_" + t[0]):
+			(_set["page_" + t[0]] as Control).visible = on
+		_style_tab(_set["tab_" + t[0]] as Button, on)
 
 
 # ---------------------------------------------------------------- pedal layout
@@ -2778,27 +3104,41 @@ func swap_pedals() -> void:
 	layout_pedals()
 
 
+var _pedbar: PanelContainer
+
+
+## The pedal layout editor is one slim bar along the top, so the whole screen is there to put things on (the panel it was
+## covered the mirror's place, which is up there).
 func _build_pedal_editor() -> void:
-	var v := _screen("pedals", SIGN, 620)
-	v.add_child(_eyebrow("Pedal layout"))
-	v.add_child(_wrap("Drag the pedals, the steering control and the mirror where you want them. Change pedal size in Settings.", 22))
-	var r := _row(12)
-	v.add_child(r)
-	r.add_child(_button("DONE", "amber", "pedal_done"))
-	r.add_child(_button("SWAP", "ghost", "pedal_swap"))
-	r.add_child(_button("RESET", "ghost", "pedal_reset"))
-	var r2 := _row(12)
-	v.add_child(r2)
-	for m in [["MIRROR −", "-"], ["MIRROR +", "+"]]:
-		var b := _button(m[0], "ghost", "mirror_size", m[1])
-		b.add_theme_font_size_override("font_size", 26)
-		r2.add_child(b)
-	var scr: Control = screens.pedals
-	(scr.get_child(0) as ColorRect).color = Color(0, 0, 0, 0.15)
-	var column := v.get_parent().get_parent() as VBoxContainer
-	column.alignment = BoxContainer.ALIGNMENT_BEGIN
+	var scr := Control.new()
+	scr.set_anchors_preset(Control.PRESET_FULL_RECT)
 	scr.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	(scr.get_child(1) as ScrollContainer).mouse_filter = Control.MOUSE_FILTER_IGNORE
+	scr.set_meta("sheet", true)
+	scr.visible = false
+	root.add_child(scr)
+	screens["pedals"] = scr
+	_pedbar = _cam_bar(true)
+	scr.add_child(_pedbar)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 8)
+	_pedbar.add_child(v)
+	var hint := _label("Drag the pedals, steering control and mirror where you want them.", 17, MUTED)
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hint.custom_minimum_size.x = 200
+	v.add_child(hint)
+	var r := _row(8)
+	v.add_child(r)
+	var btns := [["DONE", "amber", "pedal_done", ""], ["SWAP", "ghost", "pedal_swap", ""], ["RESET", "ghost", "pedal_reset", ""],
+		["MIRROR −", "ghost", "mirror_size", "-"], ["MIRROR +", "ghost", "mirror_size", "+"]]
+	for bd in btns:
+		var b := _button(bd[0], bd[1], bd[2], bd[3])
+		b.add_theme_font_size_override("font_size", 22)
+		b.custom_minimum_size.y = 52
+		r.add_child(b)
+
+
+func _layout_pedal_bar(_vp: Vector2, top: float) -> void:
+	_pedbar.offset_top = top
 
 
 func begin_pedal_edit() -> void:
@@ -2984,8 +3324,15 @@ func _build_replay() -> void:
 	bar.scrub.connect(func(f: float) -> void: act.emit("rp_scrub", str(f)))
 	pv.add_child(bar)
 	_rp["bar"] = bar
+	# playback and the clip's ends: two rows on a tall screen, one on a wide one (the controls took half of a landscape screen)
+	var ra := BoxContainer.new()
+	ra.add_theme_constant_override("separation", 10)
+	pv.add_child(ra)
+	_rp["ra"] = ra
 	var r1 := _row(8)
-	pv.add_child(r1)
+	r1.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	r1.size_flags_stretch_ratio = 5.0
+	ra.add_child(r1)
 	r1.add_child(_rp_button("<", "back"))
 	_rp["play"] = _rp_button("PAUSE", "play", "amber")
 	_rp.play.size_flags_stretch_ratio = 1.6
@@ -2997,7 +3344,9 @@ func _build_replay() -> void:
 	_rp.cam.size_flags_stretch_ratio = 2.0
 	r1.add_child(_rp.cam)
 	var r2 := _row(8)
-	pv.add_child(r2)
+	r2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	r2.size_flags_stretch_ratio = 3.0
+	ra.add_child(r2)
 	r2.add_child(_rp_button("SET IN", "in"))
 	r2.add_child(_rp_button("SET OUT", "out"))
 	r2.add_child(_rp_button("RESET CLIP", "clear"))
@@ -3081,10 +3430,19 @@ func _scroll_at(pos: Vector2) -> ScrollContainer:
 		if scr.visible:
 			if k == "garage" and (_garage.scroll as ScrollContainer).is_visible_in_tree() and (_garage.scroll as ScrollContainer).get_global_rect().has_point(pos):
 				return _garage.scroll
+			if scr.has_meta("scroll"):  # a modal sheet: its middle part scrolls, its heading and footer do not
+				var sc: ScrollContainer = scr.get_meta("scroll")
+				return sc if sc.get_global_rect().has_point(pos) else null
 			if scr.has_meta("sheet"):
 				return null
 			return scr.get_child(1) as ScrollContainer
 	return null
+
+
+## True when a touch at pos is on a menu slider (the game uses it so that a drag of a slider that starts at the very edge of
+## the screen is not taken for the swipe that goes back).
+func over_slider(pos: Vector2) -> bool:
+	return _over_slider(pos)
 
 
 func _over_slider(pos: Vector2) -> bool:
@@ -3135,6 +3493,8 @@ var last_input_ms := 0
 func _input(event: InputEvent) -> void:
 	if event is InputEventScreenTouch or event is InputEventScreenDrag or event is InputEventMouseButton or event is InputEventMouseMotion or event is InputEventKey:
 		last_input_ms = Time.get_ticks_msec()
+	if _cam_adjusting:
+		_cam_peek_input(event)
 	if not _editing:
 		_menu_scroll(event)
 		return

@@ -267,12 +267,12 @@ const CITIES := [
 
 ## Landscape colours for each kind of country a highway runs through.
 const BIOMES := {
-	"meadow": {"title": "Green farmland", "grass_a": Color(0.32, 0.45, 0.17), "grass_b": Color(0.28, 0.4, 0.15), "field": Color(0.56, 0.5, 0.26), "dirt": Color(0.42, 0.37, 0.28), "sky": Color("#2b5c96"), "hor": Color("#d9d2c2")},
-	"autumn": {"title": "Autumn woods", "grass_a": Color(0.42, 0.4, 0.17), "grass_b": Color(0.38, 0.33, 0.14), "field": Color(0.62, 0.44, 0.2), "dirt": Color(0.45, 0.33, 0.22), "sky": Color("#3a6496"), "hor": Color("#e0d0b4")},
-	"desert": {"title": "Desert flats", "grass_a": Color(0.66, 0.52, 0.32), "grass_b": Color(0.6, 0.46, 0.28), "field": Color(0.74, 0.6, 0.38), "dirt": Color(0.62, 0.42, 0.26), "sky": Color("#2f6fb0"), "hor": Color("#ecd9b8")},
-	"pine": {"title": "Northern pines", "grass_a": Color(0.22, 0.36, 0.2), "grass_b": Color(0.19, 0.31, 0.18), "field": Color(0.38, 0.42, 0.26), "dirt": Color(0.34, 0.32, 0.27), "sky": Color("#3d6488"), "hor": Color("#cfd6d8")},
-	"coast": {"title": "Coast road", "grass_a": Color(0.4, 0.5, 0.24), "grass_b": Color(0.36, 0.46, 0.22), "field": Color(0.78, 0.7, 0.5), "dirt": Color(0.64, 0.58, 0.44), "sky": Color("#2a6ab4"), "hor": Color("#e4e4dc")},
-	"tundra": {"title": "Frosted plains", "grass_a": Color(0.78, 0.8, 0.82), "grass_b": Color(0.72, 0.75, 0.78), "field": Color(0.86, 0.87, 0.88), "dirt": Color(0.55, 0.55, 0.56), "sky": Color("#4a6c90"), "hor": Color("#dfe4ea")},
+	"meadow": {"fog": Color("#d2cdbd"), "flora": "temperate", "style": 0, "accent": Color(0.4, 0.3, 0.19), "title": "Green farmland", "grass_a": Color(0.32, 0.45, 0.17), "grass_b": Color(0.28, 0.4, 0.15), "field": Color(0.56, 0.5, 0.26), "dirt": Color(0.42, 0.37, 0.28), "sky": Color("#2b5c96"), "hor": Color("#d9d2c2")},
+	"autumn": {"fog": Color("#dccdae"), "flora": "autumn", "style": 0, "accent": Color(0.5, 0.29, 0.13), "title": "Autumn woods", "grass_a": Color(0.42, 0.4, 0.17), "grass_b": Color(0.38, 0.33, 0.14), "field": Color(0.62, 0.44, 0.2), "dirt": Color(0.45, 0.33, 0.22), "sky": Color("#3a6496"), "hor": Color("#e0d0b4")},
+	"desert": {"fog": Color("#e6d2a8"), "flora": "desert", "style": 1, "accent": Color(0.47, 0.45, 0.27), "title": "Desert flats", "grass_a": Color(0.66, 0.52, 0.32), "grass_b": Color(0.6, 0.46, 0.28), "field": Color(0.74, 0.6, 0.38), "dirt": Color(0.62, 0.42, 0.26), "sky": Color("#2f6fb0"), "hor": Color("#ecd9b8")},
+	"pine": {"fog": Color("#bfcacc"), "flora": "conifer", "style": 2, "accent": Color(0.17, 0.3, 0.13), "title": "Northern pines", "grass_a": Color(0.2, 0.33, 0.17), "grass_b": Color(0.17, 0.29, 0.14), "field": Color(0.36, 0.4, 0.24), "dirt": Color(0.33, 0.3, 0.24), "sky": Color("#3d6488"), "hor": Color("#cfd6d8")},
+	"coast": {"fog": Color("#cfdde0"), "flora": "coast", "style": 3, "sea_x": -112.0, "accent": Color(0.52, 0.56, 0.27), "title": "Coast road", "grass_a": Color(0.4, 0.5, 0.24), "grass_b": Color(0.36, 0.46, 0.22), "field": Color(0.78, 0.7, 0.5), "dirt": Color(0.64, 0.58, 0.44), "sky": Color("#2a6ab4"), "hor": Color("#e4e4dc")},
+	"tundra": {"fog": Color("#d8e0e9"), "flora": "snow", "style": 4, "accent": Color(0.5, 0.45, 0.38), "title": "Frosted plains", "grass_a": Color(0.78, 0.8, 0.82), "grass_b": Color(0.72, 0.75, 0.78), "field": Color(0.86, 0.87, 0.88), "dirt": Color(0.55, 0.55, 0.56), "sky": Color("#4a6c90"), "hor": Color("#dfe4ea")},
 }
 
 const ROUTES := [

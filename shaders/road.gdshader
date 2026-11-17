@@ -6,9 +6,11 @@ shader_type spatial;
 uniform float scroll = 0.0;        // player distance modulo PERIOD
 uniform float center_x = 0.0;      // carriageway centre line (world x)
 uniform float road_half = 7.2;
+uniform float median_side = -1.0;  // which side of this carriageway the median is on (-1: left of its centre, +1: right): its edge line is yellow
 uniform vec3 asphalt : source_color = vec3(0.17, 0.18, 0.2);
 uniform vec3 shoulder : source_color = vec3(0.3, 0.3, 0.31);
 uniform vec3 paint : source_color = vec3(0.91, 0.89, 0.83);
+uniform vec3 paint_yellow : source_color = vec3(0.95, 0.74, 0.14);
 uniform float stud_glow = 0.5;  // road studs shine brighter at night
 uniform float detail = 1.0;        // 1: asphalt grain bends the light (High graphics)
 
@@ -77,11 +79,15 @@ void fragment() {
 	}
 
 	// markings, slightly worn
-	float edge = line_mask(abs(ax - (road_half - 0.07)), 0.09, aa);
+	// the edge lines: white on the outside, yellow on the median side
+	float edge_w = line_mask(abs(x + median_side * (road_half - 0.07)), 0.09, aa);
+	float edge_y = line_mask(abs(x - median_side * (road_half - 0.07)), 0.09, aa);
+	float edge = max(edge_w, edge_y);
 	float dash = step(mod(z, 12.0), 3.2);
 	float lanes = max(line_mask(abs(x + 3.6), 0.08, aa), max(line_mask(abs(x), 0.08, aa), line_mask(abs(x - 3.6), 0.08, aa))) * dash;
 	float wear = 0.8 + 0.2 * pnoise(vec2(x * 12.0, z * 1.5), PERIOD * 1.5);
-	col = mix(col, paint * (0.85 + 0.15 * n_fine), max(edge, lanes) * wear);
+	col = mix(col, paint * (0.85 + 0.15 * n_fine), max(edge_w, lanes) * wear);
+	col = mix(col, paint_yellow * (0.82 + 0.15 * n_fine), edge_y * wear);
 
 	// raised reflective markers between the dashes
 	float mz = abs(mod(z, 12.0) - 7.6);

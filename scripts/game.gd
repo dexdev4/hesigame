@@ -278,6 +278,7 @@ var _probe := {}  # first-run frame-rate check that picks the graphics level
 
 func _ready() -> void:
 	var args := OS.get_cmdline_user_args()
+	_deal_rng.randomize()
 	Input.use_accumulated_input = false  # touches reach the steering as they happen, not once a frame
 	autotest = args.has("--autotest")
 	if args.has("--fast"):
@@ -391,6 +392,7 @@ func _ready() -> void:
 			PerfProbe.on = true
 		if a.begins_with("--seed="):  # the same random world every run (test aid; with --fixed-fps a run repeats exactly)
 			seed(int(a.substr(7)))
+			_deal_rng.seed = int(a.substr(7)) + 99  # (the deals' own numbers too)
 		if a.begins_with("--shot-frame="):  # FRAME:PATH: a screenshot at that frame (test aid)
 			var sf := a.substr(13).split(":", true, 1)
 			_shot_frames.append([int(sf[0]), sf[1]])
@@ -431,6 +433,7 @@ func _ready() -> void:
 	_build_environment()
 	scenery = Scenery.new()
 	add_child(scenery)
+	scenery.set_biome(Data.route_info(int(Save.data.get("route_sel", 0))).land)  # (what the menus show behind them: the highway chosen last)
 	_apply_gfx()
 	cam = Camera3D.new()
 	cam.keep_aspect = Camera3D.KEEP_WIDTH
@@ -2861,13 +2864,18 @@ func _collisions() -> void:
 # ---------------------------------------------------------------- run flow
 
 ## Drive this highway: its landscape, sky and difficulty.
+var _biome_fog := Color("#cdc6b6")  # the haze of the highway's country by day (see _apply_time)
+
+
 func _set_route(i: int) -> void:
 	Data.route = clampi(i, 0, Data.ROUTES.size() - 1)
 	var land: Dictionary = Data.route_info(Data.route).land
 	_day = DAY.duplicate()
 	_day.top = land.sky
 	_day.hor = land.hor
+	_biome_fog = land.get("fog", Color("#cdc6b6"))
 	scenery.set_biome(land)
+	_time_applied = -1.0  # (the sky and the haze are worked out afresh)
 
 
 # ---------------------------------------------------------------- things built before they are needed
@@ -2977,7 +2985,7 @@ func _end_run(reason: String) -> void:
 	if best:
 		notes.append("New best run.")
 	if run.cash_bonus > 0:
-		notes.append("Includes $%s in boss prize money." % Fmt.num(run.cash_bonus))
+		notes.append("Includes $%s in boss prizes and deals." % Fmt.num(run.cash_bonus))
 	if run.fuel_paid > 0:
 		notes.append("Fuel cost $%s this run." % Fmt.num(run.fuel_paid))
 	var wear_now := Save.wear(String(Save.data.selected))
@@ -3024,7 +3032,13 @@ func _show_pick(bi: Dictionary, unlocked_new: bool) -> void:
 			continue  # (one jammer is all a car needs)
 		pool.append(b)
 	pool.shuffle()
-	var opts := pool.slice(0, 3)
+	# two upgrades and a deal, when the run can take one (Deals): the upgrades are the first two of the shuffle, as ever
+	var run_cash: int = int(_funds().run)
+	var opts := Deals.cards(pool, Deals.available(run.lives, run_cash), _deal_rng.randf())
+	for i in opts.size():
+		if opts[i].get("deal", false):
+			opts[i] = opts[i].duplicate()
+			opts[i]["after"] = Deals.preview(String(opts[i].id), run.lives, run_cash)
 	var line := "Choose one upgrade for the rest of this run."
 	var boss_car := Data.car_by_id(bi.car)
 	if unlocked_new:
@@ -3036,7 +3050,10 @@ func _show_pick(bi: Dictionary, unlocked_new: bool) -> void:
 		print("[autotest] beat %s, holding the pick screen (frame %d)" % [bi.full, _frame])
 	if autotest and not _test_hold_pick:
 		var pick: String = _test_boon if _test_boon != "" else opts[0].id
-		print("[autotest] beat %s, picking %s (frame %d)" % [bi.full, pick, _frame])
+		var offered: Array = []
+		for o in opts:
+			offered.append(String(o.id))
+		print("[autotest] beat %s, picking %s of %s (frame %d)" % [bi.full, pick, "/".join(offered), _frame])
 		_apply_boon(pick)
 
 
@@ -3052,9 +3069,29 @@ func _clear_road() -> void:
 	run.clear_t = 1.0
 
 
+var _deal_rng := RandomNumberGenerator.new()  # (its own: the toss of a coin and the choice of a deal must not move the simulation's random numbers)
+
+
+## Take a deal after a boss (see Deals): lives, the run's earnings and its multipliers change as the deal says.
+func _take_deal(id: String) -> void:
+	var before_lives := run.lives
+	var before_cash := int(_funds().run)
+	var o := Deals.outcome(id, _deal_rng.randf())
+	run.lives = clampi(run.lives + int(o.lives), 1, Data.MAX_LIVES)
+	run.cash_bonus += int(o.cash)
+	run.mods.score *= float(o.score)
+	for k in o.mods:
+		run.mods[k] *= float(o.mods[k])
+	_notify(String(o.text).to_upper(), "bad" if o.bad else "hot")
+	if autotest:
+		print("[autotest] deal %s: lives %d -> %d, the run's money $%d -> $%d, score x%.2f" % [id, before_lives, run.lives, before_cash, int(_funds().run), run.mods.score])
+
+
 func _apply_boon(id: String) -> void:
 	if run == null:
 		return
+	if Deals.is_deal(id):
+		_take_deal(id)
 	match id:
 		"accel": run.mods.accel *= 1.15
 		"brake": run.mods.brake *= 1.2
@@ -3650,7 +3687,7 @@ func _apply_time(hour: float, part := -1) -> void:
 			sm.ground_horizon_color = col.call("ghor")
 			sm.sky_energy_multiplier = num.call("sky")
 		_env.ambient_light_energy = num.call("amb")
-		_env.fog_light_color = col.call("fog")
+		_env.fog_light_color = (col.call("fog") as Color).lerp(_biome_fog, 0.55 * (1.0 - _lights))  # (by day the haze takes a tint of the country: warm dust, cool pine mist, bright sea air)
 		_env.tonemap_exposure = num.call("exp")
 		_lights = num.call("lights")
 		_env.adjustment_saturation = lerpf(1.12, 0.9, _lights)
@@ -4966,6 +5003,7 @@ func _on_act(action: String, arg: String) -> void:
 			var ri := int(arg)
 			if ri < int(Save.data.get("routes", 1)):
 				Save.data.route_sel = ri
+				_warm.append(scenery.warm_flora.bind(String(Data.route_info(ri).land.flora)))  # (its plants are made while the map is up, not as the run starts)
 				Save.persist()
 				sound.play("ding", 1.4, -8.0)
 				hud.render_map()
@@ -5178,9 +5216,11 @@ func _on_act(action: String, arg: String) -> void:
 		"boon":
 			if state == S.PICK:
 				_apply_boon(arg)
-		"pick_demo":  # test aid (--open=pick_demo): the upgrade pick screen with the wordiest upgrades, to see how it fits
+		"pick_demo":  # test aid (--open=pick_demo, or pick_demo:blood and the like for another deal): the upgrade pick screen with the wordiest cards, to see how it fits
+			var demo_deal: Dictionary = Deals.by_id(arg if Deals.is_deal(arg) else "gamble").duplicate()
+			demo_deal["after"] = Deals.preview(String(demo_deal.id), 3, 12400)
 			hud.show_pick("Copperhead beaten · +$200 prize", "The Copperhead is now for sale in the Garage. Choose one upgrade for the rest of this run.",
-				[Data.BOONS[12], Data.BOONS[10], Data.BOONS[9]])
+				[Data.BOONS[12], Data.BOONS[10], demo_deal])
 		"refuel_demo":  # test aid (--open=refuel_demo): the pump screen at a stop where the prices have climbed a long way, to see how it fits
 			hud.show_refuel({"name": "Interstate Oil", "grade": "premium", "prices": {"regular": 41.59, "mid": 46.59, "premium": 56.59}, "rise": 0.17,
 				"fuel": 9.5, "tank": 52.0, "litres": 12.3, "bill": 696.0, "pumping": false, "bank": 12400, "run": 3400, "total": 15800, "to_fill": 2410.0,

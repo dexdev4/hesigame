@@ -40,7 +40,6 @@ var _clouds: Node3D
 var _far_mats: Array[ShaderMaterial] = []
 var _pool_mat: StandardMaterial3D
 var _pools: MeshInstance3D
-var _hill_mat: StandardMaterial3D
 var _rock_mat: StandardMaterial3D
 var _oncoming: Array = []   # {model, x, z, v}
 var _t := 0.0
@@ -79,6 +78,7 @@ func _ready() -> void:
 		var mat := ShaderMaterial.new()
 		mat.shader = load("res://shaders/road.gdshader")
 		mat.set_shader_parameter("center_x", cx)
+		mat.set_shader_parameter("median_side", -1.0 if cx == 0.0 else 1.0)  # (the median is on the left of ours and the right of the westbound one)
 		var road := MeshInstance3D.new()
 		var pm := PlaneMesh.new()
 		pm.size = Vector2(Data.RAIL * 2.0 + 1.0, length)
@@ -120,16 +120,18 @@ func _ready() -> void:
 	add_child(_merged(static_parts))
 
 	_build_loops()
-	_build_trees()
+	_build_swell()
 	_build_hills()
 	_build_rocks()
 	_build_far()
+	_build_sea()
 	_build_km_sign()
 	_build_gantry()
 	_add_slot(1300.0, 420.0, 2, _setup_sign_gantry)
 	_add_slot(2100.0, 1150.0, 2, _setup_overpass)
 	_add_slot(900.0, 260.0, 2, _setup_billboard)
 	_add_slot(350.0, 90.0, 3, _setup_farm)
+	_add_slot(2600.0, 700.0, 2, _setup_speed_sign)
 
 
 # ---------------------------------------------------------------- fuel stops
@@ -358,175 +360,72 @@ func _build_loops() -> void:
 	_loop(60.0).add_child(_merged(poles))
 
 
-func _build_trees() -> void:
+# ---------------------------------------------------------------- plants, hills and rocks
+
+var _flora := {}          # kind of country (Flora.KINDS) -> the loop holding its plants, built the first time it is wanted
+var _hills: Array = []    # the hills of each side: [right, left]
+var _swells: Array = []   # the rolling ground of each side
+var _sea: MeshInstance3D
+var _sea_mat: ShaderMaterial
+var _rocks_holder: Node3D
+
+
+func _flora_cfg() -> Dictionary:
+	return {"period": TREE_PERIOD, "behind": VIEW_BEHIND, "rail": Data.RAIL, "opp_x": OPP_X, "median_x": MEDIAN_X, "site_clear": site_clear, "ground": ground_at}
+
+
+const SWELL_FROM := 18.0   # m beyond the rail where the ground begins to roll
+const HILLS_FROM := 78.0   # ...and where the hills begin
+
+
+## How high the rolling ground stands (m, before the country's relief) d metres beyond the rail, pz along one TREE_PERIOD of
+## road, on the right (side 1) or the left (-1) of the highway: flat by the road, swelling out to a few metres and then giving way to the hills.
+static func swell_h(d: float, pz: float, side: float) -> float:
+	var w := TAU / TREE_PERIOD
+	var ph := 0.0 if side > 0.0 else 2.1
+	var ramp := smoothstep(SWELL_FROM, SWELL_FROM + 40.0, d) * (1.0 - smoothstep(HILLS_FROM + 20.0, HILLS_FROM + 50.0, d))
+	var h := 1.5 * sin(pz * w * 3.0 + ph + d * 0.03) + 1.0 * sin(pz * w * 8.0 + 1.3 + ph - d * 0.02) + 1.2 * sin(d * 0.05 + pz * w * 2.0 + ph * 1.7)
+	return maxf(0.0, h + 0.7) * ramp * 0.9
+
+
+## How high the hills stand d metres beyond the rail (they begin HILLS_FROM out).
+static func hill_h(d: float, pz: float, side: float) -> float:
+	var w := TAU / TREE_PERIOD
+	var seed_ph := 0.0 if side > 0.0 else 2.3
+	var dh := d - HILLS_FROM  # metres out from the hills' foot
+	if dh <= 0.0:
+		return 0.0
+	var ramp := smoothstep(0.0, 70.0, dh)
+	var hh := 14.0 + 9.0 * sin(pz * w * 2.0 + seed_ph) + 7.0 * sin(pz * w * 5.0 + 1.7 + seed_ph) + 4.0 * sin(pz * w * 11.0 + dh * 0.02)
+	hh += 10.0 * sin(dh * 0.018 + pz * w * 3.0 + seed_ph)
+	return maxf(0.0, maxf(0.0, hh) * ramp - 0.5)
+
+
+## (swell, hill) heights at world x and pattern z (what Flora puts its plants on).
+static func ground_at(x: float, pz: float) -> Vector2:
+	var side := 1.0 if x > 0.0 else -1.0
+	var d := (x - Data.RAIL) if x > 0.0 else (OPP_X - Data.RAIL - x)
+	if d < 0.0:
+		return Vector2.ZERO
+	return Vector2(swell_h(d, pz, side), hill_h(d, pz, side))
+
+
+## Make the plants of a kind of country (Flora) now, if that has not been done: about 40 ms. It is called when a highway is
+## chosen (set_biome), and by the garage ahead of time (Game._warm_up_list), so that a run does not start with it.
+func warm_flora(kind: String) -> void:
+	if _flora.has(kind):
+		return
+	var t0 := PerfProbe.t()
+	var data := Flora.build(kind, _flora_cfg())
 	var holder := _loop(TREE_PERIOD)
-	var rng := RandomNumberGenerator.new()
-	rng.seed = 7
-	# One period of random trees and bushes, repeated so the view is always covered.
-	var pattern: Array = []
-	var z := 0.0
-	while z < TREE_PERIOD:
-		z += rng.randf_range(3.5, 9.0)
-		var right := rng.randf() < 0.55
-		var x := (Data.RAIL + 6.0 + rng.randf() * 60.0) if right else (OPP_X - Data.RAIL - 6.0 - rng.randf() * 60.0)
-		var item := {"z": z, "x": x, "k": rng.randf(), "s": rng.randf_range(0.8, 1.5), "bush": false}
-		if not site_clear(z, x):
-			pattern.append(item)
-		if rng.randf() < 0.7:  # bushes close to the road and in the median
-			var bx := Data.RAIL + rng.randf_range(2.0, 9.0)
-			var r2 := rng.randf()
-			if r2 < 0.3:
-				bx = MEDIAN_X + rng.randf_range(-1.2, 1.2)
-			elif r2 < 0.55:
-				bx = OPP_X - Data.RAIL - rng.randf_range(2.0, 9.0)
-			var bush := {"z": z + rng.randf_range(0, 4), "x": bx, "k": rng.randf(), "s": rng.randf_range(0.5, 1.1), "bush": true}
-			if not site_clear(bush.z, bx):
-				pattern.append(bush)
-
-	var items: Array = []
-	for rep in 3:
-		for p in pattern:
-			var it: Dictionary = p.duplicate()
-			it.z = -(p.z + rep * TREE_PERIOD) + VIEW_BEHIND
-			items.append(it)
-	var trunks: Array = []
-	var crowns: Array = []
-	var pines: Array = []
-	var bushes: Array = []
-	var tufts: Array = []
-	var rocks: Array = []
-	var shadows: Array = []
-	var vr := RandomNumberGenerator.new()
-	vr.seed = 31
-	for it in items:
-		var s: float = it.s
-		var pos := Vector3(it.x, 0, it.z)
-		if it.bush:
-			var r := 0.9 * s
-			bushes.append([Transform3D(Basis().scaled(Vector3(r * 1.4, r * 0.8, r * 1.2)), pos + Vector3(0, r * 0.5, 0)),
-				Color("#3b5a2b").lerp(Color("#56703a"), it.k)])
-			continue
-		var pine: bool = it.k > 0.5
-		var birch: bool = not pine and vr.randf() < 0.18
-		var trunk_h := (1.6 if pine else 2.6) * s
-		var bark := Color("#d9d6cc") if birch else Color("#4f3d2a").lerp(Color("#3a2d20"), vr.randf())
-		trunks.append([Transform3D(Basis().scaled(Vector3(s, trunk_h, s)), pos + Vector3(0, trunk_h / 2.0, 0)), bark])
-		var tint := vr.randf_range(-0.06, 0.06)
-		if pine:
-			# tiered spruce: three stacked cones
-			var h: float = (6.0 + it.k * 6.0) * s
-			var r: float = (1.6 + it.k) * s
-			var green := (Color("#24402a") if it.k > 0.75 else Color("#2c4a2c")).lightened(tint) if tint > 0 else (Color("#24402a") if it.k > 0.75 else Color("#2c4a2c")).darkened(-tint)
-			# five tiers of branches, each a little smaller, slightly off-centre and
-			# tilted, alternating darker and lighter needles, with a thin tip
-			for t in 5:
-				var f := 1.0 - t * 0.17
-				var jit := Vector3(vr.randf_range(-0.08, 0.08), 0, vr.randf_range(-0.08, 0.08)) * r
-				var tilt := Basis(Vector3(vr.randf_range(-1, 1), 0, vr.randf_range(-1, 1)).normalized(), vr.randf_range(0.0, 0.08))
-				var shade := green.lightened(0.05) if t % 2 == 0 else green.darkened(0.06)
-				pines.append([Transform3D(tilt.scaled(Vector3(r * f, h * 0.34 * f, r * f)), pos + jit + Vector3(0, trunk_h + h * (0.06 + t * 0.16), 0)), shade])
-			pines.append([Transform3D(Basis().scaled(Vector3(r * 0.18, h * 0.22, r * 0.18)), pos + Vector3(0, trunk_h + h * 0.9, 0)), green.lightened(0.08)])
-			shadows.append(Transform3D(Basis().scaled(Vector3(r * 2.6, 1, r * 2.6)), pos + Vector3(0.6, 0.03, 0.3)))
-		else:
-			var r2: float = (2.0 + it.k * 3.0) * s
-			var leaf_c := (Color("#3e5a2e") if it.k > 0.25 else Color("#4c6a35")).lerp(Color("#6b7a3a"), vr.randf() * 0.35)
-			if birch:
-				leaf_c = Color("#6f8a3e")
-			# main crown plus clumps of leaves round it, lighter on top where the sun hits
-			crowns.append([Transform3D(Basis().scaled(Vector3(r2, r2 * 0.85, r2) * 0.85), pos + Vector3(0, trunk_h + r2 * 0.55, 0)), leaf_c.darkened(0.05)])
-			for q in 6:
-				var ang := TAU * q / 6.0 + vr.randf_range(-0.4, 0.4)
-				var up := vr.randf_range(0.25, 1.05)
-				var cs := r2 * vr.randf_range(0.42, 0.62)
-				var off := Vector3(cos(ang) * r2 * 0.55, trunk_h + r2 * (0.3 + up * 0.55), sin(ang) * r2 * 0.55)
-				crowns.append([Transform3D(Basis().scaled(Vector3(cs, cs * 0.85, cs)), pos + off), leaf_c.lightened(0.03 + up * 0.08) if up > 0.6 else leaf_c.darkened(0.04)])
-			crowns.append([Transform3D(Basis().scaled(Vector3(r2, r2, r2) * 0.5), pos + Vector3(0, trunk_h + r2 * 1.15, 0)), leaf_c.lightened(0.12)])
-			# a few branches leaving the trunk into the crown
-			for q in 3:
-				var ang2 := TAU * q / 3.0 + vr.randf()
-				var dir := Vector3(cos(ang2) * 0.6, 1.0, sin(ang2) * 0.6).normalized()
-				var bl := r2 * 0.9
-				var bx := Vector3.UP.cross(dir).normalized()
-				var bz := bx.cross(dir).normalized()
-				var bb := Basis(bx * s * 0.45, dir * bl, bz * s * 0.45)
-				trunks.append([Transform3D(bb, pos + Vector3(0, trunk_h * 0.85, 0) + dir * bl * 0.5), bark.darkened(0.05)])
-			shadows.append(Transform3D(Basis().scaled(Vector3(r2 * 2.4, 1, r2 * 2.4)), pos + Vector3(r2 * 0.4, 0.03, r2 * 0.2)))
-
-	# grass tufts and rocks along the verges and median, and a dense treeline in the distance
-	for rep2 in 3:
-		for k in 1800:
-			var z2 := -vr.randf() * TREE_PERIOD - rep2 * TREE_PERIOD + VIEW_BEHIND
-			var band := vr.randf()
-			var x2: float
-			if band < 0.45:
-				x2 = Data.RAIL + vr.randf_range(0.8, 13.0)
-			elif band < 0.6:
-				x2 = MEDIAN_X + vr.randf_range(-1.8, 1.8)
-			else:
-				x2 = OPP_X - Data.RAIL - vr.randf_range(0.8, 11.0)
-			var hgt := vr.randf_range(0.25, 0.7)
-			var col := Color("#4d6a2c").lerp(Color("#9a8f52"), vr.randf() * 0.7)
-			var tuft_t := Transform3D(Basis(Vector3.UP, vr.randf() * TAU).scaled(Vector3(vr.randf_range(0.15, 0.35), hgt, vr.randf_range(0.15, 0.35))), Vector3(x2, hgt / 2.0, z2))
-			if not site_clear(fposmod(VIEW_BEHIND - z2, TREE_PERIOD), x2):
-				tufts.append([tuft_t, col])
-		for k in 40:
-			var z3 := -vr.randf() * TREE_PERIOD - rep2 * TREE_PERIOD + VIEW_BEHIND
-			var x3 := (Data.RAIL + vr.randf_range(3.0, 20.0)) * (1.0 if vr.randf() < 0.6 else -1.0)
-			if x3 < 0.0:
-				x3 = OPP_X - Data.RAIL - vr.randf_range(3.0, 20.0)
-			var rs := vr.randf_range(0.3, 1.0)
-			var rock: Array = [Transform3D(Basis(Vector3.UP, vr.randf() * TAU).scaled(Vector3(rs * 1.3, rs * 0.6, rs)), Vector3(x3, rs * 0.2, z3)),
-				Color("#8a8679").lerp(Color("#6b675e"), vr.randf())]
-			if not site_clear(fposmod(VIEW_BEHIND - z3, TREE_PERIOD), x3):
-				rocks.append(rock)
-		for k in 420:
-			var z4 := -vr.randf() * TREE_PERIOD - rep2 * TREE_PERIOD + VIEW_BEHIND
-			var x4 := Data.RAIL + vr.randf_range(75.0, 170.0) if vr.randf() < 0.5 else OPP_X - Data.RAIL - vr.randf_range(75.0, 170.0)
-			var th := vr.randf_range(9.0, 16.0)
-			var tr := vr.randf_range(2.2, 3.6)
-			var tc := Color("#2a4229").lerp(Color("#3b5230"), vr.randf())
-			pines.append([Transform3D(Basis().scaled(Vector3(tr, th * 0.62, tr)), Vector3(x4, th * 0.31, z4)), tc])
-			pines.append([Transform3D(Basis().scaled(Vector3(tr * 0.7, th * 0.55, tr * 0.7)), Vector3(x4, th * 0.7, z4)), tc.lightened(0.05)])
-
-	var trunk_mesh := CylinderMesh.new()
-	trunk_mesh.top_radius = 0.16
-	trunk_mesh.bottom_radius = 0.26
-	trunk_mesh.height = 1.0
-	trunk_mesh.radial_segments = 6
-	trunk_mesh.rings = 1  # (a straight taper: more rings only add triangles)
-	var crown_mesh := SphereMesh.new()
-	crown_mesh.radius = 1.0
-	crown_mesh.height = 1.8
-	crown_mesh.radial_segments = 9
-	crown_mesh.rings = 5
-	var pine_mesh := CylinderMesh.new()
-	pine_mesh.top_radius = 0.0
-	pine_mesh.bottom_radius = 1.0
-	pine_mesh.height = 1.0
-	pine_mesh.radial_segments = 8
-	pine_mesh.rings = 1   # (a cone's side is the same shape however many rings it is cut into)
-	var leaf := StandardMaterial3D.new()
-	leaf.vertex_color_use_as_albedo = true
-	leaf.roughness = 1.0
-	var tuft_mesh := CylinderMesh.new()
-	tuft_mesh.top_radius = 0.0
-	tuft_mesh.bottom_radius = 1.0
-	tuft_mesh.height = 1.0
-	tuft_mesh.radial_segments = 5
-	tuft_mesh.rings = 1
-	var rock_mesh := SphereMesh.new()
-	rock_mesh.radius = 1.0
-	rock_mesh.height = 2.0
-	rock_mesh.radial_segments = 7
-	rock_mesh.rings = 4
-	# A multimesh is drawn whole or not at all, and the trees run the length of three TREE_PERIODs (1800 m, far more than
-	# can be seen at once, and the shadow maps reach 90 m). So each kind is cut into pieces CHUNK metres long: the
-	# renderer then skips the pieces behind the car, beyond the far plane or out of the shadows' reach. Nothing
-	# visible changes.
-	for pair in [[trunks, trunk_mesh], [crowns, crown_mesh], [pines, pine_mesh], [bushes, crown_mesh], [tufts, tuft_mesh], [rocks, rock_mesh]]:
-		var list: Array = pair[0]
+	holder.visible = false
+	# A multimesh is drawn whole or not at all, and the plants run the length of three TREE_PERIODs (1800 m, far more than can
+	# be seen at once, and the shadow maps reach 90 m). So each kind of plant is cut into pieces CHUNK metres long: the
+	# renderer then skips the pieces behind the car, beyond the far plane or out of the shadows' reach, and a piece
+	# whose middle is farther than the plant's range (where the depth fog has hidden it) is not drawn at all.
+	for b: Dictionary in data.batches:
 		var groups := {}
-		for item in list:
+		for item in b.items:
 			var k := int(floor((item[0] as Transform3D).origin.z / CHUNK))
 			if not groups.has(k):
 				groups[k] = []
@@ -536,21 +435,23 @@ func _build_trees() -> void:
 			var mm := MultiMesh.new()
 			mm.transform_format = MultiMesh.TRANSFORM_3D
 			mm.use_colors = true
-			mm.mesh = pair[1]
+			mm.mesh = b.mesh
 			mm.instance_count = piece.size()
 			for i in piece.size():
 				mm.set_instance_transform(i, piece[i][0])
 				mm.set_instance_color(i, piece[i][1])
 			var mmi := MultiMeshInstance3D.new()
 			mmi.multimesh = mm
-			mmi.material_override = leaf
-			if pair[1] == tuft_mesh or pair[1] == rock_mesh:
+			mmi.material_override = Flora.material(bool(b.thin))
+			if not b.shadow:
 				mmi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			if float(b.range) > 0.0:
+				mmi.visibility_range_end = float(b.range)
 			holder.add_child(mmi)
-	# soft contact shadows under the trees, so they sit on the ground beyond the shadow distance
-	CarModel._shadow()
+	# soft contact shadows under the big plants, so they sit on the ground beyond the shadow distance
+	var blob_mat := _blob_material()
 	var sgroups := {}
-	for t in shadows:
+	for t in data.blobs:
 		var sk := int(floor((t as Transform3D).origin.z / CHUNK))
 		if not sgroups.has(sk):
 			sgroups[sk] = []
@@ -559,94 +460,164 @@ func _build_trees() -> void:
 		var sitems: Array = sgroups[sk]
 		var smm := MultiMesh.new()
 		smm.transform_format = MultiMesh.TRANSFORM_3D
-		smm.mesh = CarModel._shadow_mesh
+		smm.mesh = CarModel._shadow()
 		smm.instance_count = sitems.size()
 		for i in sitems.size():
 			smm.set_instance_transform(i, sitems[i])
 		var smi := MultiMeshInstance3D.new()
 		smi.multimesh = smm
-		smi.material_override = CarModel._shadow_mat
+		smi.material_override = blob_mat
 		smi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		smi.visibility_range_end = 300.0
 		holder.add_child(smi)
+	_flora[kind] = holder
+	PerfProbe.note("plants of the %s country" % kind, t0)
+
+
+static var _blob_mat: StandardMaterial3D
+
+
+## The soft patch of shade under a plant: fainter than a car's (a plant near the car has its real shadow as well).
+static func _blob_material() -> StandardMaterial3D:
+	if _blob_mat == null:
+		var g := Gradient.new()
+		g.set_color(0, Color(0, 0, 0, 0.3))
+		g.set_color(1, Color(0, 0, 0, 0.0))
+		g.add_point(0.55, Color(0, 0, 0, 0.2))
+		var tex := GradientTexture2D.new()
+		tex.gradient = g
+		tex.fill = GradientTexture2D.FILL_RADIAL
+		tex.fill_from = Vector2(0.5, 0.5)
+		tex.fill_to = Vector2(0.5, 0.0)
+		tex.width = 64
+		tex.height = 64
+		_blob_mat = StandardMaterial3D.new()
+		_blob_mat.albedo_texture = tex
+		_blob_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		_blob_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		_blob_mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+	return _blob_mat
 
 
 ## The landscape of the highway being driven (a Data.BIOMES entry).
 func set_biome(land: Dictionary) -> void:
-	for k in ["grass_a", "grass_b", "field", "dirt"]:
+	for k in ["grass_a", "grass_b", "field", "dirt", "accent"]:
 		_grass_mat.set_shader_parameter(k, land[k])
+	_grass_mat.set_shader_parameter("style", int(land.get("style", 0)))
+	_grass_mat.set_shader_parameter("sea_x", float(land.get("sea_x", -1.0e5)))
 	if _rock_mat:
 		_rock_mat.albedo_color = (land.dirt as Color).lerp(Color("#8d8a82"), 0.55)
-	if _hill_mat:
-		_hill_mat.albedo_color = (land.grass_b as Color).lerp(land.field, 0.2).darkened(0.08)
+	var kind: String = land.get("flora", "temperate")
+	warm_flora(kind)
+	for k in _flora:
+		(_flora[k] as Node3D).visible = k == kind
+	_set_far(kind)
+	var shore: float = land.get("sea_x", 0.0)
+	var by_the_sea: bool = land.has("sea_x")
+	_sea.visible = by_the_sea
+	if by_the_sea:
+		_sea.position.x = shore - 1300.0
+		_sea_mat.set_shader_parameter("shore_x", shore)
+	(_hills[1] as Node3D).visible = not by_the_sea   # (the left of a coast road is the beach and the sea)
+	(_swells[1] as Node3D).visible = not by_the_sea
+	var relief: float = Flora.RELIEF.get(kind, 1.0)  # (how much the ground rolls here: the swells and the rocks on them are raised by it)
+	for sw in _swells:
+		(sw as Node3D).scale.y = relief
+	if _rocks_holder:
+		_rocks_holder.scale.y = relief
 
 
-## Rolling country beyond the fields on both sides: low grassy hills with
-## darker woods along their crests, one seamless TREE_PERIOD strip repeated
-## (so it scrolls with the road like the trees). Colour follows the highway's
-## country (set_biome).
+## Rolling country beyond the fields on both sides: low hills with darker woods along their crests, one seamless
+## TREE_PERIOD strip repeated (so it scrolls with the road like the plants). They are drawn with the ground's own shader, so
+## their colour carries on from the fields without a seam, and follows the highway's country (set_biome).
 func _build_hills() -> void:
-	var holder := _loop(TREE_PERIOD)
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var nx := 16
 	var nz := 60
-	var w := TAU / TREE_PERIOD
 	for side in [1.0, -1.0]:
-		var x0: float = (Data.RAIL + 78.0) if side > 0.0 else (OPP_X - Data.RAIL - 78.0)
-		var seed_ph := 0.0 if side > 0.0 else 2.3
-		var hgt := func(xi: float, z: float) -> float:
-			var d := xi * 260.0  # metres out from the hills' foot
-			var ramp := smoothstep(0.0, 70.0, d)
-			var hh := 14.0 + 9.0 * sin(z * w * 2.0 + seed_ph) + 7.0 * sin(z * w * 5.0 + 1.7 + seed_ph) + 4.0 * sin(z * w * 11.0 + d * 0.02)
-			hh += 10.0 * sin(d * 0.018 + z * w * 3.0 + seed_ph)
-			return maxf(0.0, hh) * ramp - 0.5
+		var st := SurfaceTool.new()
+		st.begin(Mesh.PRIMITIVE_TRIANGLES)
+		for i in nx:
+			for j in nz:
+				var xa := float(i) / nx
+				var xb := float(i + 1) / nx
+				var za := float(j) / nz * TREE_PERIOD
+				var zb := float(j + 1) / nz * TREE_PERIOD
+				var quad := [[xa, za], [xb, za], [xb, zb], [xa, zb]]
+				var verts: Array = []
+				var cols: Array = []
+				for q in quad:
+					var d: float = HILLS_FROM + float(q[0]) * 260.0
+					var hx := hill_h(d, q[1], side) if q[0] > 0.0 else -0.5
+					var px: float = (Data.RAIL + d) if side > 0.0 else (OPP_X - Data.RAIL - d)
+					verts.append(Vector3(px, hx, VIEW_BEHIND - q[1]))
+					# woods on the higher ground, meadow below
+					var wood := smoothstep(16.0, 26.0, hx)
+					cols.append(Color(1, 1, 1).lerp(Color(0.62, 0.7, 0.58), wood))
+				var n: Vector3 = ((verts[1] as Vector3) - (verts[0] as Vector3)).cross((verts[3] as Vector3) - (verts[0] as Vector3)).normalized()
+				if n.y < 0.0:
+					n = -n
+				for k in [0, 1, 2, 0, 2, 3]:
+					st.set_color(cols[k])
+					st.set_normal(n)
+					st.add_vertex(verts[k])
+		st.generate_normals()
+		var mesh := st.commit()
+		var holder := _loop(TREE_PERIOD)
 		for rep in 3:
-			var zbase := VIEW_BEHIND - rep * TREE_PERIOD
-			for i in nx:
-				for j in nz:
-					var xa := float(i) / nx
-					var xb := float(i + 1) / nx
-					var za := float(j) / nz * TREE_PERIOD
-					var zb := float(j + 1) / nz * TREE_PERIOD
-					var quad := [[xa, za], [xb, za], [xb, zb], [xa, zb]]
-					var verts: Array = []
-					var cols: Array = []
-					for q in quad:
-						var hx: float = hgt.call(q[0], q[1])
-						var px: float = x0 + side * q[0] * 260.0
-						verts.append(Vector3(px, hx, zbase - q[1]))
-						# woods on the higher ground, meadow below
-						var wood := smoothstep(16.0, 26.0, hx)
-						cols.append(Color(1, 1, 1).lerp(Color(0.55, 0.62, 0.5), wood))
-					var n: Vector3 = ((verts[1] as Vector3) - (verts[0] as Vector3)).cross((verts[3] as Vector3) - (verts[0] as Vector3)).normalized()
-					if n.y < 0.0:
-						n = -n
-					for k in [0, 1, 2, 0, 2, 3]:
-						st.set_color(cols[k])
-						st.set_normal(n)
-						st.add_vertex(verts[k])
-	st.generate_normals()
-	var mi := MeshInstance3D.new()
-	mi.mesh = st.commit()
-	_hill_mat = StandardMaterial3D.new()
-	_hill_mat.vertex_color_use_as_albedo = true
-	_hill_mat.albedo_color = Color(0.3, 0.42, 0.18)
-	_hill_mat.roughness = 1.0
-	_hill_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-	mi.material_override = _hill_mat
-	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	holder.add_child(mi)
+			var mi := MeshInstance3D.new()
+			mi.mesh = mesh
+			mi.material_override = _grass_mat
+			mi.position.z = -float(rep) * TREE_PERIOD
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			holder.add_child(mi)
+		_hills.append(holder)
 
 
-## Boulders and rock outcrops along the verges and out on the hills: lumpy
-## faceted stones in clusters (a big one with a few small ones beside it),
-## one TREE_PERIOD strip repeated. Colour follows the highway's country.
+## The ground rolling gently beside the road, out to where the hills take over: a strip of low swells, one TREE_PERIOD
+## repeated, in the ground's own shader (so there is no seam), raised by the country's relief (set_biome). It is what keeps
+## the land from being a table: the plants stand on it (Flora).
+func _build_swell() -> void:
+	var nd := 16
+	var nz := 50
+	var d0 := SWELL_FROM - 6.0
+	var d1 := HILLS_FROM + 52.0
+	for side in [1.0, -1.0]:
+		var st := SurfaceTool.new()
+		st.begin(Mesh.PRIMITIVE_TRIANGLES)
+		for i in nd:
+			for j in nz:
+				var quad := [[i, j], [i + 1, j], [i + 1, j + 1], [i, j + 1]]
+				var verts: Array = []
+				for q in quad:
+					var d := lerpf(d0, d1, float(q[0]) / nd)
+					var pz := float(q[1]) / nz * TREE_PERIOD
+					var px: float = (Data.RAIL + d) if side > 0.0 else (OPP_X - Data.RAIL - d)
+					verts.append(Vector3(px, swell_h(d, pz, side), VIEW_BEHIND - pz))
+				for k in [0, 1, 2, 0, 2, 3]:
+					st.set_color(Color(1, 1, 1))
+					st.set_normal(Vector3.UP)
+					st.add_vertex(verts[k])
+		st.generate_normals()
+		var mesh := st.commit()
+		var holder := _loop(TREE_PERIOD)
+		for rep in 3:
+			var mi := MeshInstance3D.new()
+			mi.mesh = mesh
+			mi.material_override = _grass_mat
+			mi.position.z = -float(rep) * TREE_PERIOD
+			mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			holder.add_child(mi)
+		_swells.append(holder)
+
+
+## Boulders and rock outcrops along the verges and out on the hills: lumpy faceted stones in clusters (a big one with a few
+## small ones beside it), one TREE_PERIOD strip repeated. Each piece of the strip is its own mesh, drawn only while it is near.
+## Colour follows the highway's country (set_biome).
 func _build_rocks() -> void:
 	var holder := _loop(TREE_PERIOD)
+	_rocks_holder = holder
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 53
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var pattern: Array = []
 	for k in 150:
 		var z := rng.randf() * TREE_PERIOD
@@ -658,45 +629,63 @@ func _build_rocks() -> void:
 		pattern.append([Vector3(x, 0, z), big, rng.randf() * TAU])
 		for q in rng.randi_range(1, 4):
 			pattern.append([Vector3(x + rng.randf_range(-2.2, 2.2) * big, 0, z + rng.randf_range(-2.2, 2.2) * big), big * rng.randf_range(0.25, 0.6), rng.randf() * TAU])
-	for rep in 3:
-		for it in pattern:
-			var c: Vector3 = it[0]
-			var r: float = it[1]
-			var pos := Vector3(c.x, 0.0, -(c.z + rep * TREE_PERIOD) + VIEW_BEHIND)
-			# a squashed, faceted blob: an icosphere-ish ellipsoid with jittered radii per ring
-			var seg := 7
-			var rings := 4
-			var verts: Array = []
-			for i in rings + 1:
-				var th := PI * i / rings
-				var row: Array = []
-				for j in seg:
-					var ph := TAU * j / seg + float(it[2])
-					var jit := 0.78 + 0.4 * fposmod(sin(float(i * 17 + j * 31) + float(it[2]) * 5.0) * 43758.5, 1.0)
-					row.append(pos + Vector3(sin(th) * cos(ph) * 1.25, cos(th) * 0.8 + 0.25, sin(th) * sin(ph)) * r * jit - Vector3(0, r * 0.2, 0))
-				verts.append(row)
-			for i in rings:
-				for j in seg:
-					var a: Vector3 = verts[i][j]
-					var b: Vector3 = verts[i][(j + 1) % seg]
-					var c2: Vector3 = verts[i + 1][(j + 1) % seg]
-					var d: Vector3 = verts[i + 1][j]
-					for tri in [[a, b, c2], [a, c2, d]]:
-						var n: Vector3 = ((tri[1] as Vector3) - (tri[0] as Vector3)).cross((tri[2] as Vector3) - (tri[0] as Vector3)).normalized()
-						if n.dot((tri[0] as Vector3) - (pos + Vector3(0, r * 0.3, 0))) < 0.0:
-							n = -n
-						for v in tri:
-							st.set_normal(n)  # flat shading: faceted stone
-							st.add_vertex(v)
-	var mi := MeshInstance3D.new()
-	mi.mesh = st.commit()
+	var chunks := {}  # which CHUNK of the strip -> its SurfaceTool
+	for it in pattern:
+		var c: Vector3 = it[0]
+		var r: float = it[1]
+		var ck := int(floor(fposmod(c.z, TREE_PERIOD) / CHUNK))
+		if not chunks.has(ck):
+			var nst := SurfaceTool.new()
+			nst.begin(Mesh.PRIMITIVE_TRIANGLES)
+			chunks[ck] = nst
+		var st: SurfaceTool = chunks[ck]
+		var pos := Vector3(c.x, ground_at(c.x, c.z).x, -c.z + VIEW_BEHIND)  # (on the swell: the holder's height is the country's relief)
+		var tone := 0.88 + 0.2 * rng.randf()
+		var tint := Color(tone, tone * rng.randf_range(0.97, 1.03), tone * rng.randf_range(0.95, 1.05))
+		# a squashed, faceted blob: an icosphere-ish ellipsoid with jittered radii per ring
+		var seg := 7
+		var rings := 4
+		var verts: Array = []
+		for i in rings + 1:
+			var th := PI * i / rings
+			var row: Array = []
+			for j in seg:
+				var ph := TAU * j / seg + float(it[2])
+				var jit := 0.78 + 0.4 * fposmod(sin(float(i * 17 + j * 31) + float(it[2]) * 5.0) * 43758.5, 1.0)
+				row.append(pos + Vector3(sin(th) * cos(ph) * 1.25, cos(th) * 0.8 + 0.25, sin(th) * sin(ph)) * r * jit - Vector3(0, r * 0.2, 0))
+			verts.append(row)
+		for i in rings:
+			for j in seg:
+				var a: Vector3 = verts[i][j]
+				var b: Vector3 = verts[i][(j + 1) % seg]
+				var c2: Vector3 = verts[i + 1][(j + 1) % seg]
+				var d: Vector3 = verts[i + 1][j]
+				for tri in [[a, b, c2], [a, c2, d]]:
+					var gn: Vector3 = ((tri[1] as Vector3) - (tri[0] as Vector3)).cross((tri[2] as Vector3) - (tri[0] as Vector3))
+					var n: Vector3 = gn.normalized()
+					if n.dot((tri[0] as Vector3) - (pos + Vector3(0, r * 0.3, 0))) < 0.0:
+						n = -n
+					# wound so that the outside is the front (Godot's front faces are the clockwise ones): a face wound the
+					# other way is seen as a back face, whose normal the shader turns round, and is lit from inside
+					var order: Array = [0, 1, 2] if gn.dot(n) < 0.0 else [0, 2, 1]
+					for vi in order:
+						st.set_normal(n)  # flat shading: faceted stone
+						st.set_color(tint)
+						st.add_vertex(tri[vi])
 	_rock_mat = StandardMaterial3D.new()
 	_rock_mat.albedo_color = Color("#8a8478")
+	_rock_mat.vertex_color_use_as_albedo = true
 	_rock_mat.roughness = 0.95
 	_rock_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-	mi.material_override = _rock_mat
-	mi.visibility_range_end = 260.0
-	holder.add_child(mi)
+	for ck in chunks:
+		var mesh := (chunks[ck] as SurfaceTool).commit()
+		for rep in 3:
+			var mi := MeshInstance3D.new()
+			mi.mesh = mesh
+			mi.material_override = _rock_mat
+			mi.position.z = -float(rep) * TREE_PERIOD
+			mi.visibility_range_end = 300.0
+			holder.add_child(mi)
 
 
 ## Night: street lamps come on and light the road, reflectors and road studs
@@ -722,50 +711,98 @@ func set_sky_tint(tint: Color, haze: Color) -> void:
 		m.set_shader_parameter("haze_col", haze)
 
 
+## The sea beside a coast road, on the left of the highway beyond the beach (the ground's shader draws the sand down to the shore).
+func _build_sea() -> void:
+	_sea = MeshInstance3D.new()
+	var pm := PlaneMesh.new()
+	pm.size = Vector2(2600.0, 2600.0)
+	_sea.mesh = pm
+	_sea_mat = ShaderMaterial.new()
+	_sea_mat.shader = load("res://shaders/sea.gdshader")
+	_sea.material_override = _sea_mat
+	_sea.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_sea.position = Vector3(-130.0 - 1300.0, 0.02, -640.0)
+	_sea.visible = false
+	add_child(_sea)
+
+
+## The ranges on the horizon for each kind of country: two layers drawn at 900 m and 600 m but scaled to look like ranges
+## 2 km and 1.3 km away. [distance, height range, base height, foot colour, top colour, haze, seed, mesas, jaggedness, size].
+const FAR := {
+	"temperate": [[900.0, 112.0, 32.0, Color("#5e6f86"), Color("#a2adb9"), 0.58, 11, false, 0.0, 1.0], [600.0, 53.0, 12.0, Color("#4b5f38"), Color("#76844f"), 0.42, 23, false, 0.0, 1.0]],
+	"autumn": [[900.0, 112.0, 32.0, Color("#666a86"), Color("#aab0c2"), 0.56, 12, false, 0.1, 1.0], [600.0, 53.0, 12.0, Color("#6a5a36"), Color("#a38a52"), 0.42, 24, false, 0.1, 1.0]],
+	"conifer": [[900.0, 130.0, 34.0, Color("#40586a"), Color("#8aa0ab"), 0.55, 13, false, 0.4, 1.0], [600.0, 62.0, 12.0, Color("#2a4733"), Color("#56765a"), 0.4, 25, false, 0.55, 1.0]],
+	"desert": [[900.0, 120.0, 30.0, Color("#9c6a58"), Color("#d4a587"), 0.5, 14, true, 0.0, 1.0], [600.0, 50.0, 10.0, Color("#b3804f"), Color("#dbb083"), 0.42, 26, true, 0.0, 1.0]],
+	"coast": [[900.0, 112.0, 30.0, Color("#86a3b8"), Color("#c0d2de"), 0.6, 15, false, 0.0, 0.4], [600.0, 53.0, 12.0, Color("#5f8250"), Color("#93ab6a"), 0.42, 27, false, 0.0, 0.5]],
+	"snow": [[900.0, 135.0, 36.0, Color("#7d8fa6"), Color("#f1f5f9"), 0.5, 16, false, 0.6, 1.0], [600.0, 62.0, 14.0, Color("#98a6b4"), Color("#e4ebf2"), 0.42, 28, false, 0.45, 1.0]],
+}
+var _far_layers: Array = []   # [MeshInstance3D, ...]
+var _far_kind := ""
+
+
+## The silhouette of one range, all the way round the front (a ribbon of triangles standing at L[0] metres).
+func _far_mesh(L: Array) -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = L[6]
+	var steps := 90
+	var phase := rng.randf() * 10.0
+	var prev_top := Vector3.ZERO
+	var prev_bot := Vector3.ZERO
+	for i in steps + 1:
+		var a := deg_to_rad(lerpf(-120.0, 120.0, float(i) / steps))
+		var f := 0.5 + 0.3 * sin(a * 7.0 + phase) + 0.2 * sin(a * 17.0 + phase * 2.0)
+		if bool(L[7]):  # mesas: flat tops and steep sides
+			f = clampf(f * 2.3 - 0.6, 0.0, 1.0) * 0.85 + 0.12 * sin(a * 31.0 + phase)
+		f += float(L[8]) * (0.3 * sin(a * 61.0 + phase * 3.0) + 0.18 * sin(a * 113.0 + phase))  # jagged peaks
+		var hgt: float = L[2] * float(L[9]) + L[1] * float(L[9]) * maxf(f, 0.05) * rng.randf_range(0.9, 1.08)
+		var dir := Vector3(sin(a), 0, -cos(a))
+		var top: Vector3 = dir * L[0] + Vector3(0, hgt, 0)
+		var bot: Vector3 = dir * L[0] + Vector3(0, -20, 0)
+		if i > 0:
+			st.add_vertex(prev_bot)
+			st.add_vertex(prev_top)
+			st.add_vertex(top)
+			st.add_vertex(prev_bot)
+			st.add_vertex(top)
+			st.add_vertex(bot)
+		prev_top = top
+		prev_bot = bot
+	return st.commit()
+
+
+## The ranges of a kind of country (set_biome).
+func _set_far(kind: String) -> void:
+	if kind == _far_kind:
+		return
+	_far_kind = kind
+	var layers: Array = FAR.get(kind, FAR.temperate)
+	for i in layers.size():
+		var L: Array = layers[i]
+		(_far_layers[i] as MeshInstance3D).mesh = _far_mesh(L)
+		var m := _far_mats[i]
+		m.set_shader_parameter("base_col", L[3])
+		m.set_shader_parameter("top_col", L[4])
+		m.set_shader_parameter("haze", L[5])
+		m.set_shader_parameter("max_h", float(L[1]) * float(L[9]) + float(L[2]) * float(L[9]))
+
+
 ## Mountains and clouds on the horizon. They stay at a fixed distance.
 func _build_far() -> void:
 	var far := Node3D.new()
 	add_child(far)
 	var shader: Shader = load("res://shaders/far.gdshader")
-	# Drawn at 900 m and 600 m but scaled to look like ranges 2 km and 1.3 km away.
-	var layers := [[900.0, 112.0, 32.0, Color("#5e6f86"), Color("#a2adb9"), 0.58, 11],
-		[600.0, 53.0, 12.0, Color("#4b5f38"), Color("#76844f"), 0.42, 23]]
-	for L in layers:
-		var st := SurfaceTool.new()
-		st.begin(Mesh.PRIMITIVE_TRIANGLES)
-		var rng := RandomNumberGenerator.new()
-		rng.seed = L[6]
-		var steps := 90
-		var phase := rng.randf() * 10.0
-		var prev_top := Vector3.ZERO
-		var prev_bot := Vector3.ZERO
-		for i in steps + 1:
-			var a := deg_to_rad(lerpf(-120.0, 120.0, float(i) / steps))
-			var hgt: float = L[2] + L[1] * (0.5 + 0.3 * sin(a * 7.0 + phase) + 0.2 * sin(a * 17.0 + phase * 2.0)) * rng.randf_range(0.8, 1.1)
-			var dir := Vector3(sin(a), 0, -cos(a))
-			var top: Vector3 = dir * L[0] + Vector3(0, hgt, 0)
-			var bot: Vector3 = dir * L[0] + Vector3(0, -20, 0)
-			if i > 0:
-				st.add_vertex(prev_bot)
-				st.add_vertex(prev_top)
-				st.add_vertex(top)
-				st.add_vertex(prev_bot)
-				st.add_vertex(top)
-				st.add_vertex(bot)
-			prev_top = top
-			prev_bot = bot
+	for i in 2:
 		var mi := MeshInstance3D.new()
-		mi.mesh = st.commit()
 		var m := ShaderMaterial.new()
 		m.shader = shader
-		m.set_shader_parameter("base_col", L[3])
-		m.set_shader_parameter("top_col", L[4])
-		m.set_shader_parameter("haze", L[5])
-		m.set_shader_parameter("max_h", L[1] + L[2])
 		mi.material_override = m
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		far.add_child(mi)
+		_far_layers.append(mi)
 		_far_mats.append(m)
+	_set_far("temperate")
 
 	# clouds: soft radial puffs, a few quads each
 	_clouds = Node3D.new()
@@ -964,6 +1001,26 @@ func _setup_billboard(n: Node3D, k: int) -> void:
 	root.add_child(SignKit.line(ad[1], em_t, fg, Vector3(0, top - cap_h - gap - cap_t / 2.0, 0.26)))
 
 
+## The speed limit (SpeedTrap.LIMIT: the speed checks catch anyone over it), on a white board on two posts by the right-hand
+## rail, in the units the speedometer shows. A sign shows the units of the moment it is put up.
+func _setup_speed_sign(n: Node3D, _k: int) -> void:
+	_clear(n)
+	var mph: bool = Save.setting("units") == "mph"
+	var figure := "75" if mph else "120"
+	var root := Node3D.new()
+	root.position = Vector3(Data.RAIL + 2.7, 0, 0)
+	n.add_child(root)
+	var ink := CarModel.mat(Color("#15171a"), 0.0, 0.6)
+	var parts := {CarModel.mat(Color("#8a9096")): [[Vector3(-0.55, 1.6, 0), Vector3(0.1, 3.2, 0.1)], [Vector3(0.55, 1.6, 0), Vector3(0.1, 3.2, 0.1)]],
+		M.white: [], ink: []}
+	_add_boxes(parts, SignKit.panel(M.white, ink, Vector3(0, 3.05, 0.06), 1.55, 2.0, 0.09, 0.045, 0.07))
+	root.add_child(_merged(parts, false))
+	var col := Color("#15171a")
+	root.add_child(SignKit.line("SPEED", 0.27, col, Vector3(0, 3.7, 0.1 + SignKit.LETTERS)))
+	root.add_child(SignKit.line("LIMIT", 0.27, col, Vector3(0, 3.38, 0.1 + SignKit.LETTERS)))
+	root.add_child(SignKit.line(figure, SignKit.fit_em([figure], 0.9, 1.2), col, Vector3(0, 2.68, 0.1 + SignKit.LETTERS)))
+
+
 func _setup_farm(n: Node3D, k: int) -> void:
 	_clear(n)
 	var rng := RandomNumberGenerator.new()
@@ -1120,6 +1177,8 @@ func update_view(base_z: float, finish_z: float, dt := 0.016) -> void:
 	for m in _road_mats:
 		m.set_shader_parameter("scroll", scroll)
 	_grass_mat.set_shader_parameter("scroll", scroll)
+	if _sea.visible:
+		_sea_mat.set_shader_parameter("time_s", _t)
 	for lp in _loops:
 		lp[0].position.z = fmod(base_z, lp[1])
 	_update_slots(base_z)

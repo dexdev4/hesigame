@@ -2318,8 +2318,9 @@ func show_pick(eyebrow: String, line: String, boons: Array) -> void:
 		_pick.list.remove_child(ch)
 		ch.queue_free()
 	for b in boons:
+		var deal: bool = b.get("deal", false)  # (a trade-off, not an upgrade: a red card)
 		var btn := Button.new()
-		var sb := _flat(SIGN_DEEP, 14, Color.TRANSPARENT, 3)
+		var sb := _flat(RED_SIGN if deal else SIGN_DEEP, 14, Color(BAD, 0.55) if deal else Color.TRANSPARENT, 3)
 		sb.set_content_margin_all(18)
 		var hv := sb.duplicate() as StyleBoxFlat
 		hv.border_color = AMBER
@@ -2336,7 +2337,7 @@ func show_pick(eyebrow: String, line: String, boons: Array) -> void:
 		vb.offset_bottom = -14
 		var vp := get_viewport().get_visible_rect().size
 		var wide := vp.x > vp.y
-		vb.add_child(_label(b.tag, 16, AMBER, mono_font))
+		vb.add_child(_label(b.tag, 16, BAD if deal else AMBER, mono_font))
 		var nl := _label(String(b.name).to_upper(), 36 if wide else 40, LINE, display_font)
 		nl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		nl.custom_minimum_size.x = 80
@@ -2345,8 +2346,13 @@ func show_pick(eyebrow: String, line: String, boons: Array) -> void:
 		dl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		dl.custom_minimum_size.x = 80
 		vb.add_child(dl)
+		if b.has("after"):  # what the deal does to the run's lives and money
+			var al := _label(String(b.after), 17, AMBER, mono_font)
+			al.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			al.custom_minimum_size.x = 80
+			vb.add_child(al)
 		btn.add_child(vb)
-		btn.custom_minimum_size = Vector2(0, 230 if wide else 164)
+		btn.custom_minimum_size = Vector2(0, (270 if wide else 210) if deal else (230 if wide else 164))
 		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		var id: String = b.id
 		btn.pressed.connect(func() -> void: act.emit("boon", id))

@@ -17,6 +17,8 @@ MANIFEST = {
     "suv": "car_traffic_suv", "van": "car_traffic_van", "truck": "car_traffic_truck",
 }
 TRAFFIC = {"suv", "van", "truck"}
+# bodies whose tail lamps run across the tail at the usual height of the name, and that have a pocket for the plate modelled in lower down
+TAIL_BAR = {"halcyon", "static", "lastexit"}
 FLAGS = {"van": {"van": True}, "truck": {"truck": True}}
 
 
@@ -51,6 +53,9 @@ def entry(sid, name):
         "dash_hw": round(min(d["ws_hw"] * 0.85, 0.7), 2), "ws_base_hw": round(min(d["ws_hw"] * 0.8, 0.7), 2),
         "mirror_d": round(gh[3] - 0.05, 2),
     }
+    if sid in TAIL_BAR:
+        pr["plate_y"] = 0.5
+        pr["badge_y"] = 0.63
     if sid in TRAFFIC:
         pr["lod_near"] = 18.0
         pr["no_cabin"] = sid == "truck"

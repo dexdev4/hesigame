@@ -84,8 +84,8 @@ const PROFILES := {
 		"tyre": [0.27, 0.27],
 		"wheel": [0.35, 0.87, 3.52],
 		"wheel_x": [0.87, 0.835],
-		"plate_y": 0.62,
-		"badge_y": 0.74,
+		"plate_y": 0.5,
+		"badge_y": 0.63,
 		"eye_back": 1.49,
 		"eye_y": 0.832,
 		"dash_drop": 0.17,
@@ -102,8 +102,8 @@ const PROFILES := {
 		"tyre": [0.27, 0.27],
 		"wheel": [0.35, 0.87, 3.52],
 		"wheel_x": [0.87, 0.835],
-		"plate_y": 0.62,
-		"badge_y": 0.74,
+		"plate_y": 0.5,
+		"badge_y": 0.63,
 		"eye_back": 1.49,
 		"eye_y": 0.828,
 		"dash_drop": 0.17,
@@ -138,8 +138,8 @@ const PROFILES := {
 		"tyre": [0.27, 0.27],
 		"wheel": [0.35, 0.885, 3.535],
 		"wheel_x": [0.87, 0.835],
-		"plate_y": 0.62,
-		"badge_y": 0.74,
+		"plate_y": 0.5,
+		"badge_y": 0.63,
 		"eye_back": 1.49,
 		"eye_y": 0.828,
 		"dash_drop": 0.17,
@@ -890,6 +890,19 @@ static func _arch(st: SurfaceTool, x: float, cy: float, cz: float, r0: float, r1
 const KIT_KEYS := ["stripes", "scoop", "intakes", "roofwing", "wiper", "lightbar", "splitter", "vents", "dome", "gills", "split_grille", "ltail", "halo", "lip", "crease", "m_bumper", "quad_diffuser"]
 
 
+## How high the name goes on the tail of a body, m (a body can say so itself: "badge_y"; otherwise it goes just above the
+## number plate).
+static func badge_y(shape_id: String) -> float:
+	var pr: Dictionary = PROFILES.get(shape_id, {})
+	if pr.has("badge_y"):
+		return float(pr.badge_y)
+	if pr.has("plate_y"):
+		return float(pr.plate_y) + 0.135
+	if Data.SHAPES.has(shape_id):
+		return BodyBuilder.new(shape_id, pr, Data.SHAPES[shape_id], {}).floor_y + 0.29 + 0.135
+	return 0.74
+
+
 static func _kit(id: String, style := {}, lq := false) -> Dictionary:
 	var key := id + ("|lq" if lq else "")
 	for k in KIT_KEYS:
@@ -1601,7 +1614,8 @@ var _body_mi: MeshInstance3D      # the shell's detailed mesh (and its light ver
 var _far_mi: MeshInstance3D
 var _surface_names: Array = []
 var _surface_names_far: Array = []
-var _plate_label: Label3D
+var _plate_label: Node3D         # the number plate's characters (a Label3D, or lettering standing off the plate)
+var _badge_parts: Array[MeshInstance3D] = []   # the letters of the car's name
 var _calipers: Array = []         # by wheel: its brake caliper (or null)
 var _gone: Array[bool] = []       # by wheel: it has come off
 var _cracks := 0
@@ -1696,6 +1710,8 @@ static func _commit_kept(st: SurfaceTool) -> ArrayMesh:
 const DRAW_DISTANCE := 360.0
 ## Beyond this a car is a few dozen pixels wide: the light body and wheels take over.
 const LOD_NEAR := 40.0
+## The names on the cars show within this many metres (a letter is two pixels high beyond it).
+const BADGE_RANGE := 32.0
 
 
 ## style (optional): {"rim", "rim_color", "caliper", "accent", "badge", "plate"} plus
@@ -1801,41 +1817,40 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a"), style 
 	if style.has("plate") or style.has("badge"):
 		var py: float = kit.get("plate_y", 0.6)
 		if style.has("plate"):
-			var pl := Label3D.new()
-			pl.text = style.plate
-			pl.font_size = 48
-			pl.pixel_size = 0.0019
-			pl.modulate = Color("#1b2a4a")
-			pl.outline_size = 0
-			pl.position = Vector3(0, py, kit.get("plate_z", 0.024))
-			if kit.get("truck", false):
-				pl.position = Vector3(0, 0.82, 0.055)
-			_body.add_child(pl)
-			_plate_label = pl
-			_lod(pl, 0.0, 45.0)
+			if CarLettering.has_design(String(style.get("badge", ""))) and not kit.get("truck", false):
+				# a car of the garage, a boss or the police has one plate for good: its characters stand off the plate
+				var pm := CarLettering.plate(String(style.plate), py, float(kit.get("plate_z", 0.02)) - 0.0055)
+				_body.add_child(pm)
+				_lod(pm, 0.0, 45.0)
+				_plate_label = pm
+			else:
+				# (the traffic's plates are new for every car: printed)
+				var pl := Label3D.new()
+				pl.text = style.plate
+				pl.font = Fonts.file(CarLettering.PLATE_FONT)
+				pl.font_size = 48
+				pl.pixel_size = 0.0019
+				pl.modulate = Color("#1b2a4a")
+				pl.outline_size = 0
+				pl.position = Vector3(0, py, kit.get("plate_z", 0.024))
+				if kit.get("truck", false):
+					pl.position = Vector3(0, 0.82, 0.055)
+				_body.add_child(pl)
+				_plate_label = pl
+				_lod(pl, 0.0, 45.0)
 		if style.has("badge"):
-			var bd := Label3D.new()
-			bd.text = style.badge
-			bd.font_size = 40
-			bd.pixel_size = 0.0018
-			bd.modulate = Color("#d9dde1")
-			bd.outline_size = 0
-			bd.position = Vector3(0.0, PROFILES.get(shape_id, {}).get("badge_y", (PROFILES.get(shape_id, {}).get("body", [[0, 0.8]])[0][1]) - 0.34), 0.02)
-			_body.add_child(bd)
-			_lod(bd, 0.0, 45.0)
+			# the car's name: real letters, set into the tail (CarLettering)
+			for mi: MeshInstance3D in CarLettering.badge(shape_id, String(style.badge)):
+				_body.add_child(mi)
+				_lod(mi, 0.0, BADGE_RANGE)
+				_badge_parts.append(mi)
 	if style.has("fleet") and kit.get("truck", false):
-		for s in [-1.0, 1.0]:  # the haulier's name along both sides of the trailer
-			var fl := Label3D.new()
-			fl.text = style.fleet
-			fl.font_size = 96
-			fl.pixel_size = 0.0058
-			fl.double_sided = false  # only readable from its own side
-			fl.modulate = Color(style.get("accent", "#f3f5ef")).lightened(0.2) if Color(style.get("accent", "#f3f5ef")).get_luminance() < 0.5 else Color("#1b1e23")
-			fl.outline_size = 0
-			fl.position = Vector3(s * (shape.w / 2.0 + 0.04), 2.95, -3.9)
-			fl.rotation.y = s * PI / 2.0
-			_body.add_child(fl)
-			_lod(fl, 0.0, 140.0)
+		# the haulier's name along both sides of the trailer
+		var acc := Color(style.get("accent", "#f3f5ef"))
+		var ink := acc.lightened(0.2) if acc.get_luminance() < 0.5 else Color("#1b1e23")
+		for mi: MeshInstance3D in CarLettering.fleet(String(style.fleet), ink, shape.w / 2.0 + 0.026, 2.95, -3.9):
+			_body.add_child(mi)
+			_lod(mi, 0.0, 90.0)
 
 	# soft contact shadow so cars sit on the road even beyond the shadow distance
 	var sh := MeshInstance3D.new()
@@ -2393,6 +2408,7 @@ var _tag_tween: Tween
 func show_tag_pop(text: String) -> void:
 	if _tag_pop == null:
 		_tag_pop = Label3D.new()
+		_tag_pop.font = Fonts.display()
 		_tag_pop.font_size = 56
 		_tag_pop.pixel_size = 0.011
 		_tag_pop.billboard = BaseMaterial3D.BILLBOARD_ENABLED
@@ -2456,6 +2472,12 @@ func damage_targets() -> Array[MeshInstance3D]:
 	for mi: MeshInstance3D in [_body_mi, _far_mi, _tails, _sig_l, _sig_r, _cabin_mi]:
 		if mi != null and is_instance_valid(mi):
 			out.append(mi)
+	# the lettering is pressed in with the panel it stands on, and does not hang in the air over a dent
+	for mi in _badge_parts:
+		if is_instance_valid(mi):
+			out.append(mi)
+	if _plate_label is MeshInstance3D and is_instance_valid(_plate_label):
+		out.append(_plate_label as MeshInstance3D)
 	return out
 
 
@@ -3310,6 +3332,7 @@ func build_interior() -> void:
 	var cluster_node := CabinParts.cluster(_body, Vector3(ex, y_dial, zf + 0.012), dial_tilt, _shape_id, cab, _needles, _needle_shadows)
 	var readout := Color(String(dial_cols[0])).lightened(0.3)
 	_display = Label3D.new()
+	_display.font = Fonts.mono()  # (the readouts of the cluster and the screen are in the game's own faces: see Fonts)
 	_display.font_size = 64
 	_display.pixel_size = 0.00033
 	_display.modulate = Color(String(dial_cols[1])).lerp(Color.WHITE, 0.35)
@@ -3318,6 +3341,7 @@ func build_interior() -> void:
 	_display.text = "0"
 	cluster_node.add_child(_display)
 	_display_gear = Label3D.new()
+	_display_gear.font = Fonts.mono()
 	_display_gear.font_size = 30
 	_display_gear.pixel_size = 0.00033
 	_display_gear.modulate = readout
@@ -3325,6 +3349,7 @@ func build_interior() -> void:
 	_display_gear.position = Vector3(0.0, 0.0158, 0.0035)
 	cluster_node.add_child(_display_gear)
 	_display_unit = Label3D.new()
+	_display_unit.font = Fonts.mono()
 	_display_unit.font_size = 30
 	_display_unit.pixel_size = 0.00033
 	_display_unit.modulate = readout
@@ -3332,6 +3357,7 @@ func build_interior() -> void:
 	_display_unit.position = Vector3(0.0, -0.0185, 0.0035)
 	cluster_node.add_child(_display_unit)
 	_screen = Label3D.new()
+	_screen.font = Fonts.display()
 	_screen.font_size = 30
 	_screen.pixel_size = 0.0008
 	_screen.modulate = Color("#cfe8ff")
@@ -3711,6 +3737,7 @@ func show_message(text: String, kind := "") -> void:
 		return
 	if _msg == null:
 		_msg = Label3D.new()
+		_msg.font = Fonts.display()
 		_msg.font_size = 32
 		_msg.pixel_size = 0.0007
 		_msg.outline_size = 0

@@ -4,6 +4,7 @@ extends Control
 ## (multi-touch safe), this control only draws and reports its hit area.
 
 @export_enum("gas", "brake") var kind := "gas"
+var font: Font   # the label's typeface (the HUD's own: see Fonts); the engine's default if none is given
 var pressed := false:
 	set(v):
 		if v != pressed:
@@ -63,8 +64,8 @@ func _draw() -> void:
 		while y < inner.end.y - 12.0:
 			_rounded(Rect2(inner.position.x + 12, y, inner.size.x - 24, 6), 3, groove)
 			y += 14.0
-	var font := ThemeDB.fallback_font
+	var f: Font = font if font != null else ThemeDB.fallback_font
 	var label := "GAS" if kind == "gas" else "BRAKE"
 	var fs := 18
-	var tw := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
-	draw_string(font, Vector2((s.x - tw) / 2.0, s.y + 22), label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color("#b5c4ba"))
+	var tw := f.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+	draw_string(f, Vector2((s.x - tw) / 2.0, s.y + 22), label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color("#b5c4ba"))

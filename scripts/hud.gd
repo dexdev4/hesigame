@@ -17,9 +17,9 @@ const RED_SIGN := Color("#5a1717")
 const LANE_GREEN := Color("#5bd68b")
 const SCRIM := Color(0.03, 0.04, 0.05, 0.62)
 
-var display_font: SystemFont
-var mono_font: SystemFont
-var body_font: SystemFont
+var display_font: Font   # (the game's typefaces: see Fonts)
+var mono_font: Font
+var body_font: Font
 var root: Control
 var play_layer: Control
 var screens := {}
@@ -99,14 +99,9 @@ var _feed: VBoxContainer
 
 func _ready() -> void:
 	layer = 1
-	display_font = SystemFont.new()
-	display_font.font_names = PackedStringArray(["Impact", "Oswald", "Roboto Condensed", "Arial Narrow", "sans-serif"])
-	display_font.font_weight = 800
-	mono_font = SystemFont.new()
-	mono_font.font_names = PackedStringArray(["Roboto Mono", "DejaVu Sans Mono", "Menlo", "monospace"])
-	mono_font.font_weight = 700
-	body_font = SystemFont.new()
-	body_font.font_names = PackedStringArray(["Roboto", "Noto Sans", "Segoe UI", "DejaVu Sans", "sans-serif"])
+	display_font = Fonts.display()
+	mono_font = Fonts.mono()
+	body_font = Fonts.body()
 
 	root = Control.new()
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -735,9 +730,11 @@ func _build_play() -> void:
 
 	brake = Pedal.new()
 	brake.kind = "brake"
+	brake.font = display_font
 	play_layer.add_child(brake)
 	gas = Pedal.new()
 	gas.kind = "gas"
+	gas.font = display_font
 	play_layer.add_child(gas)
 	wheel = SteerWheel.new()
 	play_layer.add_child(wheel)

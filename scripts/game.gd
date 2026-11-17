@@ -188,6 +188,7 @@ var _test_wear := -1.0  # --wear=F: the selected car starts this worn, 0 to 1 (t
 var _sc_base := 0.0     # --sc-base=M: the showroom view is of the road M metres in (test aid: signs, stations)
 var _sc_finish := -1.0  # --sc-finish=M: ... with the finish gantry at M metres (test aid)
 var _inspect: PackedStringArray = []
+var _inspect_aim := Vector3(0, 0.6, 0)  # where the --inspect camera looks (the 7th part "tail": at the name on the tail)
 var _test_win := Vector2i.ZERO
 var shots: Array = []
 var burst: Array = []  # --burst=START:COUNT:DIR saves COUNT consecutive frames (test aid)
@@ -526,7 +527,9 @@ func _build_showroom() -> void:
 	var list: Array = Data.CARS
 	if showroom == "inspect":
 		var car: Dictionary
-		if _inspect[0].begins_with("t_"):  # a traffic model: t_SHAPE
+		if _inspect[0] == "police":  # the police car
+			car = {"shape": "sedan", "color": "#f2f3f5", "style": {"rim": "steel", "badge": "POLICE", "plate": "PD 911"}}
+		elif _inspect[0].begins_with("t_"):  # a traffic model: t_SHAPE
 			car = {"shape": _inspect[0].substr(2), "color": "#2f5d8c", "style": CarModel.traffic_style(_inspect[0].substr(2))}
 		else:
 			car = Data.car_by_id(_inspect[0])
@@ -540,6 +543,8 @@ func _build_showroom() -> void:
 		m.build_interior()
 		if _inspect.size() > 5 and _inspect[5] == "brake":
 			m.set_brake(true)
+		if _inspect.size() > 6 and _inspect[6] == "tail":
+			_inspect_aim = Vector3(0, CarModel.badge_y(String(car.shape)), float(Data.SHAPES[car.shape].l) / 2.0)
 		return
 	if showroom.begins_with("t_"):  # traffic models instead of the player cars
 		list = []
@@ -1573,6 +1578,7 @@ func _start_boss() -> void:
 	var t_tag := PerfProbe.t()
 	var tag := Label3D.new()
 	tag.text = String(bi.full).to_upper()
+	tag.font = Fonts.display()
 	tag.font_size = 72
 	tag.pixel_size = 0.012
 	tag.billboard = BaseMaterial3D.BILLBOARD_ENABLED
@@ -2902,6 +2908,17 @@ func _warm_up_list() -> void:
 	for shape in shapes:
 		for style in CarModel.traffic_rims(shape):
 			_warm.append(CarModel.warm_wheels.bind(shape, style))
+	# the lettering on the cars: every car's name and plate, the traffic's makes on each body, the police, the hauliers
+	for car in Data.CARS:
+		_warm.append(CarLettering.warm.bind(String(car.shape), String(car.style.badge)))
+		_warm.append(CarLettering.warm_plate.bind(String(car.style.plate)))
+	_warm.append(CarLettering.warm.bind("sedan", "POLICE"))
+	_warm.append(CarLettering.warm_plate.bind("PD 911"))
+	for shape in ["sedan", "hatch", "suv", "van"]:
+		for make in CarModel.MAKES:
+			_warm.append(CarLettering.warm.bind(shape, String(make)))
+	for fleet in CarModel.FLEETS:
+		_warm.append(CarLettering.warm_fleet.bind(String(fleet)))
 
 
 ## Build things from the list for about `budget_us` microseconds (at least one).
@@ -3202,6 +3219,7 @@ func _start_cop(gap := COP_GAP, from_trap := false) -> void:
 	boss.model.add_lightbar(sh.t)
 	var tag := Label3D.new()
 	tag.text = "POLICE"
+	tag.font = Fonts.display()
 	tag.font_size = 72
 	tag.pixel_size = 0.012
 	tag.billboard = BaseMaterial3D.BILLBOARD_ENABLED
@@ -3941,7 +3959,7 @@ func _process(delta: float) -> void:
 			var pitch := deg_to_rad(float(_inspect[2]) if _inspect.size() > 2 else 12.0)
 			var dist := float(_inspect[3]) if _inspect.size() > 3 else 7.5
 			cam.fov = float(_inspect[4]) if _inspect.size() > 4 else 40.0
-			var aim := Vector3(0, 0.6, 0)
+			var aim := _inspect_aim
 			v = [aim + Vector3(sin(yaw) * cos(pitch), sin(pitch), -cos(yaw) * cos(pitch)) * dist, aim]
 			cam.keep_aspect = Camera3D.KEEP_HEIGHT
 		cam.global_transform = Transform3D(Basis(), v[0])

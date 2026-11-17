@@ -682,7 +682,7 @@ func _apply_gfx() -> void:
 	vp.msaa_3d = Viewport.MSAA_DISABLED if low else Viewport.MSAA_2X
 	vp.screen_space_aa = Viewport.SCREEN_SPACE_AA_FXAA if low or high else Viewport.SCREEN_SPACE_AA_DISABLED
 	vp.scaling_3d_scale = 1.0 if high else (0.88 if g == "medium" else 0.75)
-	_sun.shadow_enabled = not low
+	_sun.shadow_enabled = not low and not (garage != null and garage.active)  # (the garage turns the sun's shadow off: see _enter_garage)
 	_sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_2_SPLITS if high else DirectionalLight3D.SHADOW_ORTHOGONAL
 	_sun.directional_shadow_max_distance = 90.0 if high else 55.0
 	RenderingServer.directional_shadow_atlas_set_size(_test_atlas if _test_atlas > 0 else (4096 if high else 2048), true)
@@ -3927,7 +3927,14 @@ func _update_frame_cap() -> void:
 		Engine.max_fps = want
 
 
+## Paused, the game is silent: everything (the engine, the tyres, the wind, the traffic, the music) until it is resumed.
+var _paused_quiet := false
+
+
 func _process(delta: float) -> void:
+	if (state == S.PAUSED) != _paused_quiet:
+		_paused_quiet = state == S.PAUSED
+		AudioServer.set_bus_mute(AudioServer.get_bus_index("Master"), _paused_quiet)
 	_frame += 1
 	_update_frame_cap()
 	if (state == S.MENU or state == S.GARAGE) and showroom == "" and not autotest:
@@ -5114,8 +5121,9 @@ func _on_act(action: String, arg: String) -> void:
 						sound.play("ding", 1.3 + lv * 0.08)
 			hud.render_garage()
 		"settings":
-			_leave_garage()
+			# (from the main menu the settings open over the garage: the road, and the car's engine, are not woken for them)
 			if arg == "camera":  # (--open=settings:camera) the camera adjuster is not a page of the sheet
+				_leave_garage()  # (it shows the road, to see the camera)
 				hud.render_settings()
 				hud.enter_cam_adjust()
 				return
@@ -5130,10 +5138,13 @@ func _on_act(action: String, arg: String) -> void:
 			else:
 				_go_menu()
 		"cam_adjust":
+			_leave_garage()  # (the camera adjuster shows the road behind the car, to see the camera on it)
 			hud.enter_cam_adjust()
 		"cam_done":
 			Save.persist()
 			hud.leave_cam_adjust()
+			if state == S.MENU or state == S.GARAGE:
+				_enter_garage()  # (back to the settings over the garage)
 			hud.render_settings()
 			hud.show_screen("settings")
 		"set":
@@ -5148,7 +5159,7 @@ func _on_act(action: String, arg: String) -> void:
 			match arg:
 				"sound":
 					Save.data.sound = not Save.data.sound
-					sound.set_enabled(Save.data.sound)
+					sound.set_enabled(Save.data.sound and not garage.active)  # (no engine drone in the garage)
 					music.enabled = Save.data.sound  # (off: silence at once)
 				"assist":
 					Save.data.assist = not Save.data.assist

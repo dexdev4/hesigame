@@ -41,21 +41,22 @@ const PROFILES := {
 	"bruiser": {
 		"mesh": "res://assets/models/car_bruiser.mesh",
 		"mesh_lq": "res://assets/models/car_bruiser_lq.mesh",
-		"body": [[0, 0.879, 0.857], [0.1, 0.899, 0.913], [0.3, 0.91, 0.95], [0.7, 1.037, 1], [1.2, 0.995, 0.997], [1.8, 0.995, 0.954], [2.4, 0.995, 0.944], [3, 0.857, 0.942], [3.5, 0.841, 0.976], [3.9, 0.82, 0.95], [4.2, 0.791, 0.959], [4.8, 0.648, 0.715]],
-		"gh": [0.73, 2.495, 1.33, 2.055, 0.955, 1.289, 0.83, 0.524],
+		"body": [[0, 1.007, 0.891], [0.1, 1.069, 0.932], [0.3, 1.055, 0.956], [0.7, 1.045, 0.989], [1.2, 0.961, 0.992], [1.8, 0.961, 0.977], [2.4, 0.961, 0.965], [3, 0.984, 0.965], [3.5, 0.95, 0.977], [3.9, 0.957, 0.989], [4.2, 0.957, 0.981], [5.08, 0.824, 0.908]],
+		"gh": [0.842, 2.9, 1.43, 2.29, 0.921, 1.38, 0.832, 0.596],
 		"pillars": [[0, 0.28], [0.5, 0.54], [0.93, 1]],
 		"rim_frac": 0.7,
-		"tyre": [0.265, 0.265],
-		"wheel": [0.36, 1.02, 3.85],
-		"wheel_x": [0.835, 0.81],
+		"tyre": [0.264, 0.264],
+		"wheel": [0.355, 1.13, 4.09],
+		"wheel_x": [0.81, 0.815],
 		"plate_y": 0.62,
 		"badge_y": 0.74,
 		"eye_back": 1.3,
-		"eye_y": 1.088,
-		"dash_drop": 0.17,
-		"dash_hw": 0.52,
-		"ws_base_hw": 0.49,
-		"mirror_d": 2.01},
+		"eye_y": 1.21,
+		"dash_drop": 0,
+		"dash_hw": 0.63,
+		"ws_base_hw": 0.59,
+		"mirror_d": 2.24,
+		"plate_z": -0.038},
 	"copperhead": {
 		"mesh": "res://assets/models/car_copperhead.mesh",
 		"mesh_lq": "res://assets/models/car_copperhead_lq.mesh",
@@ -1251,7 +1252,8 @@ static func _mesh_kit(id: String, pr: Dictionary, sh: Dictionary, style: Diction
 	var bbm := BodyBuilder.new(id, pr, sh, style)
 	var plate_y: float = pr.get("plate_y", bbm.floor_y + 0.29)
 	var plate := _new_st()
-	_box(plate, Vector3(0, plate_y, 0.006), Vector3(0.52, 0.12, 0.016))
+	var plate_z0: float = pr.get("plate_z", 0.0)   # (where the tail is behind the plate: a body whose bumper stands further back says so)
+	_box(plate, Vector3(0, plate_y, plate_z0 + 0.006), Vector3(0.52, 0.12, 0.016))
 	var plate_arrays := plate.commit_to_arrays()
 	body.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, plate_arrays)
 	_keep_arrays(body, Mesh.PRIMITIVE_TRIANGLES, plate_arrays)
@@ -1267,7 +1269,7 @@ static func _mesh_kit(id: String, pr: Dictionary, sh: Dictionary, style: Diction
 		wheels.append([-x, -ax, tyre[mini(k, 1)]])
 		wheels.append([x, -ax, tyre[mini(k, 1)]])
 	kit.merge({"sig_l": _commit_kept(sig_l), "sig_r": _commit_kept(sig_r), "wheels": wheels, "rim_frac": pr.get("rim_frac", 0.66),
-		"r": pr.wheel[0], "ww": tyre[0], "plate_y": plate_y, "plate_z": 0.02, "body": body, "surfaces": names, "lod_near": float(pr.get("lod_near", 22.0))})
+		"r": pr.wheel[0], "ww": tyre[0], "plate_y": plate_y, "plate_z": plate_z0 + 0.02, "body": body, "surfaces": names, "lod_near": float(pr.get("lod_near", 22.0))})
 	if pr.get("truck", false):
 		kit["truck"] = true
 	if not kit.has("tails"):

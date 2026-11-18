@@ -53,6 +53,9 @@ def entry(sid, name):
         "dash_hw": round(min(d["ws_hw"] * 0.85, 0.7), 2), "ws_base_hw": round(min(d["ws_hw"] * 0.8, 0.7), 2),
         "mirror_d": round(gh[3] - 0.05, 2),
     }
+    if d.get("plate"):  # (a model that has its own number plate: the game's goes where it is)
+        pr["plate_y"] = d["plate"][0]
+        pr["plate_z"] = d["plate"][1]
     if sid in TAIL_BAR:
         pr["plate_y"] = 0.5
         pr["badge_y"] = 0.63

@@ -5,7 +5,7 @@ extends RefCounted
 ## is placed on it). slope: how the panel leans (z over y). bow: how it curves away from the middle (z over x squared).
 
 const FRAMES := {
-	"bruiser": {"y": 0.740, "z": -0.0071, "slope": -0.1347, "bow": -0.0013},
+	"bruiser": {"y": 0.740, "z": -0.0400, "slope": 0.0000, "bow": 0.0000},
 	"compact": {"y": 0.750, "z": -0.0023, "slope": -0.0659, "bow": -0.0018},
 	"copperhead": {"y": 0.740, "z": -0.0071, "slope": -0.1347, "bow": -0.0013},
 	"coupe": {"y": 0.700, "z": -0.0015, "slope": -0.0480, "bow": -0.0020},

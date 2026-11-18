@@ -56,6 +56,7 @@ const PROFILES := {
 		"dash_hw": 0.63,
 		"ws_base_hw": 0.59,
 		"mirror_d": 2.24,
+		"parts": "res://assets/models/car_bruiser_parts/",
 		"plate_z": -0.038},
 	"copperhead": {
 		"mesh": "res://assets/models/car_copperhead.mesh",
@@ -1187,10 +1188,117 @@ static func _vec3s(raw: PackedByteArray, n: int) -> PackedVector3Array:
 	return P
 
 
+## A model's own parts (tools/convert_garage.py writes them): its wheels and brake callipers (each in its own space, about the
+## wheel's centre, with where it sits), its interior (in the car's space) and its steering wheel (with where it sits and how it
+## is turned). {"wheels": [[ArrayMesh, Vector3]], "calipers": [...], "cabin": ArrayMesh, "steer": [ArrayMesh, Transform3D]}
+static var _parts_cache := {}
+
+
+static func _parts(dir: String) -> Dictionary:
+	if _parts_cache.has(dir):
+		return _parts_cache[dir]
+	var out := {}
+	var js: Variant = JSON.parse_string(FileAccess.get_file_as_string(dir + "parts.json"))
+	if js is Dictionary:
+		var man: Dictionary = js
+		for k in ["wheels", "calipers"]:
+			var list: Array = []
+			for w in man.get(k, []):
+				var m := _cpe2_mesh(dir + String(w.file))
+				if m != null:
+					list.append([m, Vector3(float(w.pos[0]), float(w.pos[1]), float(w.pos[2]))])
+			if not list.is_empty():
+				out[k] = list
+		if String(man.get("cabin", "")) != "":
+			var cm := _cpe2_mesh(dir + String(man.cabin))
+			if cm != null:
+				out["cabin"] = cm
+		var stw: Dictionary = man.get("steer", {})
+		if stw.has("file"):
+			var sm := _cpe2_mesh(dir + String(stw.file))
+			if sm != null:
+				var q: Array = stw.get("rot", [0, 0, 0, 1])
+				out["steer"] = [sm, Transform3D(Basis(Quaternion(float(q[0]), float(q[1]), float(q[2]), float(q[3]))), Vector3(float(stw.pos[0]), float(stw.pos[1]), float(stw.pos[2])))]
+	_parts_cache[dir] = out
+	return out
+
+
+## A CPE2 file as a mesh whose surfaces are named by their material ("part~RRGGBB~metal~rough"): see material_of.
+static func _cpe2_mesh(path: String) -> ArrayMesh:
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null or f.get_buffer(4).get_string_from_ascii() != "CPE2":
+		push_error("car part missing: %s" % path)
+		return null
+	var m := ArrayMesh.new()
+	var names: Array = []
+	for si in f.get_32():
+		var sname := f.get_buffer(f.get_32()).get_string_from_utf8()
+		var nv := f.get_32()
+		var P := _vec3s(f.get_buffer(nv * 12), nv)
+		var N := _vec3s(f.get_buffer(nv * 12), nv)
+		var idx := f.get_buffer(f.get_32() * 4).to_int32_array()
+		for t in range(0, idx.size(), 3):  # (glTF winds front faces anticlockwise, Godot clockwise)
+			var tmp := idx[t + 1]
+			idx[t + 1] = idx[t + 2]
+			idx[t + 2] = tmp
+		var C := PackedColorArray()
+		C.resize(nv)
+		C.fill(Color.WHITE)
+		var arr := []
+		arr.resize(Mesh.ARRAY_MAX)
+		arr[Mesh.ARRAY_VERTEX] = P
+		arr[Mesh.ARRAY_NORMAL] = N
+		arr[Mesh.ARRAY_COLOR] = C
+		arr[Mesh.ARRAY_INDEX] = idx
+		m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+		_keep_arrays(m, Mesh.PRIMITIVE_TRIANGLES, arr)
+		names.append(sname)
+	m.set_meta("names", names)
+	return m
+
+
+## The material of a surface whose name carries a model's own material ("gloss~0b0c0e~0.00~0.42": its colour, how metallic and
+## how rough it is), in the car paint shader so that it reflects the sky as the rest of the car does. null for a plain name.
+static func material_of(full: String) -> Material:
+	var parts := full.split("~")
+	if parts.size() < 4:
+		return null
+	var metal := float(parts[2])
+	var rough := float(parts[3])
+	return _car_shader_mat("model|" + full.substr(full.find("~") + 1), {"base_color": Color("#" + parts[1]), "metallic": metal,
+		"roughness": rough, "coat": 0.0 if metal > 0.5 else clampf(0.7 - rough, 0.0, 0.6), "coat_roughness": 0.05,
+		"reflect_amount": 1.0 if metal > 0.5 else clampf(1.1 - rough, 0.15, 1.0), "reflect_f0": lerpf(0.04, 0.75, metal) * (1.0 - rough * 0.5),
+		"metal_tint": 1.0 if metal > 0.5 else 0.0})
+
+
+## Put the materials on a mesh whose surfaces are named by their material.
+static func dress(mi: MeshInstance3D) -> void:
+	var names: Array = mi.mesh.get_meta("names", []) if mi.mesh else []
+	for i in names.size():
+		var mt := material_of(String(names[i]))
+		if mt:
+			mi.set_surface_override_material(i, mt)
+
+
+## Of a model's parts ([mesh, where it sits]), the one that sits nearest `at`.
+static func _nearest_part(list: Array, at: Vector3) -> Array:
+	var best: Array = list[0]
+	for e in list:
+		if (e[1] as Vector3).distance_to(at) < (best[1] as Vector3).distance_to(at):
+			best = e
+	return best
+
+
+## Does the body have wheels of its own (the rim style "factory")?
+static func has_factory_wheels(shape_id: String) -> bool:
+	return PROFILES.get(shape_id, {}).has("parts")
+
+
 static func _mesh_kit(id: String, pr: Dictionary, sh: Dictionary, style: Dictionary, lq := false) -> Dictionary:
 	var f := FileAccess.open(pr.mesh_lq if lq and pr.has("mesh_lq") else pr.mesh, FileAccess.READ)
 	var body := ArrayMesh.new()
-	var names: Array = []
+	var names: Array = []       # each surface's kind (paint, glass, gloss, ...): what the game makes of it
+	var mat_names: Array = []   # ...and its full name, which may carry the model's own material (see material_of)
 	var kit := {}
 	var sig_l := _new_st()
 	var sig_r := _new_st()
@@ -1201,7 +1309,8 @@ static func _mesh_kit(id: String, pr: Dictionary, sh: Dictionary, style: Diction
 	var mesh_size := f.get_length()
 	var n_surf := f.get_32()
 	for si in n_surf:
-		var sname := f.get_buffer(f.get_32()).get_string_from_utf8()
+		var full := f.get_buffer(f.get_32()).get_string_from_utf8()
+		var sname := full.get_slice("~", 0)   # ("gloss~0b0c0e~0.00~0.42": a gloss part, drawn in the model's own material)
 		var nv := f.get_32()
 		var P := _vec3s(f.get_buffer(nv * 12), nv)
 		var N := _vec3s(f.get_buffer(nv * 12), nv)
@@ -1219,14 +1328,14 @@ static func _mesh_kit(id: String, pr: Dictionary, sh: Dictionary, style: Diction
 		arr[Mesh.ARRAY_NORMAL] = N
 		arr[Mesh.ARRAY_COLOR] = C
 		arr[Mesh.ARRAY_INDEX] = idx
-		if sname == "head" or sname == "tail":
-			# outer ends of the lamps: amber indicators laid just over them
+		if sname == "head" or sname == "tail" or (sname == "headlens" and full != sname):
+			# outer ends of the lamps (and a model's own indicators): amber indicators laid just over them
 			for t in range(0, idx.size(), 3):
 				var a := P[idx[t]]
 				var b := P[idx[t + 1]]
 				var c := P[idx[t + 2]]
 				var cx := (a.x + b.x + c.x) / 3.0
-				if absf(cx) < (0.6 if sname == "head" else 0.5):
+				if absf(cx) < (0.5 if sname == "tail" else 0.6):
 					continue
 				var st: SurfaceTool = sig_l if cx < 0.0 else sig_r
 				var na := N[idx[t]]
@@ -1248,16 +1357,22 @@ static func _mesh_kit(id: String, pr: Dictionary, sh: Dictionary, style: Diction
 		body.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
 		_keep_arrays(body, Mesh.PRIMITIVE_TRIANGLES, arr)
 		names.append(sname)
+		mat_names.append(full)
 	# number plate on the tail
 	var bbm := BodyBuilder.new(id, pr, sh, style)
 	var plate_y: float = pr.get("plate_y", bbm.floor_y + 0.29)
 	var plate := _new_st()
 	var plate_z0: float = pr.get("plate_z", 0.0)   # (where the tail is behind the plate: a body whose bumper stands further back says so)
-	_box(plate, Vector3(0, plate_y, plate_z0 + 0.006), Vector3(0.52, 0.12, 0.016))
-	var plate_arrays := plate.commit_to_arrays()
-	body.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, plate_arrays)
-	_keep_arrays(body, Mesh.PRIMITIVE_TRIANGLES, plate_arrays)
-	names.append("plate")
+	var plate_face := plate_z0 + 0.014
+	if pr.has("plate_z"):
+		plate_face = plate_z0   # (the model has a plate of its own, and that is the plate: the characters go on it)
+	else:
+		_box(plate, Vector3(0, plate_y, plate_z0 + 0.006), Vector3(0.52, 0.12, 0.016))
+		var plate_arrays := plate.commit_to_arrays()
+		body.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, plate_arrays)
+		_keep_arrays(body, Mesh.PRIMITIVE_TRIANGLES, plate_arrays)
+		names.append("plate")
+		mat_names.append("plate")
 	var tyre: Array = pr.tyre
 	var wheels: Array = []
 	var axle_ds: Array = [pr.wheel[1], pr.wheel[2]]
@@ -1269,12 +1384,17 @@ static func _mesh_kit(id: String, pr: Dictionary, sh: Dictionary, style: Diction
 		wheels.append([-x, -ax, tyre[mini(k, 1)]])
 		wheels.append([x, -ax, tyre[mini(k, 1)]])
 	kit.merge({"sig_l": _commit_kept(sig_l), "sig_r": _commit_kept(sig_r), "wheels": wheels, "rim_frac": pr.get("rim_frac", 0.66),
-		"r": pr.wheel[0], "ww": tyre[0], "plate_y": plate_y, "plate_z": plate_z0 + 0.02, "body": body, "surfaces": names, "lod_near": float(pr.get("lod_near", 22.0))})
+		"r": pr.wheel[0], "ww": tyre[0], "plate_y": plate_y, "plate_z": plate_face + 0.006, "body": body, "surfaces": names, "mat_names": mat_names, "lod_near": float(pr.get("lod_near", 22.0))})
 	if pr.get("truck", false):
 		kit["truck"] = true
 	if not kit.has("tails"):
 		kit["tails"] = ArrayMesh.new()
-	if not pr.get("no_cabin", false):
+	if pr.has("parts") and not lq:
+		kit["parts"] = _parts(String(pr.parts))
+	if (kit.get("parts", {}) as Dictionary).has("cabin"):
+		kit["cabin"] = kit.parts.cabin   # (the model's own interior)
+		_shell_of_file(mesh_path, mesh_size, body, names, sh)   # (the driver's view is still fitted inside the body: see _shell)
+	elif not pr.get("no_cabin", false):
 		# the simple seats and dash seen through the glass, kept inside the real body
 		var cab := bbm.cabin_mesh()
 		var shell := _shell_of_file(mesh_path, mesh_size, body, names, sh)
@@ -1616,6 +1736,10 @@ var _body_mi: MeshInstance3D      # the shell's detailed mesh (and its light ver
 var _far_mi: MeshInstance3D
 var _surface_names: Array = []
 var _surface_names_far: Array = []
+var _own_cabin := false        # the cabin seen through the glass is the model's own interior (see set_inside)
+var _own_steer: MeshInstance3D  # ...and its steering wheel
+var _own_steer_base := Transform3D()
+var _cockpit_parts: Array = []   # what build_interior added: the driver's view, shown only from inside when the model has its own interior
 var _plate_label: Node3D         # the number plate's characters (a Label3D, or lettering standing off the plate)
 var _badge_parts: Array[MeshInstance3D] = []   # the letters of the car's name
 var _calipers: Array = []         # by wheel: its brake caliper (or null)
@@ -1744,8 +1868,10 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a"), style 
 			M["paint"] = paint(cab_color)  # tractor unit; the box keeps the main colour
 		var names: Array = kit.surfaces
 		_surface_names = names
+		var full: Array = kit.get("mat_names", names)
 		for i in names.size():
-			body.set_surface_override_material(i, M[names[i]])
+			var own := material_of(String(full[i]))   # (a part in the model's own material)
+			body.set_surface_override_material(i, own if own else M[names[i]])
 		# the light version of the body takes over beyond LOD_NEAR
 		var kit_lq := _kit(shape_id, style, true)
 		var far := MeshInstance3D.new()
@@ -1753,8 +1879,10 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a"), style 
 		far.mesh = kit_lq.body
 		var names_lq: Array = kit_lq.surfaces
 		_surface_names_far = names_lq
+		var full_lq: Array = kit_lq.get("mat_names", names_lq)
 		for i in names_lq.size():
-			far.set_surface_override_material(i, M[names_lq[i]])
+			var own_lq := material_of(String(full_lq[i]))
+			far.set_surface_override_material(i, own_lq if own_lq else M[names_lq[i]])
 		var near: float = kit.get("lod_near", LOD_NEAR)  # detailed imported/forged bodies hand over sooner
 		_lod(body, 0.0, near)
 		_lod(far, near, DRAW_DISTANCE)
@@ -1766,12 +1894,26 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a"), style 
 		for i in mats.size():
 			body.set_surface_override_material(i, mats[i])
 	_body.add_child(body)
+	var own_parts: Dictionary = kit.get("parts", {})
 	if kit.has("cabin"):
 		_cabin_mi = MeshInstance3D.new()
 		_cabin_mi.mesh = kit.cabin
-		_cabin_mi.material_override = mat(Color("#222327"), 0.0, 0.85)
+		if own_parts.has("cabin"):
+			dress(_cabin_mi)   # the model's own interior, in its own materials
+			_own_cabin = true
+		else:
+			_cabin_mi.material_override = mat(Color("#222327"), 0.0, 0.85)
 		_cabin_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		_body.add_child(_cabin_mi)
+	if own_parts.has("steer"):   # ...and its steering wheel, which turns with the car's
+		_own_steer = MeshInstance3D.new()
+		_own_steer.mesh = own_parts.steer[0]
+		dress(_own_steer)
+		_own_steer_base = own_parts.steer[1]
+		_own_steer.transform = _own_steer_base
+		_own_steer.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		_body.add_child(_own_steer)
+		_lod(_own_steer, 0.0, LOD_NEAR)
 
 	_tails = _light(kit.tails, _tail_mat(false))
 	_sig_l = _light(kit.sig_l, lamp(Color("#ffaa18"), 5.0))
@@ -1784,15 +1926,24 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a"), style 
 	var rim_col := Color(style.get("rim_color", "#c3c8ce"))
 	var rim_frac: float = kit.get("rim_frac", 0.66)
 	var cal_col: String = style.get("caliper", "#55595e")
+	var own_wheels: Array = own_parts.get("wheels", [])
+	var factory := rim_style == "factory" and not own_wheels.is_empty()   # the model's own wheels and brake callipers
+	if rim_style == "factory" and not factory:
+		rim_style = "5spoke"
 	for p in kit.wheels:
 		var ww: float = p[2] if p.size() > 2 else kit.ww
 		var wn := Node3D.new()
 		wn.position = Vector3(p[0], kit.r, p[1])
 		var mi := MeshInstance3D.new()
-		mi.mesh = _wheel_mesh(kit.r, ww, rim_style, rim_frac)
-		mi.set_surface_override_material(1, _rim_mat(rim_style, rim_col))
-		wn.add_child(mi)
-		if true:
+		if factory:
+			mi.mesh = _nearest_part(own_wheels, wn.position)[0]
+			dress(mi)
+			wn.add_child(mi)
+		else:
+			mi.mesh = _wheel_mesh(kit.r, ww, rim_style, rim_frac)
+			mi.set_surface_override_material(1, _rim_mat(rim_style, rim_col))
+			wn.add_child(mi)
+		if not factory:
 			var mf := MeshInstance3D.new()
 			mf.mesh = _wheel_mesh(kit.r, ww, rim_style, rim_frac, true)
 			mf.set_surface_override_material(1, _rim_mat(rim_style, rim_col, true))
@@ -1803,7 +1954,16 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a"), style 
 		_wheels.append(wn)
 		_gone.append(false)
 		_calipers.append(null)
-		if not kit.get("truck", false):
+		if factory and own_parts.has("calipers"):
+			var cp: Array = _nearest_part(own_parts.calipers, wn.position)
+			var mc := MeshInstance3D.new()
+			mc.mesh = cp[0]
+			dress(mc)
+			mc.position = cp[1]
+			_lod(mc, 0.0, LOD_NEAR)
+			add_child(mc)
+			_calipers[_calipers.size() - 1] = mc
+		elif not kit.get("truck", false):
 			# brake caliper: fixed to the car, curving round the disc behind the spokes
 			var cal := MeshInstance3D.new()
 			cal.mesh = _caliper_mesh(kit.r * rim_frac * 0.8, 0.055)
@@ -2011,6 +2171,8 @@ static func warm_kit(shape: String, style := {}) -> void:
 ## car) whose kit and rims come from it; traffic has the plain kit.
 static func warm_wheels(shape: String, rim: String, style := {}) -> void:
 	var kit := _kit(shape, style)
+	if rim == "factory":
+		rim = "5spoke"   # (a body with wheels of its own: they came with its kit; this is the stand-in if it has none)
 	var seen := {}
 	for p in kit.get("wheels", []):
 		var ww: float = p[2] if p.size() > 2 else float(kit.ww)
@@ -3038,9 +3200,24 @@ func build_interior() -> void:
 	var pr: Dictionary = PROFILES.get(_shape_id, {})
 	if pr.is_empty() or not pr.has("gh") or _steer_node:
 		return
-	if _cabin_mi:  # the simple see-through cabin is replaced by the real one
+	var before := {}
+	for c in _body.get_children():
+		before[c] = true
+	if _cabin_mi and not _own_cabin:  # the simple see-through cabin is replaced by the real one
 		_cabin_mi.queue_free()
 		_cabin_mi = null
+	_build_interior()
+	if _own_cabin:   # (the model's own interior stays, and is what shows from outside: see set_inside)
+		_cockpit_parts.clear()
+		for c in _body.get_children():
+			if not before.has(c):
+				_cockpit_parts.append(c)
+		_inside = true
+		set_inside(false)
+
+
+func _build_interior() -> void:
+	var pr: Dictionary = PROFILES.get(_shape_id, {})
 	var g: Array = pr.gh
 	var w: float = shape.w
 	var hb: float = w / 2.0 * g[6] - 0.03     # inner half-width of the cabin
@@ -3635,6 +3812,26 @@ func set_steer(angle: float) -> void:
 	if _steer_node:
 		_steer_node.rotation.y = -angle
 		_update_arms()
+	if _own_steer:   # (the model's own steering wheel turns about its column)
+		_own_steer.transform = _own_steer_base * Transform3D(Basis(Vector3.BACK, -angle), Vector3.ZERO)
+
+
+## Seen from inside (the cockpit camera) or from outside. A car with an interior of its own shows it from outside, and the
+## driver's view (build_interior: the working gauges, the hands on the wheel) only from inside.
+func set_inside(on: bool) -> void:
+	if not _own_cabin or _inside == on:
+		return
+	_inside = on
+	for n in _cockpit_parts:
+		if is_instance_valid(n):
+			(n as Node3D).visible = on
+	if _cabin_mi:
+		_cabin_mi.visible = not on
+	if _own_steer:
+		_own_steer.visible = not on
+
+
+var _inside := true
 
 
 ## Upper arm from the shoulder to an elbow below and outside, forearm to the glove.

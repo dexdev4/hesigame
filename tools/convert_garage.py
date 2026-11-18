@@ -27,9 +27,9 @@ LQ = "lq" in sys.argv[3:]
 # material -> game surface (CarModel: paint, glass, dark, gloss, under, chrome, plate, head, headlens, grille, tail)
 BY_MAT = {
     "Paint": "paint", "Trim_Black": "gloss", "Matte_Black": "dark", "Interior_Shelf": "dark", "Wheel_Well": "under",
-    "Grille_Mesh": "grille", "Headlight_Housing": "gloss", "Dark": "dark", "Taillight_Lens": "tail", "Satin_Metal": "chrome",
+    "Grille_Mesh": "grille", "Headlight_Housing": "gloss", "Dark": "dark", "Taillight_Lens": "dark", "Satin_Metal": "chrome",
     "Plate": "plate", "Chrome": "chrome", "Rim_Inner": "gloss", "Glass": "glass",
-    "Light_DRL": "head", "Light_Projector": "head", "Light_Indicator": "head", "Light_Tail": "tail",
+    "Light_DRL": "head", "Light_Projector": "head", "Light_Indicator": "headlens", "Light_Tail": "tail",
 }
 SKIP_NODES = ("Interior", "SteeringWheel", "Wheel_", "Caliper_")
 
@@ -65,10 +65,35 @@ def node_xf(n):
     return R @ S, np.array(n.get("translation", [0, 0, 0]), float)
 
 
+def srgb(c):
+    c = max(0.0, min(1.0, float(c)))
+    return 12.92 * c if c <= 0.0031308 else 1.055 * c ** (1 / 2.4) - 0.055
+
+
+def mat_tag(m):
+    """A material as it is written into a surface's name: its colour (sRGB), metalness and roughness."""
+    pbr = m.get("pbrMetallicRoughness", {})
+    c = pbr.get("baseColorFactor", [1, 1, 1, 1])
+    hexc = "".join("%02x" % int(round(srgb(v) * 255)) for v in c[:3])
+    return "%s~%.2f~%.2f" % (hexc, float(pbr.get("metallicFactor", 1.0)), float(pbr.get("roughnessFactor", 1.0)))
+
+
+PLAIN = ("paint", "glass", "head", "tail", "plate", "grille")   # (the game's own: the paint the workshop sets, the glass, the lit lamps)
+
+
+def exact(kind, m):
+    """The surface a part goes into: the game's own for PLAIN ones, otherwise its category with the model's exact material
+    ("gloss~0b0c0e~0.00~0.42"): the game still treats it as its category (hit box, cabin shell), and draws it as the model has it."""
+    if kind in PLAIN:
+        return kind
+    return kind + "~" + mat_tag(m)
+
+
 root = j["nodes"][j["scenes"][j.get("scene", 0)]["nodes"][0]]
 assert "matrix" not in root and root.get("translation", [0, 0, 0]) == [0, 0, 0] or "translation" not in root, "a moved root node is not handled"
 parts = {}      # surface -> [positions (n*3,3) model space, normals]
-wheels = []     # [name, translation, tyre width]
+wheels = []     # [name, translation, tyre width, radius]
+extras = []     # the parts the body leaves out: [name, node, rotation, translation] (written to the car's parts folder)
 for ci in root.get("children", []):
     n = j["nodes"][ci]
     name = n.get("name", "")
@@ -77,7 +102,8 @@ for ci in root.get("children", []):
         prim = j["meshes"][n["mesh"]]["primitives"][0]
         wp = acc(prim["attributes"]["POSITION"])
         wheels.append([name, t, float(wp[:, 0].max() - wp[:, 0].min()), float(wp[:, 1].max())])
-        continue
+    if name.startswith(SKIP_NODES) and "mesh" in n:
+        extras.append([name, n, M, t])
     if name.startswith(SKIP_NODES) or "mesh" not in n:
         continue
     for q in j["meshes"][n["mesh"]]["primitives"]:
@@ -97,7 +123,7 @@ for ci in root.get("children", []):
             print("turning round", name, mname, "(it faced into the car)")
             N = -N
             T = T.reshape(-1, 3)[:, [0, 2, 1]].reshape(-1)
-        s = parts.setdefault(kind, [[], []])
+        s = parts.setdefault(exact(kind, j["materials"][q["material"]]), [[], []])
         s[0].append(P[T])
         s[1].append(N[T])
 
@@ -121,7 +147,7 @@ for kind, (ps, ns) in parts.items():
 
 def measure():
     """The car's proportions, as convert_coupe.py measures them (tools/gen_imported.py reads them)."""
-    P0 = np.concatenate([res[k][0] for k in res if k in ("paint", "gloss", "dark", "chrome", "under", "grille", "plate", "tail", "head")])
+    P0 = np.concatenate([res[k][0] for k in res if k.split("~")[0] in ("paint", "gloss", "dark", "chrome", "under", "grille", "plate", "tail", "head", "headlens")])
     G = res["glass"][0]
     L = float(-P0[:, 2].min())
     low = P0[P0[:, 1] < 0.8]   # (below the mirrors)
@@ -163,7 +189,7 @@ def measure():
     tyre = float(np.mean([w[2] for w in wheels]))
     axles = sorted(set(round(REAR - w[1][2], 2) for w in wheels))
     plate = None
-    if "plate" in res:
+    if "plate" in res:  # (the model's own number plate)
         pp = res["plate"][0]
         plate = [round(float((pp[:, 1].min() + pp[:, 1].max()) / 2), 3), round(float(pp[:, 2].max()), 3)]
     return {"plate": plate, "L": round(L, 3), "W": round(W, 3), "roof": round(roof0, 3), "belt": round(belt, 3),
@@ -181,40 +207,99 @@ if not LQ:
 
 # binary, as convert_coupe.py writes it: magic, surface count, then per surface: name, vertex count, positions, normals,
 # index count, indices (vertices shared where position and normal match)
-order = ["paint", "glass", "dark", "under", "chrome", "gloss", "grille", "plate", "headlens", "head", "tail"]
-with open(out, "wb") as f:
-    f.write(b"CPE2")
-    names = [k for k in order if k in res]
-    f.write(struct.pack("<I", len(names)))
-    for k in names:
-        pp, nn = res[k]
-        if LQ:
-            key = np.round(pp / 0.06).astype(np.int64)
-            uq, inv = np.unique(key, axis=0, return_inverse=True)
-            inv = inv.reshape(-1)
-            cnt = np.bincount(inv, minlength=len(uq)).astype(np.float64)
-            vp = np.stack([np.bincount(inv, weights=pp[:, a], minlength=len(uq)) for a in range(3)], 1) / cnt[:, None]
-            vn = np.stack([np.bincount(inv, weights=nn[:, a], minlength=len(uq)) for a in range(3)], 1)
-            vn /= np.maximum(np.linalg.norm(vn, axis=1, keepdims=True), 1e-9)
-            tri = inv.reshape(-1, 3)
-            ok = (tri[:, 0] != tri[:, 1]) & (tri[:, 1] != tri[:, 2]) & (tri[:, 0] != tri[:, 2])
-            idx = tri[ok].reshape(-1).astype(np.uint32)
-        else:
-            key = np.round(np.concatenate([pp, nn], 1) * 20000).astype(np.int64)
-            uq, inv = np.unique(key, axis=0, return_inverse=True)
-            inv = inv.reshape(-1)
-            first = np.zeros(len(uq), np.int64)
-            first[inv[::-1]] = np.arange(len(inv))[::-1]
-            vp = pp[first]
-            vn = nn[first]
-            idx = inv.astype(np.uint32)
-        nb = k.encode()
-        f.write(struct.pack("<I", len(nb)))
-        f.write(nb)
-        f.write(struct.pack("<I", len(vp)))
-        f.write(vp.astype(np.float32).tobytes())
-        f.write(vn.astype(np.float32).tobytes())
-        f.write(struct.pack("<I", len(idx)))
-        f.write(idx.tobytes())
-        print(k, "verts", len(vp), "idx", len(idx))
+ORDER = ["paint", "glass", "dark", "under", "chrome", "gloss", "grille", "plate", "headlens", "head", "tail"]
+
+
+def write_cpe2(path, res, lq=False):
+    def rank(k):
+        c = k.split("~")[0]
+        return (ORDER.index(c) if c in ORDER else len(ORDER), k)
+    with open(path, "wb") as f:
+        f.write(b"CPE2")
+        names = sorted(res, key=rank)
+        blobs = []
+        for k in names:
+            pp, nn = res[k]
+            if lq:
+                key = np.round(pp / 0.06).astype(np.int64)
+                uq, inv = np.unique(key, axis=0, return_inverse=True)
+                inv = inv.reshape(-1)
+                cnt = np.bincount(inv, minlength=len(uq)).astype(np.float64)
+                vp = np.stack([np.bincount(inv, weights=pp[:, a], minlength=len(uq)) for a in range(3)], 1) / cnt[:, None]
+                vn = np.stack([np.bincount(inv, weights=nn[:, a], minlength=len(uq)) for a in range(3)], 1)
+                vn /= np.maximum(np.linalg.norm(vn, axis=1, keepdims=True), 1e-9)
+                tri = inv.reshape(-1, 3)
+                ok = (tri[:, 0] != tri[:, 1]) & (tri[:, 1] != tri[:, 2]) & (tri[:, 0] != tri[:, 2])
+                idx = tri[ok].reshape(-1).astype(np.uint32)
+            else:
+                key = np.round(np.concatenate([pp, nn], 1) * 20000).astype(np.int64)
+                uq, inv = np.unique(key, axis=0, return_inverse=True)
+                inv = inv.reshape(-1)
+                first = np.zeros(len(uq), np.int64)
+                first[inv[::-1]] = np.arange(len(inv))[::-1]
+                vp = pp[first]
+                vn = nn[first]
+                idx = inv.astype(np.uint32)
+            if len(idx) == 0:
+                continue   # (a small part merged away to nothing in the light version)
+            nb = k.encode()
+            blobs.append(struct.pack("<I", len(nb)) + nb + struct.pack("<I", len(vp)) + vp.astype(np.float32).tobytes()
+                         + vn.astype(np.float32).tobytes() + struct.pack("<I", len(idx)) + idx.tobytes())
+        f.write(struct.pack("<I", len(blobs)))
+        for b in blobs:
+            f.write(b)
+
+
+write_cpe2(out, res, LQ)
 print("wrote", out)
+
+# the parts the body leaves out, as the model has them, for the game to put on the car: each wheel and brake calliper in its
+# own space (about the wheel's centre), the interior in the car's space and the steering wheel in its own (with where it sits)
+if not LQ:
+    pdir = os.path.splitext(out)[0] + "_parts"
+    os.makedirs(pdir, exist_ok=True)
+    manifest = {"wheels": [], "calipers": [], "cabin": "", "steer": {}}
+    cabin = {}
+    for name, n, M, t in extras:
+        local = {}
+        for q in j["meshes"][n["mesh"]]["primitives"]:
+            m = j["materials"][q["material"]] if "material" in q else {}
+            P = acc(q["attributes"]["POSITION"])
+            N = acc(q["attributes"]["NORMAL"])
+            T = acc(q["indices"]).reshape(-1) if "indices" in q else np.arange(len(P))
+            key = "part~" + mat_tag(m)
+            if name == "Interior":   # (in the car's space)
+                P = to_game(P @ M.T + t)
+                N = N @ M.T
+                dst = cabin
+            else:
+                dst = local
+            nn = N[T] / np.maximum(np.linalg.norm(N[T], axis=1, keepdims=True), 1e-9)
+            pt = P[T]
+            if name != "Interior":
+                # the wheels, callipers and steering wheel are drawn from both sides: the exporter faced the rims, discs and
+                # callipers into the car, and from outside the game saw straight through them
+                tri = pt.reshape(-1, 3, 3)[:, [0, 2, 1]].reshape(-1, 3)
+                tn = -nn.reshape(-1, 3, 3)[:, [0, 2, 1]].reshape(-1, 3)
+                pt = np.concatenate([pt, tri])
+                nn = np.concatenate([nn, tn])
+            if key in dst:
+                dst[key] = (np.concatenate([dst[key][0], pt]).astype(np.float32), np.concatenate([dst[key][1], nn]).astype(np.float32))
+            else:
+                dst[key] = (pt.astype(np.float32), nn.astype(np.float32))
+        if name == "Interior":
+            continue
+        fname = name.lower() + ".mesh"
+        write_cpe2(os.path.join(pdir, fname), local)
+        pos = [round(float(t[0]), 4), round(float(t[1]), 4), round(float(t[2] - REAR), 4)]
+        if name.startswith("Wheel_"):
+            manifest["wheels"].append({"file": fname, "pos": pos})
+        elif name.startswith("Caliper_"):
+            manifest["calipers"].append({"file": fname, "pos": pos})
+        elif name == "SteeringWheel":
+            manifest["steer"] = {"file": fname, "pos": pos, "rot": [float(v) for v in n.get("rotation", [0, 0, 0, 1])]}
+    if cabin:
+        write_cpe2(os.path.join(pdir, "interior.mesh"), cabin)
+        manifest["cabin"] = "interior.mesh"
+    json.dump(manifest, open(os.path.join(pdir, "parts.json"), "w"), indent=1)
+    print("wrote", pdir, {k: (len(v) if isinstance(v, list) else bool(v)) for k, v in manifest.items()})

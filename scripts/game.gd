@@ -4291,6 +4291,7 @@ func _sync_visuals(delta: float) -> void:
 	skids.update_view(player.z)
 	var cam_mode: String = Save.data.cam.mode
 	hud.set_speedo_visible(cam_mode != "cockpit")
+	player.model.set_inside(cam_mode == "cockpit")  # (a car with its own interior shows it from outside, the driver's view from inside)
 	# Invulnerability used to blink the car on and off, which in the chase view
 	# looked like a car popping in and out at the centre of the road. Now a
 	# soft glow pulses on the road under the car instead.

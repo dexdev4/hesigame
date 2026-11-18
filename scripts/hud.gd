@@ -2185,7 +2185,7 @@ func _render_garage_list(sel_car: Dictionary) -> void:
 		var stl := Save.car_style(sel_car)
 		var cur_rim: String = stl.get("rim", "5spoke")
 		var cur_col: String = stl.get("rim_color", "#c3c8ce")
-		var rim_name := ""
+		var rim_name := "Factory" if cur_rim == "factory" else ""
 		for rm in Data.RIMS:
 			if rm[0] == cur_rim:
 				rim_name = rm[1]
@@ -2199,6 +2199,8 @@ func _render_garage_list(sel_car: Dictionary) -> void:
 		rg.add_theme_constant_override("h_separation", 4)
 		rg.add_theme_constant_override("v_separation", 4)
 		list.add_child(rg)
+		if CarModel.has_factory_wheels(String(sel_car.shape)):   # (the car's own wheels, as its model has them)
+			rg.add_child(_wheel_btn("factory", "FACTORY", cur_rim == "factory", Color("#1b1d21")))
 		for rm in Data.RIMS:
 			rg.add_child(_wheel_btn(String(rm[0]), String(rm[1]).to_upper(), rm[0] == cur_rim, Color(cur_col)))
 		list.add_child(_eyebrow("Wheel finish · %s" % col_name))

@@ -67,7 +67,12 @@ def read_cpe2(path):
         o += 4
         idx = np.frombuffer(d, np.uint32, ni, o).astype(np.int64)
         o += ni * 4
-        out[name] = (pos, nor, idx)
+        cat = name.split("~")[0]   # ("gloss~0b0c0e~0.00~0.42": a gloss part in the model's own material)
+        if cat in out:
+            p0, n0, i0 = out[cat]
+            out[cat] = (np.concatenate([p0, pos]), np.concatenate([n0, nor]), np.concatenate([i0, idx + len(p0)]))
+        else:
+            out[cat] = (pos, nor, idx)
     return out
 
 

@@ -79,7 +79,7 @@ const CARS := [
 		"blurb": "A sport saloon with real brakes and a settled chassis: the first car that is quick and calm."},
 	{"id": "bruiser", "fuel": "mid", "tank": 55, "style": {"rim": "factory", "rim_color": "#3a3d42", "accent": "#1b1e23", "caliper": "#c62828", "badge": "BRUISER", "plate": "BRZ 570"},
 		"engine": {"cyl": 8, "idle": 700, "redline": 6300, "res": 1.4, "decay": 3.0, "var": 0.3, "uneven": 0.32, "rasp": 0.5, "pops": 0.9, "turbo": false},
-		"name": "Bruiser 5.7", "shape": "bruiser", "color": "#e0a020", "price": 3200, "boss": -1,
+		"name": "Bruiser 5.7", "shape": "bruiser", "color": "#e1a11a", "price": 3200, "boss": -1,
 		"accel": 8.80, "pull": 2.3, "top": 64.0, "brake": 9.6, "grip": 9.6, "agility": 0.80, "stability": 0.75, "kg": 1900, "range": 15.5,
 		"blurb": "V8 torque and a lot of metal: huge shove, heavy, thirsty and a handful. Brake early, plan your moves."},
 	{"id": "halcyon", "fuel": "premium", "tank": 52, "style": {"rim": "mesh", "intakes": true, "vents": true, "splitter": true, "lightbar": true, "caliper": "#f5b52e", "badge": "HALCYON R", "plate": "HLC 072"},

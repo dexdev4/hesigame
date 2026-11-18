@@ -57,7 +57,7 @@ const PROFILES := {
 		"ws_base_hw": 0.59,
 		"mirror_d": 2.24,
 		"parts": "res://assets/models/car_bruiser_parts/",
-		"plate_z": -0.038},
+		"paint_pbr": [0, 0.42, 1, 0.03]},
 	"copperhead": {
 		"mesh": "res://assets/models/car_copperhead.mesh",
 		"mesh_lq": "res://assets/models/car_copperhead_lq.mesh",
@@ -362,13 +362,19 @@ static var _glass_cracked_shader: Shader
 
 ## A material from shaders/car_paint.gdshader: glossy paint, trim, chrome or
 ## alloy with sharp reflections of the surroundings.
-static func _car_shader_mat(key: String, params: Dictionary) -> ShaderMaterial:
+static var _paint_shader_2s: Shader
+
+
+static func _car_shader_mat(key: String, params: Dictionary, two_sided := false) -> ShaderMaterial:
 	if _mats.has(key):
 		return _mats[key]
 	if _paint_shader == null:
 		_paint_shader = load("res://shaders/car_paint.gdshader")
+	if two_sided and _paint_shader_2s == null:   # (the same shader, drawing both faces: a model's materials are two-sided)
+		_paint_shader_2s = Shader.new()
+		_paint_shader_2s.code = _paint_shader.code.replace("shader_type spatial;", "shader_type spatial;\nrender_mode cull_disabled;")
 	var m := ShaderMaterial.new()
-	m.shader = _paint_shader
+	m.shader = _paint_shader_2s if two_sided else _paint_shader
 	for k in params:
 		m.set_shader_parameter(k, params[k])
 	_dusk_params(m)  # a car built now reflects the sky of the moment
@@ -1263,12 +1269,37 @@ static func material_of(full: String) -> Material:
 	var parts := full.split("~")
 	if parts.size() < 4:
 		return null
+	if parts[0] == "glass":   # the model's own glass: its tint, and as much of the cabin showing through as it lets
+		var key := "glass|" + full
+		if not _mats.has(key):
+			var g := (_glass() as ShaderMaterial).duplicate() as ShaderMaterial
+			g.set_shader_parameter("tint", Color("#" + parts[1]))
+			g.set_shader_parameter("clarity", clampf(1.0 - float(parts[2]), 0.0, 1.0))
+			g.set_shader_parameter("reflect_amount", 0.45)   # (a model's tinted glass is dark: the sky in it is faint)
+			_mats[key] = g
+		return _mats[key]
+	var col := Color("#" + parts[1])
 	var metal := float(parts[2])
 	var rough := float(parts[3])
-	return _car_shader_mat("model|" + full.substr(full.find("~") + 1), {"base_color": Color("#" + parts[1]), "metallic": metal,
-		"roughness": rough, "coat": 0.0 if metal > 0.5 else clampf(0.7 - rough, 0.0, 0.6), "coat_roughness": 0.05,
-		"reflect_amount": 1.0 if metal > 0.5 else clampf(1.1 - rough, 0.15, 1.0), "reflect_f0": lerpf(0.04, 0.75, metal) * (1.0 - rough * 0.5),
-		"metal_tint": 1.0 if metal > 0.5 else 0.0})
+	var coat := float(parts[4]) if parts.size() > 4 else 0.0
+	var coat_r := float(parts[5]) if parts.size() > 5 else 0.05
+	var glow := float(parts[7]) if parts.size() > 7 else 0.0
+	var mkey := "model|" + full.substr(full.find("~") + 1)
+	if glow > 0.0:   # a lamp of the model's: lit in its own colour, as strongly as the model says
+		if not _mats.has(mkey):
+			var m := StandardMaterial3D.new()
+			m.albedo_color = col
+			m.roughness = rough
+			m.emission_enabled = true
+			m.emission = Color("#" + parts[6])
+			m.emission_energy_multiplier = glow
+			m.cull_mode = BaseMaterial3D.CULL_DISABLED
+			_mats[mkey] = m
+		return _mats[mkey]
+	# everything else in the car paint shader, drawn from both sides as the model's materials are, with its clear coat
+	return _car_shader_mat(mkey, {"base_color": col, "metallic": metal, "roughness": rough, "coat": coat, "coat_roughness": coat_r,
+		"reflect_amount": 1.0 if metal > 0.5 else maxf(clampf((0.6 - rough) * 1.5, 0.04, 0.9), coat * 0.8),
+		"reflect_f0": lerpf(0.04, 0.75, metal) * (1.0 - rough * 0.5), "metal_tint": 1.0 if metal > 0.5 else 0.0}, true)
 
 
 ## Put the materials on a mesh whose surfaces are named by their material.
@@ -1343,6 +1374,8 @@ static func _mesh_kit(id: String, pr: Dictionary, sh: Dictionary, style: Diction
 				var nc := N[idx[t + 2]]
 				_tri(st, a + na * 0.003, b + nb * 0.003, c + nc * 0.003, na, nb, nc)
 		if sname == "tail":
+			if full != sname:
+				kit["tail_name"] = full   # (the model's own lamp material)
 			var uv := PackedVector2Array()
 			uv.resize(nv)
 			uv.fill(BodyBuilder.LED_UV)
@@ -1736,6 +1769,8 @@ var _body_mi: MeshInstance3D      # the shell's detailed mesh (and its light ver
 var _far_mi: MeshInstance3D
 var _surface_names: Array = []
 var _surface_names_far: Array = []
+var _tail_own: StandardMaterial3D      # a model's own tail lamps (off and braking)
+var _tail_own_on: StandardMaterial3D
 var _own_cabin := false        # the cabin seen through the glass is the model's own interior (see set_inside)
 var _own_steer: MeshInstance3D  # ...and its steering wheel
 var _own_steer_base := Transform3D()
@@ -1863,6 +1898,12 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a"), style 
 			"head": lamp(Color("#fff6d8"), 2.0), "headlens": _headlens_mat(style.get("halo", false)), "grille": _grille_mat(),
 			"accent": paint(Color(style.get("accent", "#f3f5ef"))),
 		}
+		var pr_look: Dictionary = PROFILES.get(shape_id, {})
+		if String(style.get("finish", "gloss")) == "gloss" and pr_look.has("paint_pbr"):
+			# the factory finish of a model that says what its paint is: as the model has it
+			var pb: Array = pr_look.paint_pbr
+			M["paint"] = material_of("paint~%s~%.2f~%.2f~%.2f~%.2f~000000~0.0" % [color.to_html(false), float(pb[0]), float(pb[1]),
+				float(pb[2]) if pb.size() > 2 else 0.0, float(pb[3]) if pb.size() > 3 else 0.05])
 		M["cargo"] = M.paint
 		if kit.get("truck", false):
 			M["paint"] = paint(cab_color)  # tractor unit; the box keeps the main colour
@@ -1915,7 +1956,11 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a"), style 
 		_body.add_child(_own_steer)
 		_lod(_own_steer, 0.0, LOD_NEAR)
 
-	_tails = _light(kit.tails, _tail_mat(false))
+	_tail_own = material_of(String(kit.get("tail_name", ""))) as StandardMaterial3D
+	if _tail_own:   # the model's own tail lamps, and the same lit harder when braking
+		_tail_own_on = _tail_own.duplicate() as StandardMaterial3D
+		_tail_own_on.emission_energy_multiplier = _tail_own.emission_energy_multiplier * 1.8
+	_tails = _light(kit.tails, _tail_own if _tail_own else _tail_mat(false))
 	_sig_l = _light(kit.sig_l, lamp(Color("#ffaa18"), 5.0))
 	_sig_r = _light(kit.sig_r, lamp(Color("#ffaa18"), 5.0))
 	_sig_l.visible = false
@@ -2518,7 +2563,10 @@ func set_brake(on: bool) -> void:
 	if on == _braking:
 		return
 	_braking = on
-	_tails.material_override = _tail_mat(on)
+	if _tail_own:
+		_tails.material_override = _tail_own_on if on else _tail_own
+	else:
+		_tails.material_override = _tail_mat(on)
 
 
 ## dir: -1 left, 1 right, 0 off. lit toggles the blink phase.

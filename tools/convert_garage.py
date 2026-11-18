@@ -70,27 +70,110 @@ def srgb(c):
     return 12.92 * c if c <= 0.0031308 else 1.055 * c ** (1 / 2.4) - 0.055
 
 
+def tex_average(ti):
+    """The average colour (linear) of a texture embedded in the file."""
+    import io
+    from PIL import Image
+    img = j["images"][j["textures"][ti]["source"]]
+    bv = j["bufferViews"][img["bufferView"]]
+    o = bv.get("byteOffset", 0)
+    a = np.asarray(Image.open(io.BytesIO(B[o:o + bv["byteLength"]])).convert("RGB"), dtype=np.float64) / 255.0
+    lin = np.where(a <= 0.04045, a / 12.92, ((a + 0.055) / 1.055) ** 2.4)
+    return lin.reshape(-1, 3).mean(0)
+
+
 def mat_tag(m):
-    """A material as it is written into a surface's name: its colour (sRGB), metalness and roughness."""
+    """A material as it is written into a surface's name: colour (sRGB), metalness, roughness, clear coat and its roughness,
+    and the glow (colour, strength): "e1a11a~0.00~0.42~1.00~0.03~000000~0.0"."""
     pbr = m.get("pbrMetallicRoughness", {})
-    c = pbr.get("baseColorFactor", [1, 1, 1, 1])
+    c = list(pbr.get("baseColorFactor", [1, 1, 1, 1]))
+    if "baseColorTexture" in pbr:   # (a texture darkens the colour: the game has no texture for it, so the colour takes its average)
+        avg = tex_average(pbr["baseColorTexture"]["index"])
+        c = [c[k] * avg[k] for k in range(3)] + c[3:]
     hexc = "".join("%02x" % int(round(srgb(v) * 255)) for v in c[:3])
-    return "%s~%.2f~%.2f" % (hexc, float(pbr.get("metallicFactor", 1.0)), float(pbr.get("roughnessFactor", 1.0)))
+    ext = m.get("extensions", {})
+    cc = ext.get("KHR_materials_clearcoat", {})
+    e = m.get("emissiveFactor", [0, 0, 0])
+    es = float(ext.get("KHR_materials_emissive_strength", {}).get("emissiveStrength", 1.0)) if any(v > 0 for v in e) else 0.0
+    ehex = "".join("%02x" % int(round(srgb(v) * 255)) for v in e[:3])
+    return "%s~%.2f~%.2f~%.2f~%.2f~%s~%.1f" % (hexc, float(pbr.get("metallicFactor", 1.0)), float(pbr.get("roughnessFactor", 1.0)),
+        float(cc.get("clearcoatFactor", 0.0)), float(cc.get("clearcoatRoughnessFactor", 0.0)), ehex, es)
 
 
-PLAIN = ("paint", "glass", "head", "tail", "plate", "grille")   # (the game's own: the paint the workshop sets, the glass, the lit lamps)
+def glass_tag(m):
+    """Glass as it is written into a surface's name: its tint (sRGB) and how opaque it is."""
+    pbr = m.get("pbrMetallicRoughness", {})
+    c = pbr.get("baseColorFactor", [0, 0, 0, 0.5])
+    hexc = "".join("%02x" % int(round(srgb(v) * 255)) for v in c[:3])
+    return "glass~%s~%.2f~%.2f" % (hexc, float(c[3]) if len(c) > 3 else 0.5, float(pbr.get("roughnessFactor", 0.05)))
+
+
+PLAIN = ("paint",)   # (the paint is the one the workshop sets; everything else is the model's own)
 
 
 def exact(kind, m):
     """The surface a part goes into: the game's own for PLAIN ones, otherwise its category with the model's exact material
-    ("gloss~0b0c0e~0.00~0.42"): the game still treats it as its category (hit box, cabin shell), and draws it as the model has it."""
+    ("gloss~0b0c0e~0.00~0.42~0.25~0.03~000000~0.0"): the game still treats it as its category (hit box, cabin shell), and draws it as the model has it."""
+    if kind == "glass":
+        return glass_tag(m)   # (the model's own tint and how much of the cabin shows through)
     if kind in PLAIN:
         return kind
     return kind + "~" + mat_tag(m)
 
 
+def right_way_out(P, N, T, label, liner=False, ends=(-2.0, 2.0)):
+    """Turn round the pieces of a part that the exporter wrote inside out (the side mirrors: every face pointing in), and flat
+    panels on the nose or tail that face into the car (the lamps and grille): the game draws front faces only, and lights a
+    face by its normal. A piece is a run of triangles joined by shared corners."""
+    tri = T.reshape(-1, 3)
+    key = np.round(P / 1e-4).astype(np.int64)
+    _, vid = np.unique(key, axis=0, return_inverse=True)
+    vid = vid.reshape(-1)
+    parent = np.arange(vid.max() + 1)
+
+    def find(a):
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+    for a, b, c in vid[tri]:
+        ra, rb, rc = find(a), find(b), find(c)
+        parent[rb] = ra
+        parent[find(rc)] = ra
+    comp = np.array([find(v) for v in vid[tri[:, 0]]])
+    flip = np.zeros(len(tri), bool)
+    for cid in np.unique(comp):
+        sel = comp == cid
+        pts = P[tri[sel]]
+        cen = pts.reshape(-1, 3).mean(0)
+        size = pts.reshape(-1, 3).max(0) - pts.reshape(-1, 3).min(0)
+        g = np.cross(pts[:, 1] - pts[:, 0], pts[:, 2] - pts[:, 0])
+        if size.min() > 0.01 and sel.sum() >= 12:
+            # a closed solid (nearly every edge shared by two triangles) whose faces all point in: inside out. (A wheel-arch
+            # liner faces in and is meant to: it is seen from the wheel's side.)
+            e = np.sort(np.concatenate([vid[tri[sel]][:, [0, 1]], vid[tri[sel]][:, [1, 2]], vid[tri[sel]][:, [2, 0]]]), axis=1)
+            _, cnt = np.unique(e, axis=0, return_counts=True)
+            outward = float((np.sum(g * (pts.mean(1) - cen), 1) > 0).mean())
+            if float((cnt == 2).mean()) > 0.8 and outward < 0.1 and not liner:
+                flip |= sel
+        else:
+            nz = float(N[tri[sel]].reshape(-1, 3)[:, 2].mean())
+            if (cen[2] < ends[0] + 0.25 and nz > 0.5) or (cen[2] > ends[1] - 0.25 and nz < -0.5):   # (on the nose, or the tail)
+                flip |= sel
+    if flip.any():
+        print("turning round", int(flip.sum()), "triangles of", label, "(they faced inwards)")
+        tri = tri.copy()
+        tri[flip] = tri[flip][:, [0, 2, 1]]
+        N = N.copy()
+        N[np.unique(tri[flip])] *= -1.0
+    return N, tri.reshape(-1)
+
+
 root = j["nodes"][j["scenes"][j.get("scene", 0)]["nodes"][0]]
 assert "matrix" not in root and root.get("translation", [0, 0, 0]) == [0, 0, 0] or "translation" not in root, "a moved root node is not handled"
+_bz = [(j["accessors"][q["attributes"]["POSITION"]]["min"][2], j["accessors"][q["attributes"]["POSITION"]]["max"][2])
+       for q in j["meshes"][j["nodes"][next(i for i in root["children"] if j["nodes"][i].get("name") == "Body")]["mesh"]]["primitives"]]
+ENDS = (min(a for a, b in _bz), max(b for a, b in _bz))   # the nose and the tail of the body, along z
 parts = {}      # surface -> [positions (n*3,3) model space, normals]
 wheels = []     # [name, translation, tyre width, radius]
 extras = []     # the parts the body leaves out: [name, node, rotation, translation] (written to the car's parts folder)
@@ -115,21 +198,14 @@ for ci in root.get("children", []):
         P = acc(q["attributes"]["POSITION"]) @ M.T + t
         N = acc(q["attributes"]["NORMAL"]) @ M.T
         T = acc(q["indices"]).reshape(-1) if "indices" in q else np.arange(len(P))
-        # a flat part on the nose or the tail (lamps, grille, plate) that faces into the car is turned round: the exporter
-        # wrote the nose's lamps and grille facing backwards, and the game would never draw them (back faces are not drawn)
-        zc = float(P[:, 2].mean())
-        nz = float(N[:, 2].mean())
-        if (zc < -1.5 and nz > 0.5) or (zc > 1.5 and nz < -0.5):
-            print("turning round", name, mname, "(it faced into the car)")
-            N = -N
-            T = T.reshape(-1, 3)[:, [0, 2, 1]].reshape(-1)
+        N, T = right_way_out(P, N, T, name + " " + mname, kind == "under", ENDS)
         s = parts.setdefault(exact(kind, j["materials"][q["material"]]), [[], []])
         s[0].append(P[T])
         s[1].append(N[T])
 
 # the rearmost point of the car (a chrome bumper, the exhausts) goes to z = 0, so the hit box takes in all of it; where the
 # model's own number plate is goes into the profile ("plate": [y, z]), and the game puts its plate there
-REAR = float(np.concatenate([np.concatenate(v[0]) for k, v in parts.items() if k != "glass"])[:, 2].max())
+REAR = float(np.concatenate([np.concatenate(v[0]) for k, v in parts.items() if k.split("~")[0] != "glass"])[:, 2].max())
 
 
 def to_game(p):
@@ -148,7 +224,7 @@ for kind, (ps, ns) in parts.items():
 def measure():
     """The car's proportions, as convert_coupe.py measures them (tools/gen_imported.py reads them)."""
     P0 = np.concatenate([res[k][0] for k in res if k.split("~")[0] in ("paint", "gloss", "dark", "chrome", "under", "grille", "plate", "tail", "head", "headlens")])
-    G = res["glass"][0]
+    G = np.concatenate([res[k][0] for k in res if k.split("~")[0] == "glass"])
     L = float(-P0[:, 2].min())
     low = P0[P0[:, 1] < 0.8]   # (below the mirrors)
     W = float(2 * np.abs(low[:, 0]).max())
@@ -192,7 +268,15 @@ def measure():
     if "plate" in res:  # (the model's own number plate)
         pp = res["plate"][0]
         plate = [round(float((pp[:, 1].min() + pp[:, 1].max()) / 2), 3), round(float(pp[:, 2].max()), 3)]
-    return {"plate": plate, "L": round(L, 3), "W": round(W, 3), "roof": round(roof0, 3), "belt": round(belt, 3),
+    pm = next((m for m in j["materials"] if m.get("name") == "Paint"), None)
+    paint_pbr = None
+    if pm:
+        pbr = pm.get("pbrMetallicRoughness", {})
+        c = pbr.get("baseColorFactor", [1, 1, 1, 1])
+        cc = pm.get("extensions", {}).get("KHR_materials_clearcoat", {})
+        paint_pbr = ["#" + "".join("%02x" % int(round(srgb(v) * 255)) for v in c[:3]), float(pbr.get("metallicFactor", 0.0)), float(pbr.get("roughnessFactor", 0.5)),
+                     float(cc.get("clearcoatFactor", 0.0)), float(cc.get("clearcoatRoughnessFactor", 0.0))]
+    return {"plate": plate, "paint_pbr": paint_pbr, "L": round(L, 3), "W": round(W, 3), "roof": round(roof0, 3), "belt": round(belt, 3),
             "gh": [round(g0, 3), round(g1, 3), round(g2, 3), round(g3, 3), round(belt, 3), round(roof0, 3), round(wbase / (W / 2), 3), round(wroof / (W / 2), 3)],
             "body": body, "wheel": [round(r, 3), round(rear_d, 3), round(front_d, 3)], "wheel_x": [round(wx[0], 3), round(wx[1], 3)],
             "tyre": round(tyre, 3), "ws_hw": round(ws_hw, 3), "axles": [float(a) for a in axles]}
@@ -267,6 +351,8 @@ if not LQ:
             P = acc(q["attributes"]["POSITION"])
             N = acc(q["attributes"]["NORMAL"])
             T = acc(q["indices"]).reshape(-1) if "indices" in q else np.arange(len(P))
+            if name != "Interior":
+                N, T = right_way_out(P, N, T, name + " " + m.get("name", ""), False, (-99.0, 99.0))
             key = "part~" + mat_tag(m)
             if name == "Interior":   # (in the car's space)
                 P = to_game(P @ M.T + t)
@@ -276,13 +362,6 @@ if not LQ:
                 dst = local
             nn = N[T] / np.maximum(np.linalg.norm(N[T], axis=1, keepdims=True), 1e-9)
             pt = P[T]
-            if name != "Interior":
-                # the wheels, callipers and steering wheel are drawn from both sides: the exporter faced the rims, discs and
-                # callipers into the car, and from outside the game saw straight through them
-                tri = pt.reshape(-1, 3, 3)[:, [0, 2, 1]].reshape(-1, 3)
-                tn = -nn.reshape(-1, 3, 3)[:, [0, 2, 1]].reshape(-1, 3)
-                pt = np.concatenate([pt, tri])
-                nn = np.concatenate([nn, tn])
             if key in dst:
                 dst[key] = (np.concatenate([dst[key][0], pt]).astype(np.float32), np.concatenate([dst[key][1], nn]).astype(np.float32))
             else:

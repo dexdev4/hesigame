@@ -55,6 +55,8 @@ def entry(sid, name):
     }
     if os.path.isfile(os.path.join(ROOT, "assets", "models", name + "_parts", "parts.json")):
         pr["parts"] = "res://assets/models/%s_parts/" % name   # (its own wheels, brake callipers, interior and steering wheel)
+    if d.get("paint_pbr"):  # (the model's own paint: how metallic and rough its factory finish is)
+        pr["paint_pbr"] = [round(v, 3) for v in d["paint_pbr"][1:]]   # metallic, roughness, clear coat, its roughness
     if d.get("plate"):  # (a model that has its own number plate: the game's goes where it is)
         pr["plate_y"] = d["plate"][0]
         pr["plate_z"] = d["plate"][1]

@@ -188,6 +188,7 @@ var _test_wear := -1.0  # --wear=F: the selected car starts this worn, 0 to 1 (t
 var _sc_base := 0.0     # --sc-base=M: the showroom view is of the road M metres in (test aid: signs, stations)
 var _sc_finish := -1.0  # --sc-finish=M: ... with the finish gantry at M metres (test aid)
 var _inspect: PackedStringArray = []
+var _inspect_ref := ""  # --inspect-ref=PATH.glb: --inspect shows that model file as it is, instead of the game's car (test aid: to compare the two)
 var _inspect_aim := Vector3(0, 0.6, 0)  # where the --inspect camera looks (the 7th part "tail": at the name on the tail)
 var _test_win := Vector2i.ZERO
 var shots: Array = []
@@ -312,6 +313,8 @@ func _ready() -> void:
 			_sc_base = float(a.substr(10))
 		if a.begins_with("--sc-finish="):
 			_sc_finish = float(a.substr(12))
+		if a.begins_with("--inspect-ref="):
+			_inspect_ref = a.substr(14)
 		if a.begins_with("--inspect="):  # one car, camera orbiting it: ID:YAW:PITCH:DIST[:FOV] (test aid)
 			showroom = "inspect"
 			_inspect = a.substr(10).split(":")
@@ -536,6 +539,24 @@ func _build_showroom() -> void:
 		if _inspect_finish != "":
 			car = car.duplicate(true)
 			car.style["finish"] = _inspect_finish
+		if _inspect_ref != "":   # the model file itself, placed as the game places the car (its rearmost point at the car's tail)
+			var doc := GLTFDocument.new()
+			var st := GLTFState.new()
+			if doc.append_from_file(_inspect_ref, st) == OK:
+				var ref := doc.generate_scene(st) as Node3D
+				add_child(ref)
+				var bb := AABB()
+				var first := true
+				for mi in ref.find_children("*", "MeshInstance3D", true, false):
+					if String(mi.name).begins_with("Wheel") or String(mi.name).begins_with("Caliper"):
+						continue
+					var b: AABB = (mi as MeshInstance3D).global_transform * (mi as MeshInstance3D).get_aabb()
+					bb = b if first else bb.merge(b)
+					first = false
+				ref.position = Vector3(0, 0, float(Data.SHAPES[car.shape].l) / 2.0 - bb.end.z)
+			if _inspect.size() > 6 and _inspect[6] == "tail":
+				_inspect_aim = Vector3(0, CarModel.badge_y(String(car.shape)), float(Data.SHAPES[car.shape].l) / 2.0)
+			return
 		var m := CarModel.new()
 		m.build(car.shape, Color(car.color), Color("#b5322a"), car.style)
 		add_child(m)

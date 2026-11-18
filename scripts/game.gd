@@ -545,6 +545,8 @@ func _build_showroom() -> void:
 			if doc.append_from_file(_inspect_ref, st) == OK:
 				var ref := doc.generate_scene(st) as Node3D
 				add_child(ref)
+				if String((st.json as Dictionary).get("asset", {}).get("generator", "")) != "Redline Rush garage exporter":
+					ref.rotation.y = PI   # (the older models face +z: tools/convert_coupe.py turns them round)
 				var bb := AABB()
 				var first := true
 				for mi in ref.find_children("*", "MeshInstance3D", true, false):

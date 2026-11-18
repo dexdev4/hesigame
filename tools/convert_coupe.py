@@ -15,6 +15,8 @@ src,out=sys.argv[1:3]
 GLASS_Y=float(sys.argv[3]) if len(sys.argv)>3 else 0.84
 FLAGS=sys.argv[4:]
 LQ='lq' in FLAGS               # the light distance version (no carved lines)
+OWN='own' in FLAGS             # as the file has it: every part in its own colour, metalness, roughness and glow (sampled from the
+                               # textures), the glass's own tint, the paint's finish, and the model's wheels and callipers as parts
 LINES=('lines' in FLAGS) and not LQ          # carve the texture's shut lines and handles
 GLOSS_TRIM='gloss' in FLAGS     # black lower panels as gloss black
 BODYSIDE='bodyside' in FLAGS    # paint the broad black lower bodyside band
@@ -35,6 +37,8 @@ def acc(i):
     return arr.reshape(a['count'],NC[a['type']]) if NC[a['type']]>1 else arr
 A=tex(j['textures'][j['materials'][0]['pbrMetallicRoughness']['baseColorTexture']['index']]['source'])
 E=tex(j['textures'][j['materials'][0]['emissiveTexture']['index']]['source'])
+_mr=j['materials'][0]['pbrMetallicRoughness'].get('metallicRoughnessTexture')
+MR=tex(j['textures'][_mr['index']]['source']) if _mr else None   # (glTF: roughness in green, metalness in blue)
 def to_game(p):
     return np.stack([-p[:,0],p[:,1],-(p[:,2]+REAR)],1)   # rotate 180 about y, rear bumper to z=0
 def ngame(n):
@@ -68,9 +72,39 @@ def classify(uv,pos):
     k[(e[:,0]>0.5)&(e[:,1]>0.5)]='head'
     k[(e[:,0]>0.3)&(e[:,1]<0.2)]='tail'
     return k
+
+def srgb(c):
+    c=max(0.0,min(1.0,float(c)))
+    return 12.92*c if c<=0.0031308 else 1.055*c**(1/2.4)-0.055
+def lin(c):
+    c=np.asarray(c,dtype=np.float64)
+    return np.where(c<=0.04045,c/12.92,((c+0.055)/1.055)**2.4)
+def hexs(c):
+    return ''.join('%02x'%int(round(srgb(v)*255)) for v in c[:3])
+def mat_tag(m):
+    """A material as tools/convert_garage.py writes it into a surface's name: colour, metalness, roughness, clear coat, its
+    roughness, glow colour and strength."""
+    pbr=m.get('pbrMetallicRoughness',{}); c=pbr.get('baseColorFactor',[1,1,1,1]); e=m.get('emissiveFactor',[0,0,0])
+    es=1.0 if any(v>0 for v in e) else 0.0
+    return '%s~%.2f~%.2f~0.00~0.00~%s~%.1f'%(hexs(c),float(pbr.get('metallicFactor',1.0)),float(pbr.get('roughnessFactor',1.0)),hexs(e) if es else '000000',es)
+def tex_tag(kind,uv):
+    """The tag of a surface coloured by the body texture: the average of its texels (colour in linear light, metalness and
+    roughness from their texture, the glow from the emissive texture, as strong as the material's factor: 1)."""
+    if kind=='glass':
+        a=lin(samp(A,uv)).mean(0)
+        return 'glass~%s~0.92~0.05'%hexs(a)   # (the file's glass is opaque dark paint on the body: all but solid)
+    a=lin(samp(A,uv)).mean(0)
+    m=float(samp(MR,uv)[:,2].mean()) if MR is not None else 0.0
+    r=float(samp(MR,uv)[:,1].mean()) if MR is not None else 0.5
+    ee=lin(samp(E,uv)); lit=ee.max(1)>0.05
+    glow=float(lit.mean())>0.05
+    e=ee[lit].mean(0) if glow else np.zeros(3)
+    es=float(np.percentile(ee[lit].max(1),75)) if glow else 0.0   # (as bright as its lit texels: the unlit lens round them does not dim it)
+    return '%s~%s~%.2f~%.2f~0.00~0.00~%s~%.1f'%(kind,hexs(a),m,r,hexs(e/max(float(e.max()),1e-6)) if glow else '000000',es)
 surf={}
 def add(kind,P,N,UV=None):
-    s=surf.setdefault(kind,{'p':[],'n':[]}); s['p'].append(P); s['n'].append(N)
+    s=surf.setdefault(kind,{'p':[],'n':[],'uv':[]}); s['p'].append(P); s['n'].append(N)
+    if UV is not None: s['uv'].append(UV)   # (one texture spot per triangle: what colour it is, for OWN)
 p=j['meshes'][0]['primitives'][0]
 _prims=j['meshes'][0]['primitives']
 REAR=-min(float(j['accessors'][q['attributes']['POSITION']]['min'][2]) for q in (_prims[:1] if 'rearbody' in FLAGS else _prims))  # rear of the whole vehicle to z = 0
@@ -96,6 +130,7 @@ if BODYSIDE:
 _cols=(samp(A,tu.mean(1))*255).astype(int)//16
 _vals,_cnt=np.unique(_cols,axis=0,return_counts=True)
 _paint=_vals[np.argmax(_cnt)]*16/255.0
+_paint_exact=samp(A,tu.mean(1))[(_cols==_vals[np.argmax(_cnt)]).all(1)].mean(0)   # (the paint's colour: the average of its texels)
 RED_PAINT=bool(_paint[0]>0.3 and _paint[1]<0.2 and _paint[2]<0.2)
 PAINT_LUM=float(_paint.mean())
 PAINT_LIGHT=bool(PAINT_LUM>0.6)
@@ -164,7 +199,7 @@ for depth in range(MAXD+1):
     keep=~dis
     for kind in set(c[keep]):
         sel=keep&(c==kind)
-        add(kind,tp[sel].reshape(-1,3),tn[sel].reshape(-1,3))
+        add(kind,tp[sel].reshape(-1,3),tn[sel].reshape(-1,3),tu[sel].mean(1))
     tp,tn,tu=tp[dis],tn[dis],tu[dis]
     # split into 4
     def mid(x,a,b): return (x[:,a]+x[:,b])/2
@@ -176,19 +211,25 @@ for depth in range(MAXD+1):
 tp,tn,tu,c=final
 for kind in set(c):
     sel=c==kind
-    add(kind,tp[sel].reshape(-1,3),tn[sel].reshape(-1,3))
+    add(kind,tp[sel].reshape(-1,3),tn[sel].reshape(-1,3),tu[sel].mean(1))
 # the other primitives: wheel wells, mirrors (paint), chrome trim
 # the other parts, by material: wheel wells, solid paint (mirrors, spoiler),
 # chrome, black trim, matte aero parts; calipers are left out (the game's
 # wheels bring their own)
 BY_MAT={'WheelWell':'under','PaintSolid':'paint','Chrome':'chrome','TrimBlack':'gloss','AeroBlack':'dark','Cargo':'cargo','LampRed':'tail'}
+CALIPERS=None
 for q in j['meshes'][0]['primitives'][1:]:
     mname=j['materials'][q['material']].get('name','')
     kind=BY_MAT.get(mname)
+    if OWN and mname=='Caliper':   # (the model's brake callipers: they go with its wheels, as parts)
+        CALIPERS=q
+        continue
     if kind is None:
         print('skipping part',mname)
         continue
     P2=acc(q['attributes']['POSITION']); N2=acc(q['attributes']['NORMAL']); T2=acc(q['indices']).reshape(-1)
+    if OWN and kind not in ('paint','cargo'):
+        kind=kind+'~'+mat_tag(j['materials'][q['material']])
     add(kind,P2[T2],N2[T2])
 # ---- measure the car and write its profile (tools/profiles/NAME.json)
 def _measure():
@@ -247,12 +288,16 @@ def _measure():
 res={}
 for kind,s in surf.items():
     pp=to_game(np.concatenate(s['p'])); nn=ngame(np.concatenate(s['n']))
+    if OWN and '~' not in kind and kind not in ('paint','cargo') and s['uv']:
+        kind=tex_tag(kind,np.concatenate(s['uv']))
+        if kind in res:   # (two kinds that came out the same)
+            pp=np.concatenate([res[kind][0],pp]); nn=np.concatenate([res[kind][1],nn])
     # 180 degree rotation keeps the winding; normalise
     nn/=np.maximum(np.linalg.norm(nn,axis=1,keepdims=True),1e-9)
     res[kind]=(pp.astype(np.float32),nn.astype(np.float32))
     print(kind,len(pp)//3,'tris')
 # measurements for the interior profile
-gp=res['glass'][0]
+gp=np.concatenate([v[0] for k,v in res.items() if k.split('~')[0]=='glass'])
 print('glass y',gp[:,1].min(),gp[:,1].max(),'d',(-gp[:,2]).min(),(-gp[:,2]).max(),'x',gp[:,0].min(),gp[:,0].max())
 allp=np.concatenate([v[0] for v in res.values()])
 for dd in np.arange(0.0,4.4,0.25):
@@ -268,17 +313,24 @@ print('rear face z at plate height',allp[sel,2].max())
 import json,os
 _prof=_measure() if not LQ else None
 os.makedirs(os.path.join(os.path.dirname(os.path.abspath(__file__)),'profiles'),exist_ok=True)
+if _prof and OWN:   # the paint's own finish (the solid paint of the mirrors and spoiler is the body's paint without the texture)
+    _ps=next((m for m in j['materials'] if m.get('name')=='PaintSolid'),None)
+    if _ps:
+        _pb=_ps.get('pbrMetallicRoughness',{})
+        _prof['paint_pbr']=['#'+hexs(lin(_paint_exact)),float(_pb.get('metallicFactor',0.0)),float(_pb.get('roughnessFactor',0.4)),0.0,0.0]
 if _prof: json.dump(_prof,open(os.path.join(os.path.dirname(os.path.abspath(__file__)),'profiles',os.path.splitext(os.path.basename(out))[0]+'.json'),'w'))
 if _prof: print('profile',{k:_prof[k] for k in ('L','W','roof','belt','gh','wheel','wheel_x','tyre')})
 # binary: magic, surface count, then per surface: name, vertex count, positions,
 # normals, index count, indices (vertices shared where position and normal match)
 order=['paint','cargo','glass','dark','under','chrome','gloss','plate','headlens','head','tail']
-with open(out,'wb') as f:
-    f.write(b'CPE2'); names=[k for k in order if k in res]
-    f.write(struct.pack('<I',len(names)))
-    for k in names:
+def write_cpe2(path,res,lq=False):
+    rank=lambda k:(order.index(k.split('~')[0]) if k.split('~')[0] in order else len(order),k)
+    blobs=[]
+    for k in sorted(res,key=rank):
+        if k.split('~')[0] not in order and not k.startswith('part~'):
+            continue
         pp,nn=res[k]
-        if LQ:
+        if lq:
             # distance version: merge vertices that fall in the same 6 cm cell, drop flattened triangles
             key=np.round(pp/0.06).astype(np.int64)
             uq,inv=np.unique(key,axis=0,return_inverse=True); inv=inv.reshape(-1)
@@ -291,11 +343,50 @@ with open(out,'wb') as f:
             idx=tri[ok].reshape(-1).astype(np.uint32)
         else:
             key=np.round(np.concatenate([pp,nn],1)*20000).astype(np.int64)
-            uq,inv=np.unique(key,axis=0,return_inverse=True)
+            uq,inv=np.unique(key,axis=0,return_inverse=True); inv=inv.reshape(-1)
             first=np.zeros(len(uq),np.int64); first[inv[::-1]]=np.arange(len(inv))[::-1]
-            vp=pp[first]; vn=nn[first]; idx=inv.reshape(-1).astype(np.uint32)
-        nb=k.encode(); f.write(struct.pack('<I',len(nb))); f.write(nb)
-        f.write(struct.pack('<I',len(vp))); f.write(vp.astype(np.float32).tobytes()); f.write(vn.astype(np.float32).tobytes())
-        f.write(struct.pack('<I',len(idx))); f.write(idx.tobytes())
+            vp=pp[first]; vn=nn[first]; idx=inv.astype(np.uint32)
+        if len(idx)==0:
+            continue   # (a small part merged away to nothing in the light version)
+        nb=k.encode()
+        blobs.append(struct.pack('<I',len(nb))+nb+struct.pack('<I',len(vp))+vp.astype(np.float32).tobytes()+vn.astype(np.float32).tobytes()+struct.pack('<I',len(idx))+idx.tobytes())
         print(k,'verts',len(vp),'idx',len(idx))
+    with open(path,'wb') as f:
+        f.write(b'CPE2'); f.write(struct.pack('<I',len(blobs)))
+        for b in blobs: f.write(b)
+write_cpe2(out,res,LQ)
 print('wrote',out)
+# OWN: the model's wheels and brake callipers as parts (CarModel's "factory" wheels): each in its own space about the wheel's
+# centre, turned round as the body is
+if OWN and not LQ:
+    pdir=os.path.splitext(out)[0]+'_parts'; os.makedirs(pdir,exist_ok=True)
+    man={"wheels":[],"calipers":[],"cabin":"","steer":{}}
+    def qmat(q):
+        x,y,z,w=q
+        return np.array([[1-2*(y*y+z*z),2*(x*y-z*w),2*(x*z+y*w)],[2*(x*y+z*w),1-2*(x*x+z*z),2*(y*z-x*w)],[2*(x*z-y*w),2*(y*z+x*w),1-2*(x*x+y*y)]])
+    wn=[n for n in j['nodes'] if n.get('name','').startswith('Wheel_')]
+    for n in wn:
+        R=qmat(n.get('rotation',[0,0,0,1])); t=np.array(n['translation'],float)
+        part={}
+        for q in j['meshes'][n['mesh']]['primitives']:
+            P3=acc(q['attributes']['POSITION'])@R.T; N3=acc(q['attributes']['NORMAL'])@R.T; T3=acc(q['indices']).reshape(-1)
+            pp=np.stack([-P3[:,0],P3[:,1],-P3[:,2]],1)[T3]; nn=ngame(N3)[T3]
+            nn/=np.maximum(np.linalg.norm(nn,axis=1,keepdims=True),1e-9)
+            part['part~'+mat_tag(j['materials'][q['material']])]=(pp.astype(np.float32),nn.astype(np.float32))
+        fn=n['name'].lower()+'.mesh'; write_cpe2(os.path.join(pdir,fn),part)
+        gpos=to_game(t[None,:])[0]
+        man['wheels'].append({"file":fn,"pos":[round(float(v),4) for v in gpos]})
+    if CALIPERS is not None:
+        P4=acc(CALIPERS['attributes']['POSITION']); N4=acc(CALIPERS['attributes']['NORMAL']); T4=acc(CALIPERS['indices']).reshape(-1,3)
+        cen=P4[T4].mean(1); ts=np.array([n['translation'] for n in wn],float)
+        near=np.argmin(((cen[:,None,:]-ts[None,:,:])**2).sum(2),1)
+        tag='part~'+mat_tag(j['materials'][CALIPERS['material']])
+        for k,n in enumerate(wn):
+            sel=T4[near==k].reshape(-1)
+            if len(sel)==0: continue
+            gpos=to_game(ts[k][None,:])[0]
+            pp=(to_game(P4[sel])-gpos).astype(np.float32); nn=ngame(N4[sel]); nn=(nn/np.maximum(np.linalg.norm(nn,axis=1,keepdims=True),1e-9)).astype(np.float32)
+            fn='caliper_'+n['name'][6:].lower()+'.mesh'; write_cpe2(os.path.join(pdir,fn),{tag:(pp,nn)})
+            man['calipers'].append({"file":fn,"pos":[round(float(v),4) for v in gpos]})
+    json.dump(man,open(os.path.join(pdir,'parts.json'),'w'),indent=1)
+    print('wrote',pdir,{k:(len(v) if isinstance(v,list) else bool(v)) for k,v in man.items()})

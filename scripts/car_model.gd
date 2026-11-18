@@ -116,7 +116,7 @@ const PROFILES := {
 		"mesh": "res://assets/models/car_marshal.mesh",
 		"mesh_lq": "res://assets/models/car_marshal_lq.mesh",
 		"body": [[0, 0.942, 0.781], [0.1, 0.99, 0.873], [0.3, 1.007, 0.926], [0.7, 1.111, 0.993], [1.2, 1.071, 1], [1.8, 1.071, 0.961], [2.4, 1.071, 0.951], [3, 1.119, 0.949], [3.5, 0.901, 0.985], [3.9, 0.843, 0.966], [4.2, 0.789, 0.96], [4.765, 0.61, 0.704]],
-		"gh": [0.75, 2.975, 1.35, 2.425, 1.031, 1.398, 0.914, 0.556],
+		"gh": [0.75, 2.975, 1.35, 2.425, 1.031, 1.398, 0.951, 0.556],
 		"pillars": [[0, 0.28], [0.5, 0.54], [0.93, 1]],
 		"rim_frac": 0.7,
 		"tyre": [0.245, 0.245],
@@ -129,7 +129,9 @@ const PROFILES := {
 		"dash_drop": 0,
 		"dash_hw": 0.53,
 		"ws_base_hw": 0.5,
-		"mirror_d": 2.38},
+		"mirror_d": 2.38,
+		"parts": "res://assets/models/car_marshal_parts/",
+		"paint_pbr": [0.6, 0.24, 0, 0]},
 	"lastexit": {
 		"mesh": "res://assets/models/car_lastexit.mesh",
 		"mesh_lq": "res://assets/models/car_lastexit_lq.mesh",
@@ -147,7 +149,9 @@ const PROFILES := {
 		"dash_drop": 0.17,
 		"dash_hw": 0.5,
 		"ws_base_hw": 0.47,
-		"mirror_d": 2.29},
+		"mirror_d": 2.29,
+		"parts": "res://assets/models/car_lastexit_parts/",
+		"paint_pbr": [0.6, 0.24, 0, 0]},
 	"vanta": {
 		"mesh": "res://assets/models/car_vanta.mesh",
 		"mesh_lq": "res://assets/models/car_vanta_lq.mesh",
@@ -1298,8 +1302,8 @@ static func material_of(full: String) -> Material:
 		return _mats[mkey]
 	# everything else in the car paint shader, drawn from both sides as the model's materials are, with its clear coat
 	return _car_shader_mat(mkey, {"base_color": col, "metallic": metal, "roughness": rough, "coat": coat, "coat_roughness": coat_r,
-		"reflect_amount": 1.0 if metal > 0.5 else maxf(clampf((0.6 - rough) * 1.5, 0.04, 0.9), coat * 0.8),
-		"reflect_f0": lerpf(0.04, 0.75, metal) * (1.0 - rough * 0.5), "metal_tint": 1.0 if metal > 0.5 else 0.0}, true)
+		"reflect_amount": lerpf(maxf(clampf((0.6 - rough) * 1.5, 0.04, 0.9), coat * 0.8), 1.0, metal),
+		"reflect_f0": lerpf(0.04, 0.75, metal) * (1.0 - rough * 0.5), "metal_tint": clampf(metal * 2.0, 0.0, 1.0)}, true)   # (a metal's reflections take its colour: dark metal stays dark)
 
 
 ## Put the materials on a mesh whose surfaces are named by their material.

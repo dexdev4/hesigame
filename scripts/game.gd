@@ -54,8 +54,8 @@ class Vehicle:
 	var model: CarModel
 
 
-## The last-life crash: the car has lost traction and slides, spins and can
-## trip over and roll. Road coordinates, like everything else.
+## The last-life crash: the car has lost control and slides and spins on its tyres, its body rocking on its
+## springs, until it stops. Road coordinates, like everything else.
 class Crash:
 	var t := 0.0
 	var body: Wreck          # the car as a rigid body: where it is, how it moves and turns (the middle of the car)
@@ -74,13 +74,13 @@ class Crash:
 			return body.w
 		set(v):
 			body.w = v
-	var roll := 0.0          # radians, + = right side up
-	var roll_rate := 0.0
-	var air := 0.0           # height off the road
-	var vy := 0.0
-	var can_trip := false
+	var roll: float:         # the body on its springs: radians, + = right side up...
+		get:
+			return body.roll
+	var pitch: float:        # ...and + = nose down
+		get:
+			return body.pitch
 	var settled := false
-	var face := 0            # which face it last landed on (multiples of 90 degrees)
 
 
 class Run:
@@ -225,6 +225,18 @@ var crash: Crash = null
 var skids: SkidMarks
 var smoke: CPUParticles3D
 var _crash_cam_t := 0.0
+var _crash_cam_dir := 1.0       # which way the crash camera swings round (towards the middle of the road, as the crash began)
+var _cam_user := Vector3.ZERO   # the crash camera as the player has moved it: x turned round the car, y raised (rad), z drawn back (log of the distance)
+var _cam_fling := Vector2.ZERO  # how fast a flick left it turning round and up (rad/s), dying away
+var _cam_vel := Vector2.ZERO    # the finger's speed lately (pixels/s, measured frame by frame), for the flick...
+var _cam_moved := Vector2.ZERO  # ...from how far it has moved since the last frame
+var _cam_drag := {}             # the fingers on it (index -> where they are)
+var _cam_idle := 9.0            # seconds since the player last moved it: then its own slow turn carries on
+const CRASH_CAM_DIST := 10.0    # m from the middle of the car...
+const CRASH_CAM_EL := 0.325     # ...and how far above it (rad: 19 degrees)
+const CRASH_CAM_EL_MIN := 0.06  # the player can bring it down to just above the road...
+const CRASH_CAM_EL_MAX := 1.35  # ...or up to nearly overhead...
+const CRASH_CAM_ZOOM := 0.7     # ...and draw it in or back to half or twice the distance (log)
 var replay := Replay.new()
 var _models := {}    # vehicle id -> CarModel, including cars kept only for the replay
 var _retired := {}   # vehicle id -> replay clock when the car left the road
@@ -242,8 +254,10 @@ var _sun: DirectionalLight3D
 var garage: GarageScene
 var _orbit_i := -1
 var _yaw_kick := 0.0           # a blow's swing of the nose (rad/s), worn off by the tyres (see _drive_manual)
-var _kick := Vector2.ZERO      # suspension kick after an impact: x = roll, y = pitch
-var _kick_v := Vector2.ZERO
+var _sway: Wreck = null        # the player's car's body on its springs while it is driven (Wreck.sway: roll, pitch and their rates)
+var _blow_body: Wreck = null   # the player's car as the last blow left it (what a last-life crash goes on from)...
+var _blow_kick0 := 0.0         # ...the swing an earlier knock had left in it...
+var _blow_t := -1.0            # ...and when (the game clock, t): a crash goes on from it only in the same step
 var _hitstop := 0.0            # a brief slow-down on a hard impact
 var _post: ColorRect
 var _post_mat: ShaderMaterial
@@ -277,6 +291,8 @@ var _shot_frames: Array = []  # [[frame, path], ...] from --shot-frame=FRAME:PAT
 var _state_log := 0         # --state-log=EVERY: print the simulation's state every EVERY frames, to compare builds exactly
 var show_hitboxes := false  # --hitboxes (or Settings > Developer): draw every car's hit box
 var _test_collide := ""     # --collide-at=SEC:KIND[:LIVES]: set up a real collision (see _collision_test)
+var _test_cam_swipe: Array = []  # --crash-swipe=SEC:DX:DY[:FLICK[:PINCH]]: fingers move the crash camera (see _crash_swipe_test)...
+var _test_touch_q: Array = []    # ...one touch event a frame
 var _test_collide_t := -1.0
 var _test_hold := false     # ...and hold the autopilot still, so the collision happens
 var _hitbox_mesh: ImmediateMesh
@@ -418,6 +434,8 @@ func _ready() -> void:
 			var cp := a.substr(13).split(":")
 			_test_collide_t = float(cp[0])
 			_test_collide = ":".join(cp.slice(1))
+		if a.begins_with("--crash-swipe="):  # SEC:DX:DY[:FLICK[:PINCH]]: that far into a crash a finger drags the camera (test aid)
+			_test_cam_swipe = Array(a.substr(14).split(":"))
 		if a.begins_with("--steer-test="):  # a scripted hand drives the real steering: flick, lane (test aid)
 			_steer_test = a.substr(13)
 			godmode = true
@@ -870,6 +888,7 @@ func _set_player_car() -> void:
 	add_child(player.model)
 	player.model.build_interior()
 	player.model.restore_damage(Save.damage_of(String(c.id)), true)  # (a car keeps its damage until it is repaired at the garage)
+	_sway = Wreck.make(c.shape)
 	_add_head_spots()
 	if sound:
 		sound.set_car(c)
@@ -1391,6 +1410,12 @@ func _body_of(c: Vehicle) -> Wreck:
 ## The result of a blow, back into the driving state of the player's car (x, z at its rear bumper, speed
 ## along its course). The swing the blow gave the nose goes into _yaw_kick, which the tyres wear off.
 func _take_player_body(b: Wreck, w_before: float) -> void:
+	_blow_body = b
+	_blow_kick0 = _yaw_kick
+	_blow_t = t
+	if _sway:  # (the blow rocked the body on its springs: Wreck.kick)
+		_sway.roll_v += b.roll_v
+		_sway.pitch_v += b.pitch_v
 	var yaw := player.yaw
 	player.x = b.pos.x - sin(yaw) * player.l / 2.0
 	player.z = b.pos.y - cos(yaw) * player.l / 2.0
@@ -2169,6 +2194,7 @@ func _hit(reason: String, other: Vehicle = null, ct := {}) -> void:
 	run.drift_t = 0.0
 	run.drift_peak = 0.0
 	var jolt := 0.6
+	_blow_body = null  # (_impact or _rail_impact keep the body this blow leaves the car as)
 	if other:
 		_impact(other, ct)
 		jolt = clampf(absf(v0 - player.v) / 12.0 + 0.4, 0.4, 1.3)
@@ -2185,9 +2211,8 @@ func _hit(reason: String, other: Vehicle = null, ct := {}) -> void:
 		jolt = clampf(0.45 + _rail_j / 9.0, 0.45, 1.0)
 	shake = jolt
 	_flash.color.a = 0.25 + 0.2 * jolt
-	# the body rocks on its springs away from the blow, and a hard one stops time for a beat
-	var kside := signf(other.x - player.x) if other else side
-	_kick_v += Vector2(-kside * 2.4 * jolt, -2.0 * jolt)
+	# (the blow itself rocked the body on its springs: Wreck.kick, through _take_player_body) and a hard one stops time
+	# for a beat
 	if jolt > 0.85:
 		_hitstop = 0.1
 	if jolt > 0.7:
@@ -2198,7 +2223,7 @@ func _hit(reason: String, other: Vehicle = null, ct := {}) -> void:
 	sound.play("crash")
 	_vib(180)
 	if run.lives <= 0:
-		_start_crash(v0, side, other)
+		_start_crash()
 		_notify(reason, "bad")
 	else:
 		_notify(reason + (" · SAVED" if shielded else " · -1 LIFE"), "bad")
@@ -2461,93 +2486,49 @@ func _damage_work(delta: float) -> void:
 
 # ---------------------------------------------------------------- last-life crash
 
-func _start_crash(v0: float, side: float, other: Vehicle) -> void:
+func _start_crash() -> void:
 	crash = Crash.new()
-	crash.body = _body_of(player)  # the car as the blow left it (HitShape / Wreck do the rest)
-	var b := crash.body
+	# the car as the blow left it, exactly (its speed and the way it goes, however far round that is, and its spin), with
+	# the swing an earlier knock had left in it, and its body rocking on its springs as it was
+	var fresh := _blow_body != null and absf(t - _blow_t) < 0.001   # (the blow of this very step: a knock that wrecked the car
+	# a moment ago has already gone into how it moves)
+	var b: Wreck = _blow_body if fresh else _body_of(player)
+	b.w = clampf(b.w + (_blow_kick0 if fresh else _yaw_kick), -Wreck.MAX_SPIN, Wreck.MAX_SPIN)
+	_blow_body = null
+	_yaw_kick = 0.0
+	if _sway:
+		b.roll = _sway.roll
+		b.pitch = _sway.pitch
+		b.roll_v = _sway.roll_v
+		b.pitch_v = _sway.pitch_v
+	crash.body = b
+	# nobody is in control now: the driver stands on the brakes and the rear wheels lock (Wreck.rear_lock), the fronts
+	# drag at what they can; nothing else is added. A car with locked rear wheels swings round at the slightest yaw (the
+	# blow's) until it slides backwards, so it spins out the way the blow sends it, and slides to a stop
 	b.brake = 0.5
 	b.grip = 0.95
+	b.rear_lock = true
 	_crash_cam_t = 0.0
-	var k := clampf(v0 / 30.0, 0.5, 1.6)
-	b.w += _yaw_kick  # the swing the blow gave the nose is part of the crash now
-	_yaw_kick = 0.0
-	# a car that has lost its last life has lost control too: at the least a shove away from what it
-	# hit and a swing of the nose (a blow straight through the middle would otherwise only slow it)
-	var away := -side
-	if b.vel.x * away < 1.0 * k:
-		b.vel.x = away * 1.0 * k
-	if absf(b.w) < 0.7 * k:
-		b.w = (signf(b.w) if b.w != 0.0 else side) * 0.7 * k
-	b.vel *= 0.92  # the crumpling takes a little of the speed
-	# a car sliding on flat tarmac does not roll: its tyres cannot push sideways harder (about 1 g) than it takes to
-	# lift its centre of gravity over its outer wheels (its track over twice its height: 1.4 g for a car). Only a
-	# vehicle tall and narrow enough could (none of the player's cars); what rolls a car is something stopping its
-	# wheels short while it slides (the foot of the guardrail, see _crash_rail)
-	crash.can_trip = b.grip > b.shape.track / b.cg_h
+	_crash_cam_dir = 1.0 if player.x <= 0.0 else -1.0
+	_cam_user = Vector3.ZERO
+	_cam_fling = Vector2.ZERO
+	_cam_drag.clear()
+	_cam_idle = 9.0
 	run.dying = 8.0
 	_debris_at(Vector3(player.x, 0.7, -player.l * 0.6), Save.car_color(Data.car_by_id(Save.data.selected)), 40)
 	player.v = maxf(b.vel.y, 0.0)
 	hud.set_play_visible(false)  # let the crash play out full screen
+	hud.crash_hint(true)  # (the camera is the player's to move: _crash_cam_input)
 	shake = 1.4
 
 
-## The wrecked car: Wreck does the sliding (tyres on the road while it is on its wheels, the body on its
-## roof or side), spinning and coming to rest; this decides what it is doing (rolling, in the air), where it
-## hits the guardrail and the other cars, and makes the sound and sparks.
+## The wrecked car: Wreck does the sliding on its tyres, the spinning, the coming to rest and the body rocking on its
+## springs; this finds where it hits the guardrail and the other cars, and makes the sound and sparks.
 func _update_crash(dt: float) -> void:
 	var c := crash
 	var b := c.body
 	c.t += dt
-	var h := b.heading()
-	var right := Vector2(h.y, -h.x)
-	var sl := b.vel.dot(right)  # how fast it is sliding sideways
-	var grounded := c.air <= 0.0
-	var on_wheels := absf(wrapf(c.roll, -PI, PI)) < 0.35
-	var scraping := false
-	b.in_air = not grounded
-	b.on_wheels = on_wheels
-	if grounded:
-		if on_wheels:
-			if c.can_trip and absf(sl) > 6.5 and c.t > 0.2:
-				# the leading tyres dig in and the car flips over sideways
-				c.can_trip = false
-				_crash_trip(signf(sl), absf(sl))
-				b.vel -= right * (sl * 0.4)
-		else:
-			scraping = b.vel.length() > 3.0  # steel on asphalt
-		var face := roundi(c.roll / (PI / 2.0))
-		var off := c.roll - face * PI / 2.0
-		if absf(c.roll_rate) > 2.5:
-			# tumbling: each landing on a new face costs energy and bounces it
-			c.roll_rate *= exp(-0.55 * dt)
-			b.vel = b.vel.move_toward(Vector2.ZERO, 3.0 * dt)
-			b.w = move_toward(b.w, 0.0, 1.5 * dt)
-			if face != c.face and absf(off) < 0.25:
-				c.face = face
-				c.roll_rate *= 0.8
-				c.vy = minf(absf(c.roll_rate) * 0.12, 1.2)
-				c.air = 0.001
-				shake = maxf(shake, 0.7)
-				sound.play("crash", randf_range(0.8, 1.05), -5.0)
-				_vib(60)
-		else:
-			# slow: it falls onto its wheels or its roof, whichever is nearer
-			var rest := roundf(c.roll / PI) * PI
-			c.roll_rate += (rest - c.roll) * 26.0 * dt
-			c.roll_rate *= exp(-5.0 * dt)
-	else:
-		c.vy -= 9.8 * dt
-		c.air += c.vy * dt
-		if c.air <= 0.0:
-			c.air = 0.0
-			if c.vy < -2.5:
-				c.vy = -c.vy * 0.3
-				c.air = 0.001
-				sound.play("crash", 1.1, -8.0)
-			else:
-				c.vy = 0.0
 	b.step(dt)
-	c.roll += c.roll_rate * dt
 	_crash_rail()
 	var out := b.outline()
 	var solid: Array[Vehicle] = traffic.duplicate()
@@ -2562,26 +2543,25 @@ func _update_crash(dt: float) -> void:
 	player.yaw = 0.0
 	player.course = 0.0
 	player.steer = 0.0
-	if scraping and fmod(c.t, 0.12) < dt:
-		_spark_at(Vector3(player.x, 0.3, -player.l * 0.5))
-	if not c.settled and grounded and c.air <= 0.0 and b.vel.length() < 0.4 and absf(b.w) < 0.3 and absf(c.roll_rate) < 0.3:
+	on_shoulder = absf(player.x) + player.w / 2.0 > Data.ROAD_HALF + 0.25 and not (player.x > 0.0 and _in_station_zone())  # (dust off the verge)
+	if _test_cam_swipe.size() >= 3 and c.t >= float(_test_cam_swipe[0]):
+		_crash_swipe_test()
+	if not c.settled and b.vel.length() < 0.4 and absf(b.w) < 0.3:
 		c.settled = true
 		if run:
 			run.dying = minf(run.dying, 2.2)
 
 
-## The wrecked car against the guardrails: a bounce and a scrape, the corner that touches takes the blow
-## (so a nose that hits it is swung back to the road), and side-on at speed it can trip over.
+## The wrecked car against the guardrails: a bounce and a scrape, the corner that touches takes the blow (so a nose
+## that hits it is swung back to the road). The beam is built to catch a car and turn it along the road, not to trip
+## it: the body rocks on its springs (Wreck.impact) and the car stays on its wheels.
 func _crash_rail() -> void:
-	var c := crash
-	var b := c.body
+	var b := crash.body
 	for s: float in [1.0, -1.0]:
 		var wc := HitShape.wall_contact(b.outline(false), s * Data.RAIL, s)
 		if wc.is_empty():
 			continue
 		b.pos.x -= s * float(wc.depth)
-		var h := b.heading()
-		var sl := b.vel.dot(Vector2(h.y, -h.x))
 		var into := b.point_vel(wc.p).x * s  # how fast the touching corner was going into the rail
 		var j := Wreck.impact(b, null, wc.n, wc.p)
 		if j <= 0.0:
@@ -2590,27 +2570,7 @@ func _crash_rail() -> void:
 		if into > 2.5:
 			sound.play("crash", 1.2, -6.0)
 			_spark_at(Vector3(wc.p.x, 0.6, -(wc.p.y - player.z)))
-		# sliding sideways into the barrier trips it over if it is going fast enough: the foot of the post and the beam
-		# stop the wheels and sills, below its centre of gravity (Wreck.trip_speed: about 6 m/s side-on for a car)
-		if absf(sin(b.yaw)) > 0.5 and into > b.trip_speed(0.3) and absf(wrapf(c.roll, -PI, PI)) < 0.35:
-			_crash_trip(signf(sl), into)
-
-
-## Flip the car over sideways. `side` is the direction it is sliding across
-## its own right (+1) or left (-1); `speed` how fast.
-func _crash_trip(side: float, speed: float) -> void:
-	var c := crash
-	if c.air > 0.0 or absf(c.roll_rate) > 2.5:
-		return
-	if autotest:
-		print("[autotest] crash TRIP speed=%.1f" % speed)
-	c.roll_rate = -side * clampf(speed * 0.6, 5.0, 8.5)
-	c.vy = minf(1.6 + speed * 0.1, 3.4)
-	c.air = 0.001
-	c.yaw_rate *= 0.4
-	sound.play("crash", 0.9, 0.0)
-	shake = maxf(shake, 1.2)
-	_vib(120)
+			_vib(int(clampf(into * 10.0, 30.0, 120.0)))
 
 
 ## Test aid (--collide-at=SEC:KIND[:LIVES]): clear the road around the player and put a car where the player
@@ -2666,11 +2626,10 @@ func _collision_test(spec: String) -> void:
 
 
 ## The crashing car against another vehicle, outline against outline (`out` is the crashing car's). The
-## blow is worked out at the point where they touch: both cars are shoved and spun by it, the other one
-## becomes a wreck too. A side-on hit while sliding is what trips a car over.
+## blow is worked out at the point where they touch: both cars are shoved, spun and rocked on their springs by
+## it, and the other one becomes a wreck too.
 func _crash_collide(o: Vehicle, out: Array[PackedVector2Array]) -> void:
-	var c := crash
-	var b := c.body
+	var b := crash.body
 	var oc := o.wreck.pos if o.wreck else Vector2(o.x, o.z + o.l * 0.5)
 	if b.pos.distance_to(oc) > b.shape.radius + HitShape.of(o.shape_id).radius + 0.3:
 		return
@@ -2681,8 +2640,6 @@ func _crash_collide(o: Vehicle, out: Array[PackedVector2Array]) -> void:
 	var n: Vector2 = ct.n
 	var h := b.heading()
 	var r := Vector2(h.y, -h.x)
-	var vn := (b.point_vel(ct.p) - ob.point_vel(ct.p)).dot(n)  # how fast they close on each other
-	var slip := absf(b.vel.dot(r)) + absf(vn)
 	Wreck.separate(b, ob, n, float(ct.depth))
 	var j := Wreck.impact(b, ob, n, ct.p)
 	if j <= 0.0:
@@ -2701,11 +2658,6 @@ func _crash_collide(o: Vehicle, out: Array[PackedVector2Array]) -> void:
 		shake = maxf(shake, minf(1.2, j * 0.08))
 		_vib(int(clampf(j * 8.0, 30.0, 150.0)))
 		_spark_at(Vector3(contact.x, 0.5, -(contact.y - player.z)))
-	# hit side-on while sliding sideways: the other car's bumper meets its flank at about the height of its centre of
-	# gravity, which shoves it rather than tipping it, so it takes a lot (Wreck.trip_speed at bumper height) to roll it
-	var side := n.dot(r)
-	if absf(side) > 0.55 and absf(wrapf(c.roll, -PI, PI)) < 0.35 and slip > b.trip_speed(0.45):
-		_crash_trip(signf(side), slip)
 
 
 func _spark_at(pos: Vector3) -> void:
@@ -2715,8 +2667,16 @@ func _spark_at(pos: Vector3) -> void:
 
 
 func _end_crash() -> void:
+	if crash:
+		hud.crash_hint(false)
 	crash = null
 	_yaw_kick = 0.0
+	_blow_body = null
+	if _sway:  # (back on its wheels, standing level)
+		_sway.roll = 0.0
+		_sway.pitch = 0.0
+		_sway.roll_v = 0.0
+		_sway.pitch_v = 0.0
 	if player.model:
 		player.model.clear_crash_pose()
 	skids.clear_all()
@@ -3258,6 +3218,7 @@ func _end_run(reason: String) -> void:
 	_compute_stats()
 	state = S.OVER
 	hud.set_play_visible(false)
+	hud.crash_hint(false)
 	hud.show_over(reason, Fmt.num(score), Fmt.km(dist), str(bosses), "+$" + Fmt.num(earned), " ".join(notes))
 	if autotest and _test_replay < 0.0 and not _test_hold_over:
 		_start_run()
@@ -4064,7 +4025,7 @@ func _update_run(dt: float) -> void:
 	if run == null:
 		return
 	if run.wrecked and run.dying <= 0.0 and crash == null:
-		_start_crash(player.v, 1.0 if player.x < 0.0 else -1.0, null)  # (a wreck that did not come in a hit crashes all the same)
+		_start_crash()  # (a wreck that did not come in a hit crashes all the same)
 	if run.dying > 0.0:
 		run.dying -= dt
 		if run.dying <= 0.0:
@@ -4305,6 +4266,10 @@ func _process(delta: float) -> void:
 					o2.z = player.z + 14.0
 					o2.v = player.v * 0.6
 		_hit("TEST CRASH", other)
+	if not _test_touch_q.is_empty():
+		var ev: InputEvent = _test_touch_q.pop_front()
+		if ev:
+			Input.parse_input_event(ev)
 	if _test_collide_t > 0.0 and now > _test_collide_t and _live():
 		_test_collide_t = -1.0
 		_collision_test(_test_collide)
@@ -4339,7 +4304,7 @@ func _process(delta: float) -> void:
 				print("[autotest] t=%.0f stage=%d phase=%s lives=%d score=%d v=%.0fkm/h dist=%.0f cars=%d" % [
 					Time.get_ticks_msec() / 1000.0, run.stage, run.phase, run.lives, run.score, player.v * 3.6, run.dist, traffic.size()])
 		if crash:
-			print("[autotest] crash t=%.2f x=%.2f vel=%s yaw=%.2f roll=%.2f rr=%.2f air=%.2f settled=%s" % [crash.t, player.x, crash.vel, crash.yaw, crash.roll, crash.roll_rate, crash.air, crash.settled])
+			print("[autotest] crash t=%.2f x=%.2f vel=%s yaw=%.2f roll=%+.3f pitch=%+.3f settled=%s cam=(%+.2f, %+.2f, %+.2f) fling=%s" % [crash.t, player.x, crash.vel, crash.yaw, crash.roll, crash.pitch, crash.settled, _cam_user.x, _cam_user.y, _cam_user.z, str(_cam_fling)])
 	_hitch_monitor()
 	if demo_pops and run:
 		_demo_t += delta
@@ -4460,8 +4425,8 @@ func _check_shots() -> void:
 func _place(c: Vehicle, delta: float) -> void:
 	c.model.spin(c.v, delta)
 	if c.wreck:
-		# a car that has been hit slides and spins about its middle
-		c.model.set_crash_pose(c.x, c.wreck.yaw, 0.0, 0.0, -(c.z - player.z))
+		# a car that has been hit slides and spins about its middle, its body rocking on its springs
+		c.model.set_crash_pose(c.x, c.wreck.yaw, -(c.z - player.z), c.wreck.roll, c.wreck.pitch)
 	else:
 		c.model.position = Vector3(c.x, 0.0, -(c.z - player.z))
 		# a car points where it is going (none of them can move sideways while stopped)
@@ -4520,14 +4485,18 @@ func _sync_visuals(delta: float) -> void:
 		_place(boss, delta)
 	_place(player, delta)
 	if crash:
-		player.model.set_crash_pose(player.x, crash.yaw, crash.roll, crash.air)
+		player.model.set_crash_pose(player.x, crash.yaw, 0.0, crash.roll, crash.pitch)
 		_crash_marks()
 	else:
-		# the kick is a damped spring (about 3 Hz, settling in half a second)
-		_kick_v += (-_kick * 150.0 - _kick_v * 9.0) * delta
-		_kick += _kick_v * delta
-		player.model.set_roll(clampf(-player.v * player.yaw_rate * 0.0035, -0.035, 0.035) + _kick.x * 0.05)
-		player.model.set_pitch(clampf(-player_accel * 0.0018, -0.014, 0.02) + _kick.y * 0.05)
+		# the body on its springs: it leans out of a turn and dips its nose as it slows (the way the car is pushed: round
+		# the turn at speed x the rate it turns, along it at the change of speed), and rocks when a blow kicks it
+		if _sway:
+			var lat := player.v * player.yaw_rate
+			if run and run.drift and _live() and not _drift_s.is_empty():
+				lat = float(_drift_s.lat)  # (the drift tune's tyres: sideways in the car's own frame, sliding or not)
+			_sway.sway(player_accel, lat, delta)
+		player.model.set_roll(_sway.roll if _sway else 0.0)
+		player.model.set_pitch(_sway.pitch if _sway else 0.0)
 		var sliding := 0.0   # the drift tune: how hard the rear tyres are sliding or spinning
 		if run and run.drift and _live() and not _drift_s.is_empty() and player.v > 6.0:
 			sliding = clampf(maxf((float(_drift_s.slide) - 0.25) / 0.75, float(_drift_s.spin) * 0.8), 0.0, 1.0)
@@ -4577,14 +4546,14 @@ func _crash_marks() -> void:
 	var c := crash
 	var h := Vector2(sin(c.yaw), cos(c.yaw))
 	var sl := absf(c.vel.dot(Vector2(h.y, -h.x)))
-	var sliding := c.air <= 0.0 and absf(wrapf(c.roll, -PI, PI)) < 0.3 and (sl > 1.6 or c.t < 0.5) and c.vel.length() > 1.0
+	var sliding := c.vel.length() > 1.0  # (its rear wheels are locked and the fronts are braking at their limit)
 	var contacts := player.model.wheel_contacts()
 	for i in contacts.size():
 		if sliding:
-			skids.add_point(i, contacts[i].x, player.z - contacts[i].z, clampf(sl / 6.0, 0.4, 1.0))
+			skids.add_point(i, contacts[i].x, player.z - contacts[i].z, clampf(maxf(sl, c.vel.length() * 0.3) / 6.0, 0.4, 1.0))
 		else:
 			skids.lift(i)
-	smoke.emitting = sliding or (c.air <= 0.0 and c.vel.length() > 3.0) or c.settled
+	smoke.emitting = sliding or c.vel.length() > 3.0 or c.settled
 	smoke.position = Vector3(player.x, 0.3, -player.l * 0.5)
 	if c.settled:  # the wrecked engine smokes once it comes to rest
 		var h3 := Vector2(sin(c.yaw), cos(c.yaw))
@@ -4656,11 +4625,27 @@ func _update_camera(delta: float, mode: String) -> void:
 		return
 	if crash and state != S.REPLAY:
 		player.model.set_cabin_view(false)
-		_crash_cam_t += delta
-		# swing round from behind to a rear three-quarter view, then hold
-		# (towards the middle of the road, so it never ends up out on the verge)
-		var toward := 1.0 if player.x <= 0.0 else -1.0
-		_orbit_cam(toward * (0.9 * smoothstep(0.0, 3.5, _crash_cam_t) + 0.04 * _crash_cam_t), 9.5, 3.2)
+		if not _cam_drag.is_empty() and delta > 0.0:
+			_cam_vel = _cam_vel.lerp(_cam_moved / delta, 0.5)
+			_cam_moved = Vector2.ZERO
+		# a flick of the player's keeps it turning, dying away
+		if _cam_drag.is_empty() and _cam_fling != Vector2.ZERO:
+			_cam_user.x += _cam_fling.x * delta
+			_cam_user.y = clampf(_cam_user.y + _cam_fling.y * delta, CRASH_CAM_EL_MIN - CRASH_CAM_EL, CRASH_CAM_EL_MAX - CRASH_CAM_EL)
+			_cam_fling *= exp(-2.5 * delta)
+			if _cam_fling.length() < 0.02:
+				_cam_fling = Vector2.ZERO
+		# left alone it swings round from behind to a rear three-quarter view, then turns slowly (towards the middle of
+		# the road, so it never ends up out on the verge); while the player moves it, it waits
+		_cam_idle += delta
+		if _cam_idle > 4.0:
+			_cam_drag.clear()  # (a lift of the finger that never reached us: a finger held still for that long has let go)
+		if _cam_drag.is_empty() and _cam_fling == Vector2.ZERO and _cam_idle > 1.5:
+			_crash_cam_t += delta
+		var ang := _crash_cam_dir * (0.9 * smoothstep(0.0, 3.5, _crash_cam_t) + 0.04 * _crash_cam_t) + _cam_user.x
+		var el := clampf(CRASH_CAM_EL + _cam_user.y, CRASH_CAM_EL_MIN, CRASH_CAM_EL_MAX)
+		var dist := CRASH_CAM_DIST * exp(_cam_user.z)
+		_orbit_cam(ang, dist * cos(el), dist * sin(el))
 		return
 	var cfg := Save.cam(mode)
 	# portrait keeps the horizontal field of view; landscape keeps a vertical one
@@ -5014,6 +4999,116 @@ func _edge_swipe(event: InputEvent) -> bool:
 var _edge := {}
 
 
+## Test aid (--crash-swipe=SEC:DX:DY[:FLICK[:PINCH]]): a finger lands in the middle of the screen and drags DX, DY (as a
+## share of the screen's width and height) in ten moves, a move a frame, through the real input path; with FLICK 1 it
+## lets go while still moving (so the camera carries on), with FLICK 0 it holds still for a moment first. PINCH (a factor:
+## 1.5 spreads two fingers to half as far apart again) puts a second finger down and spreads them.
+func _crash_swipe_test() -> void:
+	var sw := _test_cam_swipe
+	_test_cam_swipe = []
+	# (an event comes in the window's pixels, which the game's view is stretched over: the moves are worked out on the view
+	# and turned into the window's)
+	var to_win := get_viewport().get_final_transform()
+	var view := get_viewport().get_visible_rect().size
+	var win := to_win.basis_xform(view).abs()
+	var mid := to_win * (view * 0.5)
+	var d := Vector2(float(sw[1]), float(sw[2])) * win
+	var flick := sw.size() > 3 and int(sw[3]) == 1
+	var touch := InputEventScreenTouch.new()
+	touch.index = 0
+	touch.position = mid
+	touch.pressed = true
+	_test_touch_q.append(touch)
+	for i in 10:
+		var e := InputEventScreenDrag.new()
+		e.index = 0
+		e.position = mid + d * float(i + 1) / 10.0
+		e.relative = d / 10.0
+		_test_touch_q.append(e)
+	if not flick:
+		for i in 8:
+			_test_touch_q.append(null)  # (the finger rests)
+	if sw.size() > 4:
+		var k := float(sw[4])
+		var two := InputEventScreenTouch.new()
+		two.index = 1
+		two.position = mid + d + Vector2(win.x * 0.1, 0.0)
+		two.pressed = true
+		_test_touch_q.append(two)
+		for i in 5:
+			var e2 := InputEventScreenDrag.new()
+			e2.index = 1
+			e2.position = mid + d + Vector2(win.x * 0.1 * lerpf(1.0, k, float(i + 1) / 5.0), 0.0)
+			e2.relative = Vector2(win.x * 0.1 * (k - 1.0) / 5.0, 0.0)
+			_test_touch_q.append(e2)
+		var up2 := InputEventScreenTouch.new()
+		up2.index = 1
+		up2.position = mid + d + Vector2(win.x * 0.1 * k, 0.0)
+		up2.pressed = false
+		_test_touch_q.append(up2)
+	var up := InputEventScreenTouch.new()
+	up.index = 0
+	up.position = mid + d
+	up.pressed = false
+	_test_touch_q.append(up)
+	if autotest:
+		print("[autotest] crash camera: a finger drags %s of the screen%s%s" % [str(Vector2(float(sw[1]), float(sw[2]))), " and flicks" if flick else ", then rests", (" and a pinch of %s" % sw[4]) if sw.size() > 4 else ""])
+
+
+## The crash camera in the player's hands: drag a finger (or the mouse) across the screen to swing it round the wreck
+## and up or down, let go mid-swipe to send it on round, pinch with two fingers (or turn the mouse wheel) to draw it in
+## or back. Left alone for a moment it carries on its own slow turn from where it was left.
+func _crash_cam_input(event: InputEvent) -> void:
+	var size := get_viewport().get_visible_rect().size
+	if event is InputEventScreenTouch:
+		var e := event as InputEventScreenTouch
+		if e.pressed and not hud.ui_blocks(e.position):
+			if _cam_idle > 8.0:
+				hud.crash_hint(false)  # (found it)
+			_cam_drag[e.index] = e.position
+			_cam_fling = Vector2.ZERO
+			_cam_vel = Vector2.ZERO
+			_cam_moved = Vector2.ZERO
+			_cam_idle = 0.0
+		elif not e.pressed and _cam_drag.has(e.index):
+			_cam_drag.erase(e.index)
+			if _cam_drag.is_empty() and _cam_idle < 0.1:
+				var v := _cam_vel.lerp(_cam_moved / maxf(get_process_delta_time(), 0.008), 0.5)   # (the finger's speed as it let go)
+				_cam_fling = Vector2(-v.x * PI / size.x, v.y * 1.6 / size.y)   # (a flick: it goes on as fast as the finger went)
+				if _cam_fling.length() < 0.25:
+					_cam_fling = Vector2.ZERO
+			_cam_vel = Vector2.ZERO
+			_cam_moved = Vector2.ZERO
+	elif event is InputEventScreenDrag:
+		var e := event as InputEventScreenDrag
+		if not _cam_drag.has(e.index):
+			return
+		if _cam_drag.size() == 1:
+			# across the screen is half a turn round the car, up the screen lifts it about 90 degrees
+			_cam_user.x -= e.relative.x * PI / size.x
+			_cam_user.y = clampf(_cam_user.y + e.relative.y * 1.6 / size.y, CRASH_CAM_EL_MIN - CRASH_CAM_EL, CRASH_CAM_EL_MAX - CRASH_CAM_EL)
+			_cam_moved += e.relative
+		else:
+			# two fingers: the camera follows the gap between them
+			var other := Vector2.ZERO
+			for k in _cam_drag:
+				if k != e.index:
+					other = _cam_drag[k]
+			var before := (_cam_drag[e.index] as Vector2).distance_to(other)
+			var after := e.position.distance_to(other)
+			if before > 8.0 and after > 8.0:
+				_cam_user.z = clampf(_cam_user.z - log(after / before), -CRASH_CAM_ZOOM, CRASH_CAM_ZOOM)
+			_cam_vel = Vector2.ZERO
+			_cam_moved = Vector2.ZERO
+		_cam_drag[e.index] = e.position
+		_cam_idle = 0.0
+	elif event is InputEventMouseButton and (event as InputEventMouseButton).pressed:
+		var b := (event as InputEventMouseButton).button_index
+		if b == MOUSE_BUTTON_WHEEL_UP or b == MOUSE_BUTTON_WHEEL_DOWN:
+			_cam_user.z = clampf(_cam_user.z + (-0.1 if b == MOUSE_BUTTON_WHEEL_UP else 0.1), -CRASH_CAM_ZOOM, CRASH_CAM_ZOOM)
+			_cam_idle = 0.0
+
+
 func _input(event: InputEvent) -> void:
 	if event is InputEventScreenTouch or event is InputEventScreenDrag or event is InputEventMouseButton or event is InputEventMouseMotion or event is InputEventKey:
 		_last_touch_ms = Time.get_ticks_msec()
@@ -5022,6 +5117,8 @@ func _input(event: InputEvent) -> void:
 	if state == S.REPLAY:
 		_replay_input(event)
 		return
+	if crash and state == S.PLAY:
+		_crash_cam_input(event)
 	if garage.active and (state == S.MENU or state == S.GARAGE):
 		# drag the 3D view (not the panels) to look round the car
 		if event is InputEventScreenTouch:
@@ -5580,12 +5677,12 @@ func _record(dt: float) -> void:
 	if crash:
 		pv[Replay.P_YAW] = crash.yaw
 		pv[Replay.P_ROLL] = crash.roll
-		pv[Replay.P_AIR] = crash.air
+		pv[Replay.P_PITCH] = crash.pitch
 		pv[Replay.P_CRASH] = 1.0
 	else:
 		pv[Replay.P_YAW] = player.yaw
-		pv[Replay.P_ROLL] = clampf(-player.v * player.yaw_rate * 0.0035, -0.035, 0.035)
-		pv[Replay.P_PITCH] = clampf(-player_accel * 0.0028, -0.022, 0.03)
+		pv[Replay.P_ROLL] = _sway.roll if _sway else 0.0   # (what the body showed: Wreck.sway)
+		pv[Replay.P_PITCH] = _sway.pitch if _sway else 0.0
 	var live := _live()
 	pv[Replay.P_GAS] = 1.0 if (in_gas if live and not autotest else ap_gas) else 0.0
 	pv[Replay.P_BRAKE] = 1.0 if player.braking else 0.0
@@ -5600,7 +5697,8 @@ func _record(dt: float) -> void:
 			var dir := 0
 			if c.tlane >= 0 and c.tlane != c.lane:
 				dir = -1 if Data.LANES[c.tlane] < c.x else 1
-			cars[c.id] = PackedFloat32Array([c.x, c.z, c.v, c.vx, 1.0 if c.braking else 0.0, dir, c.wreck.yaw if c.wreck else 0.0, 1.0 if c.wreck else 0.0])
+			cars[c.id] = PackedFloat32Array([c.x, c.z, c.v, c.vx, 1.0 if c.braking else 0.0, dir, c.wreck.yaw if c.wreck else 0.0, 1.0 if c.wreck else 0.0,
+				c.wreck.roll if c.wreck else 0.0, c.wreck.pitch if c.wreck else 0.0])
 	var f := {"p": pv, "cars": cars, "finish": finish_z, "gear": sound.gear, "rpm": sound.rpm}
 	if boss and boss.is_cop:
 		f["cop"] = boss.id
@@ -5618,6 +5716,7 @@ func _open_replay() -> void:
 	if replay.empty():
 		hud.pop("NOTHING RECORDED YET", "small")
 		return
+	hud.crash_hint(false)
 	rp = {"from": state, "t": replay.start_t(), "play": true, "speed": 1.0, "cam": "chase",
 		"a": replay.start_t(), "b": replay.end_t(), "tv_z": -1.0, "tv_x": 0.0, "hide": false,
 		"live": [player.x, player.z, player.v, player.vx], "touch": {}, "fc": FREE_CAM.duplicate()}
@@ -5710,11 +5809,12 @@ func _replay_show(t: float, dt: float) -> void:
 			continue
 		var v: PackedFloat32Array = cars[id]
 		m.visible = true
-		if v.size() > Replay.C_WRECK and v[Replay.C_WRECK] > 0.5:
-			m.set_crash_pose(v[Replay.C_X], v[Replay.C_YAW], 0.0, 0.0, -(v[Replay.C_Z] - pz))
+		if v.size() > Replay.C_PITCH and v[Replay.C_WRECK] > 0.5:
+			m.set_crash_pose(v[Replay.C_X], v[Replay.C_YAW], -(v[Replay.C_Z] - pz), v[Replay.C_ROLL], v[Replay.C_PITCH])
 		else:
 			m.position = Vector3(v[Replay.C_X], 0.0, -(v[Replay.C_Z] - pz))
-			m.rotation.y = -atan2(v[Replay.C_VX], maxf(v[Replay.C_V], 1.0))
+			m.rotation = Vector3(0.0, -atan2(v[Replay.C_VX], maxf(v[Replay.C_V], 1.0)), 0.0)
+			m.clear_lean()  # (scrubbed back to before it was hit)
 		m.spin(v[Replay.C_V], absf(dt))
 		m.set_brake(v[Replay.C_BRAKE] > 0.5)
 		m.set_signal(roundi(v[Replay.C_SIG]), fmod(t * 2.6, 1.0) < 0.55)
@@ -5727,7 +5827,7 @@ func _replay_show(t: float, dt: float) -> void:
 	var pm := player.model
 	pm.spin(p[Replay.P_V], absf(dt))
 	if crashed:
-		pm.set_crash_pose(p[Replay.P_X], p[Replay.P_YAW], p[Replay.P_ROLL], p[Replay.P_AIR])
+		pm.set_crash_pose(p[Replay.P_X], p[Replay.P_YAW], 0.0, p[Replay.P_ROLL], p[Replay.P_PITCH])
 	else:
 		pm.clear_crash_pose()
 		pm.position = Vector3(p[Replay.P_X], 0.0, 0.0)

@@ -95,6 +95,9 @@ func sample(t: float) -> Dictionary:
 				v[i] = lerpf(va[i], vb[i], k)
 			if va.size() > C_YAW and vb.size() > C_YAW:
 				v[C_YAW] = va[C_YAW] + wrapf(vb[C_YAW] - va[C_YAW], -PI, PI) * k  # a wreck's heading, the short way round
+			if va.size() > C_PITCH and vb.size() > C_PITCH:
+				v[C_ROLL] = lerpf(va[C_ROLL], vb[C_ROLL], k)  # (its body rocking on its springs)
+				v[C_PITCH] = lerpf(va[C_PITCH], vb[C_PITCH], k)
 			cars[id] = v
 		else:
 			cars[id] = va
@@ -108,16 +111,16 @@ const P_Z := 1
 const P_V := 2
 const P_VX := 3
 const P_YAW := 4
-const P_ROLL := 5
-const P_AIR := 6
+const P_ROLL := 5    # the body on its springs: rolled (+ right side up)...
+const P_AIR := 6     # (no longer used: the car never leaves the road)
 const P_CRASH := 7   # 1 while the last-life crash is playing
 const P_GAS := 8
 const P_BRAKE := 9
 const P_STEER := 10
 const P_GHOST := 11  # invulnerable glow
-const P_PITCH := 12
+const P_PITCH := 12  # ...and pitched (+ nose down)
 
-# indices into each car's array: x, z, v, vx, braking, signal direction, heading and wreck flag
+# indices into each car's array: x, z, v, vx, braking, signal direction, heading, wreck flag, and its body's roll and pitch
 # (a car that has been hit slides and spins about its middle: x, z and the heading say where)
 const C_X := 0
 const C_Z := 1
@@ -127,3 +130,5 @@ const C_BRAKE := 4
 const C_SIG := 5
 const C_YAW := 6
 const C_WRECK := 7
+const C_ROLL := 8    # a wreck's body on its springs (Wreck.roll, Wreck.pitch)
+const C_PITCH := 9

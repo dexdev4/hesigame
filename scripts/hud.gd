@@ -50,6 +50,8 @@ var _pops: VBoxContainer
 var _bands: Array[PanelContainer] = []  # the notifications sliding in from the right edge (police, boss, stage...)
 var _hint: Label
 var _hint_tween: Tween
+var _crash_hint: Label          # the crash camera can be moved: said for a moment as a crash begins
+var _crash_tween: Tween
 var _fill_white: StyleBoxFlat
 var _fill_amber: StyleBoxFlat
 var _fill_red: StyleBoxFlat
@@ -694,6 +696,16 @@ func _build_play() -> void:
 	_hint.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.8))
 	_hint.modulate.a = 0.0
 	play_layer.add_child(_hint)
+	# (outside the play layer, which is hidden while a crash plays out full screen)
+	_crash_hint = _label("Swipe to look around · pinch to zoom", 22, LINE, mono_font)
+	_crash_hint.anchor_right = 1.0
+	_crash_hint.anchor_top = 0.84
+	_crash_hint.anchor_bottom = 0.84
+	_crash_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_crash_hint.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.8))
+	_crash_hint.add_theme_constant_override("shadow_offset_y", 2)
+	_crash_hint.modulate.a = 0.0
+	root.add_child(_crash_hint)
 
 	var speedo := VBoxContainer.new()
 	speedo.anchor_left = 0.5
@@ -1286,6 +1298,19 @@ func show_hint() -> void:
 	_hint_tween.tween_property(_hint, "modulate:a", 0.0, 0.6)
 
 
+## As a crash begins (`on`), say for a few seconds that the camera can be moved; gone as soon as a finger moves it, or
+## when the crash is over (`on` false).
+func crash_hint(on: bool) -> void:
+	if _crash_tween:
+		_crash_tween.kill()
+	_crash_tween = create_tween()
+	if on:
+		_crash_tween.tween_interval(1.0)
+		_crash_tween.tween_property(_crash_hint, "modulate:a", 0.9, 0.4)
+		_crash_tween.tween_interval(3.5)
+	_crash_tween.tween_property(_crash_hint, "modulate:a", 0.0, 0.4 if on else 0.2)
+
+
 # ---------------------------------------------------------------- menus
 
 ## A screen that leaves the 3D view clear: no scrim, nothing that blocks
@@ -1465,7 +1490,8 @@ func _build_help() -> void:
 		+ "• The " + w + "radar jammer" + e + ", one of the upgrades a beaten boss can give you, warns you 250 m before a speed check.\n\n"
 		+ h + "FUEL AND DAMAGE" + e + "\n"
 		+ "• Watch the " + w + "fuel" + e + " gauge and pull into the fuel stops on the right.\n"
-		+ "• Crashes " + w + "damage" + e + " your car, and a damaged car is slower until you pay to fix it in the garage's Repair tab. At 100% it is a wreck and the run ends.\n\n"
+		+ "• Crashes " + w + "damage" + e + " your car, and a damaged car is slower until you pay to fix it in the garage's Repair tab. At 100% it is a wreck and the run ends.\n"
+		+ "• Losing your last life plays the " + w + "crash" + e + " out in slow motion: swipe to look around it, pinch to zoom.\n\n"
 		+ h + "GARAGE" + e + "\n"
 		+ "• Spend your winnings in the " + w + "garage" + e + ": new cars, upgrades, paint, wheels and repairs.")
 	(m.content as VBoxContainer).add_child(how)

@@ -2963,30 +2963,33 @@ func show_tag_pop(text: String) -> void:
 	_tag_tween.parallel().tween_property(_tag_pop, "outline_modulate:a", 0.0, 0.5)
 
 
-## Crash pose: the whole car (body and wheels) turned by `heading` (radians,
-## + = nose to the right) and rolled by `roll` (radians, + = right side up),
-## pivoting on its centre so it never sinks into the road. `air` lifts it.
-## `x` is where the middle of the car is across the road and `z0` where its rear
-## bumper is along the scene's z (0 for the player, who is always at the origin).
-func set_crash_pose(x: float, heading: float, roll: float, air: float, z0 := 0.0) -> void:
-	var hw: float = shape.w / 2.0
-	var hh: float = shape.t / 2.0
-	var b := Basis(Vector3.UP, -heading) * Basis(Vector3.BACK, roll)
-	var cy := hw * absf(sin(roll)) + hh * absf(cos(roll)) + air
-	var centre := Vector3(0, hh, -shape.l / 2.0)
-	transform = Transform3D(b, Vector3(x, cy, z0 - shape.l / 2.0) - b * centre)
-	_roll = 0.0
-	_pitch = 0.0
+## Crash pose: the car on its wheels, turned about its middle by `heading`
+## (radians, + = nose to the right) wherever it slides, with its body rolled
+## (`roll`, + = right side up) and pitched (`pitch`, + = nose down) on its
+## springs (Wreck works out both). `x` is where the middle of the car is across
+## the road and `z0` where its rear bumper is along the scene's z (0 for the
+## player, who is always at the origin).
+func set_crash_pose(x: float, heading: float, z0 := 0.0, roll := 0.0, pitch := 0.0) -> void:
+	var b := Basis(Vector3.UP, -heading)
+	var mid := Vector3(0.0, 0.0, -float(shape.l) / 2.0)
+	transform = Transform3D(b, Vector3(x, 0.0, z0 - float(shape.l) / 2.0) - b * mid)
+	_roll = roll
+	_pitch = pitch
 	_pose_body()
-	if _shadow_mi:  # the contact shadow only suits a car standing on its wheels
-		_shadow_mi.visible = absf(roll) < 0.3 and air < 0.1
 
 
-## Back on its wheels after a crash pose.
+## Straight again after a crash pose.
 func clear_crash_pose() -> void:
 	rotation = Vector3.ZERO
-	if _shadow_mi:
-		_shadow_mi.visible = true
+	clear_lean()
+
+
+## The body level on its springs again (a wreck's lean taken off, as when the replay goes back to before it was hit).
+func clear_lean() -> void:
+	if _roll != 0.0 or _pitch != 0.0:
+		_roll = 0.0
+		_pitch = 0.0
+		_pose_body()
 
 
 ## World positions of the four tyre contact patches.

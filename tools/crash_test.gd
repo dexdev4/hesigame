@@ -5,8 +5,10 @@ extends SceneTree
 ## exactly when the outlines overlap and the contact point is where they touch)
 ## and Wreck (a sliding car brakes and straightens out, a spin dies away in a
 ## fraction of a turn, an impact conserves momentum, loses energy, and an
-## off-centre one spins the car the right way) and prints how long real crash
-## scenarios take to play out. Exits with a non-zero code if a check fails.
+## off-centre one spins the car the right way; the body leans on its springs the
+## way a real car's does, rocks and settles, and never rolls over) and prints how
+## long real crash scenarios take to play out. Exits with a non-zero code if a
+## check fails.
 
 var _fails := 0
 var _checks := 0
@@ -40,6 +42,7 @@ func _initialize() -> void:
 	_hit_shapes()
 	_free_motion()
 	_impacts()
+	_springs()
 	_scenarios()
 	print("== %d checks, %d failed" % [_checks, _fails])
 	quit(1 if _fails > 0 else 0)
@@ -213,12 +216,20 @@ func _free_motion() -> void:
 		_check(res.t_stop > 0.0, "it comes to rest")
 		_check(absf(res.turned) < TAU * 1.5, "less than a turn and a half in all at %.1f rad/s (%.2f)" % [rate, res.turned / TAU])
 		_check(res.e_grew < 0.001, "its energy never grows (%.5f)" % res.e_grew)
-	# on its roof
-	b = _car("sedan", 0.0, 0.0, 0.0, Vector2(0.0, 30.0))
-	b.on_wheels = false
-	res = _run(b, 20.0)
-	print("  on its roof at 30 m/s: stops in %.1f s over %.0f m" % [res.t_stop, res.dist])
-	_check(res.t_stop > 0.0 and res.t_stop < 10.0, "a car on its roof comes to rest")
+	# the last-life crash: the rear wheels locked (the driver standing on the brakes). The slightest swing grows into a
+	# spin until the car slides backwards, as a real one does; with them rolling the same swing dies away
+	for lock: bool in [true, false]:
+		b = _car("sedan", 0.0, 0.0, 0.0, Vector2(0.0, 35.0))
+		b.brake = 0.5
+		b.grip = 0.95
+		b.rear_lock = lock
+		b.w = 0.15
+		res = _run(b, 20.0)
+		print("  35 m/s with a 0.15 rad/s swing, rear wheels %s: turned %.0f degrees, stopped after %.1f s and %.0f m" % ["locked" if lock else "rolling", rad_to_deg(res.turned), res.t_stop, res.dist])
+		if lock:
+			_check(absf(res.turned) > PI * 0.75 and absf(res.turned) < PI * 1.4, "rear wheels locked, a small swing grows into a spin until it slides backwards (%.0f degrees)" % rad_to_deg(res.turned))
+		else:
+			_check(absf(res.turned) < 0.3, "rolling, the same swing dies away (%.2f rad)" % res.turned)
 	# the truck
 	b = _car("truck", 0.0, 0.0, 0.0, Vector2(0.0, 20.0))
 	b.w = 0.8
@@ -309,15 +320,16 @@ func _impacts() -> void:
 		print("  rear-end at %.0f m/s closing: they part at %.2f of it" % [cl, part])
 		_check(_near(part, Wreck.bounce(cl), 0.01), "a %.0f m/s blow parts at the bounce its speed gives (%.2f)" % [cl, part])
 	_check(Wreck.bounce(2.0) > 0.25 and Wreck.bounce(20.0) < 0.07, "a 2 m/s tap springs apart, a 20 m/s crash nearly sticks")
-	# what it takes to roll a car over: something stopping its wheels short while it slides
-	var sd := Wreck.make("sedan")
-	var vn := Wreck.make("van")
-	print("  trip speeds: a sedan %.1f m/s side-on into a kerb (%.0f at bumper height), a van %.1f; a sedan's tyres hold %.2f g, it tips at %.2f g" % [
-		sd.trip_speed(0.3), sd.trip_speed(0.45), vn.trip_speed(0.3), sd.grip, sd.shape.track / sd.cg_h])
-	_check(sd.trip_speed(0.3) > 4.5 and sd.trip_speed(0.3) < 8.5, "a car trips over sliding side-on into the foot of a rail at 4.5 to 8.5 m/s")
-	_check(vn.trip_speed(0.3) < sd.trip_speed(0.3), "a van trips over sooner than a car")
-	_check(sd.trip_speed(0.45) > 12.0, "a blow at bumper height takes a lot to tip a car")
-	_check(sd.grip < sd.shape.track / sd.cg_h, "a car's tyres cannot roll it on flat tarmac")
+	# what it would take to roll a car over on a flat road: more sideways push than its tyres can give
+	var tips := ""
+	var lowest := 9.0
+	for id in ["sedan", "hatch", "compact"] + Data.CARS.map(func(c: Dictionary) -> String: return String(c.shape)):
+		var w := Wreck.make(id)
+		lowest = minf(lowest, w.tip_g())
+		if w.tip_g() <= w.grip:
+			tips += " " + id
+	print("  the least sideways push that would lift a car over its outer wheels: %.2f g (its tyres hold %.2f g)" % [lowest, Wreck.make("sedan").grip])
+	_check(tips == "", "no car's tyres can roll it on flat tarmac (%s)" % tips)
 	# where the weight goes
 	var bk := _car("sedan", 0.0, 0.0, 0.0, Vector2(0.0, 30.0))
 	bk.brake = 1.0
@@ -336,6 +348,100 @@ func _impacts() -> void:
 	c = _contact(a, b)
 	j = Wreck.impact(a, b, c.n, c.p, 0.2, 0.25)
 	_check(b.vel.y > 0.0 and b.vel.y < 5.0 and absf(b.w) < 0.001, "a nudge only nudges")
+
+
+# ---------------------------------------------------------------- the body on its springs
+
+## Runs a body for `secs`, returning the extremes of its roll and pitch and where they ended.
+func _sway_run(b: Wreck, secs: float) -> Dictionary:
+	var dt := 1.0 / 60.0
+	var t := 0.0
+	var out := {"roll_max": 0.0, "roll_min": 0.0, "pitch_max": 0.0, "pitch_min": 0.0, "t_stop": -1.0, "finite": true}
+	while t < secs:
+		b.step(dt)
+		t += dt
+		out.roll_max = maxf(out.roll_max, b.roll)
+		out.roll_min = minf(out.roll_min, b.roll)
+		out.pitch_max = maxf(out.pitch_max, b.pitch)
+		out.pitch_min = minf(out.pitch_min, b.pitch)
+		if is_nan(b.roll) or is_nan(b.pitch) or is_inf(b.roll) or is_inf(b.pitch):
+			out.finite = false
+		if out.t_stop < 0.0 and b.vel.length() < 0.05 and absf(b.w) < 0.02:
+			out.t_stop = t
+	out.roll = b.roll
+	out.pitch = b.pitch
+	return out
+
+
+func _springs() -> void:
+	print("== the body on its springs")
+	# the signs are CarModel's: a positive roll lifts the right side, a positive pitch puts the nose (-z) down
+	var probe := Wreck.make("sedan")
+	var up := Basis.from_euler(Vector3(0.0, 0.0, probe.lean_roll(Wreck.G))) * Vector3(1.0, 0.0, 0.0)
+	var nose := Basis.from_euler(Vector3(-probe.lean_pitch(-Wreck.G), 0.0, 0.0)) * Vector3(0.0, 0.0, -1.0)
+	_check(up.y > 0.0, "pushed to its right (round a right-hand turn), the right side rises: the body leans out")
+	_check(nose.y < 0.0, "slowing, the nose goes down")
+	print("  a sedan leans %.1f degrees for each g sideways and pitches %.1f for each g of braking; a Halcyon %.1f, an SUV %.1f" % [
+		rad_to_deg(probe.lean_roll(Wreck.G)), rad_to_deg(probe.lean_pitch(-Wreck.G)), rad_to_deg(Wreck.make("halcyon").lean_roll(Wreck.G)), rad_to_deg(Wreck.make("suv").lean_roll(Wreck.G))])
+	_check(Wreck.make("halcyon").lean_roll(Wreck.G) < probe.lean_roll(Wreck.G) and probe.lean_roll(Wreck.G) < Wreck.make("suv").lean_roll(Wreck.G), "a low sports car leans less than a sedan, an SUV more")
+	_check(rad_to_deg(probe.lean_roll(Wreck.G)) > 1.5 and rad_to_deg(probe.lean_roll(Wreck.G)) < 6.0, "a sedan's roll is a road car's: 1.5 to 6 degrees for each g")
+	# sliding sideways: it dips on the side it is sliding towards (here its left: the car faces across the road, moving up it)
+	var b := _car("sedan", 0.0, 0.0, PI / 2.0, Vector2(0.0, 20.0))
+	var r := _sway_run(b, 0.7)
+	print("  sliding sideways at 20 m/s: after 0.7 s the body is rolled %+.1f degrees (right side up), at most %+.1f" % [rad_to_deg(r.roll), rad_to_deg(r.roll_max)])
+	_check(r.roll > 0.025, "sliding to its left, its left side dips and the right side rises (%.3f rad)" % r.roll)
+	_check(r.roll_max <= Wreck.ROLL_MAX + 0.0001, "...no further than the bump stops")
+	r = _sway_run(b, 12.0)
+	print("  ...it stops after %.1f s; the body rocks back to %+.1f degrees, then settles at %+.2f" % [0.7 + r.t_stop, rad_to_deg(r.roll_min), rad_to_deg(r.roll)])
+	_check(r.roll_min < -0.004, "as the slide stops, the body rocks back past level (%.3f rad)" % r.roll_min)
+	_check(absf(r.roll) < 0.002 and absf(r.pitch) < 0.002, "...and settles level (%.4f, %.4f rad)" % [r.roll, r.pitch])
+	# braking in a straight line: the nose dips; let go and it rocks back
+	b = _car("sedan", 0.0, 0.0, 0.0, Vector2(0.0, 30.0))
+	b.brake = 1.0
+	r = _sway_run(b, 0.8)
+	print("  braking hard at 30 m/s: the nose is %.1f degrees down after 0.8 s" % rad_to_deg(r.pitch))
+	_check(r.pitch > 0.015 and r.pitch_max <= Wreck.PITCH_MAX + 0.0001, "braking hard dips the nose (%.3f rad), within the bump stops" % r.pitch)
+	r = _sway_run(b, 8.0)
+	_check(r.pitch_min < -0.002 and absf(r.pitch) < 0.002, "stopping, it rocks back nose up (%.3f rad) and settles" % r.pitch_min)
+	# a blow: a car standing still is hit on its right side by a car coming across at 6 m/s
+	var a := _car("sedan", 0.0, 0.0, 0.0)
+	var o := _car("sedan", 1.85, 0.6, -PI / 2.0, Vector2(-6.0, 0.0))
+	var ct := _contact(o, a)
+	_check(not ct.is_empty(), "the side blow touches")
+	if not ct.is_empty():
+		Wreck.impact(o, a, ct.n, ct.p)
+		print("  hit on its right side at 6 m/s: shoved %.1f m/s, the body set rolling at %+.2f rad/s" % [a.vel.length(), a.roll_v])
+		r = _sway_run(a, 6.0)
+		print("  ...it rolls between %+.1f and %+.1f degrees and ends at %+.2f" % [rad_to_deg(r.roll_min), rad_to_deg(r.roll_max), rad_to_deg(r.roll)])
+		_check(a.roll_v != 0.0 or r.roll_max - r.roll_min > 0.01, "a side blow rocks the body")
+		_check(r.roll_max <= Wreck.ROLL_MAX + 0.0001 and r.roll_min >= -Wreck.ROLL_MAX - 0.0001, "...within the bump stops")
+		_check(absf(r.roll) < 0.002, "...and it settles (%.4f rad)" % r.roll)
+	# a rear-end shunt: the car behind takes the blow on its nose, below its centre of gravity, and dips it; the car in
+	# front is shoved from behind and its nose lifts
+	a = _car("sedan", 0.0, 0.0, 0.0, Vector2(0.0, 30.0))
+	o = _car("sedan", 0.0, 4.45, 0.0, Vector2(0.0, 18.0))
+	ct = _contact(a, o)
+	Wreck.impact(a, o, ct.n, ct.p)
+	print("  a 12 m/s rear-end shunt: the car behind pitches at %+.2f rad/s (nose down +), the car in front at %+.2f" % [a.pitch_v, o.pitch_v])
+	_check(a.pitch_v > 0.0 and o.pitch_v < 0.0, "a shunt dips the nose of the car behind and lifts the one in front's")
+	# the springs never run away: random blows and slides, every body stays within its travel and finite
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 23
+	var worst_r := 0.0
+	var worst_p := 0.0
+	var finite := true
+	for i in 120:
+		var ids := ["sedan", "suv", "van", "halcyon", "truck", "hot_hatch"]
+		var w := _car(ids[i % ids.size()], 0.0, 0.0, rng.randf_range(-PI, PI), Vector2(rng.randf_range(-8.0, 8.0), rng.randf_range(0.0, 45.0)))
+		w.w = rng.randf_range(-3.0, 3.0)
+		w.kick(Vector2(rng.randf_range(-15.0, 15.0), rng.randf_range(-15.0, 15.0)), rng.randf_range(0.3, 1.0))
+		var rr := _sway_run(w, 12.0)
+		worst_r = maxf(worst_r, maxf(rr.roll_max, -rr.roll_min))
+		worst_p = maxf(worst_p, maxf(rr.pitch_max, -rr.pitch_min))
+		finite = finite and rr.finite
+	print("  120 random slides, spins and blows: the most any body rolled %.1f degrees, pitched %.1f" % [rad_to_deg(worst_r), rad_to_deg(worst_p)])
+	_check(finite, "every body stays finite")
+	_check(worst_r <= Wreck.ROLL_MAX + 0.0001 and worst_p <= Wreck.PITCH_MAX + 0.0001, "and within its bump stops (never anywhere near rolling over)")
 
 
 # ---------------------------------------------------------------- scenarios, played out

@@ -22,6 +22,21 @@ extends RefCounted
 ##   speed crumples the metal and keeps about 0.05 (bounce). Along the surface the
 ##   panels scrape at a glancing touch and dig into each other in a hard hit
 ##   (contact_mu).
+## - The wheels stay on the road and the body moves on its springs above them,
+##   as a real car's does: it rolls and pitches about the middle of the car at
+##   hub height (where CarModel._pose_body turns it). The tyres push the car at
+##   road level, below its centre of gravity, so the body leans against the push:
+##   out of a turn, nose down as it slows and squatting as it speeds up, and a car
+##   sliding sideways dips on the side it slides towards (its wheels are held back).
+##   How far is a road car's roll and pitch gradient (ROLL_K, PITCH_K for each g),
+##   more for a tall car and less for a low one. Each way it moves is a spring and
+##   a damper set like a road car's (ROLL_HZ, PITCH_HZ, ZETA), so a sudden change
+##   (a slide starting or ending, the push swinging round as the car spins) rocks
+##   it over and back before it settles; a blow rocks it as well (kick), and the
+##   bump stops end its travel. It never rolls over: on a flat road its tyres grip
+##   at about 1 g and lifting a car over its outer wheels takes its track over
+##   twice the height of its centre of gravity (about 1.4 g; a guardrail is built
+##   to catch and turn a car, not to trip it).
 ##
 ## Road coordinates (x across, y along); `yaw` is the heading (+ = nose to the
 ## right), `w` its rate. kept apart from the game so it can be tested on its own
@@ -31,7 +46,6 @@ const G := 9.81
 const EPS := 0.35          # m/s: slower than this a tyre sticks rather than slides (friction fades out linearly)
 const MAX_STEP := 1.0 / 120.0
 const ROLL_RES := 0.03     # rolling resistance, in g
-const BODY_MU := 0.6       # a body on its roof or side sliding on tarmac, in g
 const MAX_SPIN := 3.2      # rad/s (about one turn in two seconds): no car spins faster than this, however hard it is hit
 const AIR := 0.00034       # air drag per unit mass nose-on (1/m: 0.5 x air density x Cd 0.32 x 2.2 m² / 1400 kg)...
 const AIR_SIDE := 0.0013   # ...and side-on (Cd about 1, the side 3.5 times the front)
@@ -39,9 +53,29 @@ const LOAD_SENS := 0.12    # a tyre carrying twice its share of the weight grips
 
 ## How heavy each kind of vehicle is, against an ordinary car.
 const MASS := {"truck": 3.5, "van": 1.5, "suv": 1.25, "hatch": 0.85, "compact": 0.85}
-## How high its centre of gravity is (m): what moves the weight between the wheels, and what tips it over.
+## How high its centre of gravity is (m): what moves the weight between the wheels, and how far the body leans.
 const CG_H := {"truck": 1.3, "van": 0.92, "suv": 0.72, "hyper": 0.46, "super": 0.47, "rcoupe": 0.48, "halcyon": 0.47, "lastexit": 0.46, "static": 0.47}
 const CG_CAR := 0.55
+## How high its wheel hubs are (m): the body rolls and pitches about that height.
+const HUB_H := {"truck": 0.5, "van": 0.36, "suv": 0.37}
+const HUB_CAR := 0.33
+## How high its bumper beams and sills take a blow (m), and a guardrail's beam.
+const BUMPER_H := {"truck": 0.75, "van": 0.58, "suv": 0.55}
+const BUMPER_CAR := 0.46
+const RAIL_H := 0.55
+
+# the body on its springs
+const ROLL_K := 0.05       # rad of roll for each g pushing an ordinary car sideways (2.9 degrees: a road car's)...
+const PITCH_K := 0.03      # ...and of pitch for each g slowing it (1.7 degrees: the suspension's anti-dive takes some)
+const REF_ARM := 0.25      # m: the ordinary car's body weight above the hubs it rolls about (more leans further)
+const ROLL_HZ := 1.6       # how fast it rocks from side to side...
+const PITCH_HZ := 1.8      # ...and nose to tail
+const ZETA := 0.33         # the dampers: a third of critical (an overshoot of about a third, settled within a second)
+const ROLL_MAX := 0.06     # rad: the bump stops (the springs' travel, which the wheel arches leave room for)
+const PITCH_MAX := 0.04
+const UNSPRUNG := 0.12     # the share of the car's weight that hangs under the springs (wheels, brakes, axles)
+const ROLL_R2 := 0.36      # m²: the body's radius of gyration, squared, rolling (0.6 m)...
+const PITCH_R2 := 1.44     # ...and pitching (1.2 m)
 
 var pos := Vector2.ZERO     # the middle of the car
 var vel := Vector2.ZERO     # m/s
@@ -51,12 +85,21 @@ var mass := 1.0
 var shape: HitShape
 var grip := 0.95            # what the tyres hold sideways, in g
 var brake := 0.5            # how much of the tyres' grip still drags the car along its length (0 = rolling free)
-var on_wheels := true       # false: lying on its roof or side
-var in_air := false
+var rear_lock := false      # the rear wheels are locked: they slide, pulling against whichever way their rubber is going
 var cg_h := CG_CAR          # height of the centre of gravity, m
+var bumper_h := BUMPER_CAR  # height its bumpers and sills take a blow at, m
+var roll := 0.0             # the body on its springs: rad, + = right side up (CarModel's sign)...
+var pitch := 0.0            # ...and + = nose down
+var roll_v := 0.0           # rad/s
+var pitch_v := 0.0
 var _wheels := PackedVector2Array()
 var _ax := 0.0              # its acceleration along itself and across (m/s², + forward and to the right): where the weight goes
 var _ay := 0.0
+var _hub := HUB_CAR         # what the body turns about, and where its own weight is (the wheels' taken out), m
+var _hs := 0.58
+var _lean := 1.0            # how far it leans for a push, against the ordinary car
+var _roll_max := ROLL_MAX
+var _pitch_max := PITCH_MAX
 
 
 static func make(shape_id: String) -> Wreck:
@@ -64,18 +107,28 @@ static func make(shape_id: String) -> Wreck:
 	b.shape = HitShape.of(shape_id)
 	b.mass = MASS.get(shape_id, 1.0)
 	b.cg_h = CG_H.get(shape_id, CG_CAR)
+	b.bumper_h = BUMPER_H.get(shape_id, BUMPER_CAR)
 	b._wheels = b.shape.wheel_points()
+	b._springs(HUB_H.get(shape_id, HUB_CAR))
 	return b
 
 
-## How fast it has to be going sideways when something stops its wheels short (a kerb, the foot of the
-## guardrail) for it to trip over: the energy to lift its centre of gravity over the outer wheels, with the
-## blow at wheel height (`at` m) turning it over only by how far that is below the centre of gravity. About
-## 6 m/s for an ordinary car, 4 for a van; a blow at the height of the centre of gravity cannot tip it at all.
-func trip_speed(at := 0.3) -> float:
-	var half := shape.track
-	var lift := sqrt(cg_h * cg_h + half * half) - cg_h
-	return sqrt(2.0 * G * lift) * cg_h / maxf(cg_h - at, 0.05)
+## The body on its springs: the car's weight less the wheels hanging at the hubs is the body's, and the higher that is
+## above the hubs it turns about, the further it leans for a push (a low sports car less, an SUV or a van more). A low
+## car's stiffer springs have less travel too.
+func _springs(hub: float) -> void:
+	_hub = hub
+	_hs = (cg_h - UNSPRUNG * hub) / (1.0 - UNSPRUNG)
+	_lean = clampf((_hs - hub) / REF_ARM, 0.4, 2.0)
+	_roll_max = ROLL_MAX * clampf(_lean, 0.6, 1.0)
+	_pitch_max = PITCH_MAX * clampf(_lean, 0.6, 1.0)
+
+
+## The car's track over twice the height of its centre of gravity: the sideways push, in g, it would take to lift it
+## over its outer wheels (the static stability factor; about 1.4 for a car, more for a sports car). Its tyres grip at
+## about 1 g, so on a flat road it cannot roll.
+func tip_g() -> float:
+	return shape.track / cg_h
 
 
 ## The bounce of a blow between two cars (0 dead .. 1 rubber) at a closing speed (m/s): measured coefficients of
@@ -129,51 +182,120 @@ func step(dt: float) -> void:
 
 
 func _sub(dt: float) -> void:
-	if not in_air:
-		var hd := heading()
-		var rt := Vector2(hd.y, -hd.x)
-		var acc := Vector2.ZERO
-		var tq := 0.0
-		var loads := wheel_loads()
-		for i in 4:
-			var lw := _wheels[i]
-			var load := loads[i]
-			var mu := grip * (1.0 - LOAD_SENS * (load * 4.0 - 1.0))
-			var r := rt * lw.x + hd * lw.y
-			var pv := vel + w * Vector2(r.y, -r.x)
-			var u := pv.dot(hd)
-			var s := pv.dot(rt)
-			var fu := 0.0
-			var fs := 0.0
-			if on_wheels:
-				fs = -mu * s / sqrt(s * s + EPS * EPS)
-				fu = -(ROLL_RES + brake * mu) * u / sqrt(u * u + EPS * EPS)
-				var m := sqrt(fu * fu + fs * fs)
-				if m > mu:  # the friction circle: no more than the tyre can give all told
-					fu *= mu / m
-					fs *= mu / m
-			else:
-				var sp := sqrt(u * u + s * s + EPS * EPS)
-				fu = -BODY_MU * u / sp
-				fs = -BODY_MU * s / sp
-			var f := (hd * fu + rt * fs) * (G * load)
-			acc += f
-			tq += _turn(r, f) / shape.k2
-		# the air, harder side-on
-		var sp2 := vel.length()
-		if sp2 > 1.0:
-			var side := vel.dot(rt) / sp2
-			acc -= vel * (sp2 * lerpf(AIR, AIR_SIDE, side * side) / mass)
-		_ax = lerpf(_ax, acc.dot(hd), 0.5)
-		_ay = lerpf(_ay, acc.dot(rt), 0.5)
-		vel += acc * dt
-		w += tq * dt
+	var hd := heading()
+	var rt := Vector2(hd.y, -hd.x)
+	var acc := Vector2.ZERO
+	var tq := 0.0
+	var loads := wheel_loads()
+	for i in 4:
+		var lw := _wheels[i]
+		var load := loads[i]
+		var mu := grip * (1.0 - LOAD_SENS * (load * 4.0 - 1.0))
+		var r := rt * lw.x + hd * lw.y
+		var pv := vel + w * Vector2(r.y, -r.x)
+		var u := pv.dot(hd)
+		var s := pv.dot(rt)
+		var fs: float
+		var fu: float
+		if rear_lock and i < 2:
+			# a locked wheel slides: it holds nothing sideways of its own, its rubber only drags against the way it is
+			# going. So the rear of the car has nothing to keep it behind the front, and the slightest swing grows into a
+			# spin until the car slides backwards (as a real one does when its rear wheels lock)
+			var sp := sqrt(u * u + s * s + EPS * EPS)
+			fu = -mu * u / sp
+			fs = -mu * s / sp
+		else:
+			fs = -mu * s / sqrt(s * s + EPS * EPS)
+			fu = -(ROLL_RES + brake * mu) * u / sqrt(u * u + EPS * EPS)
+			var m := sqrt(fu * fu + fs * fs)
+			if m > mu:  # the friction circle: no more than the tyre can give all told
+				fu *= mu / m
+				fs *= mu / m
+		var f := (hd * fu + rt * fs) * (G * load)
+		acc += f
+		tq += _turn(r, f) / shape.k2
+	# the air, harder side-on
+	var sp2 := vel.length()
+	if sp2 > 1.0:
+		var side := vel.dot(rt) / sp2
+		acc -= vel * (sp2 * lerpf(AIR, AIR_SIDE, side * side) / mass)
+	_ax = lerpf(_ax, acc.dot(hd), 0.5)
+	_ay = lerpf(_ay, acc.dot(rt), 0.5)
+	vel += acc * dt
+	w += tq * dt
 	w = clampf(w, -MAX_SPIN, MAX_SPIN)
 	pos += vel * dt
 	yaw += w * dt
-	if not in_air and vel.length_squared() < 0.0009 and absf(w) < 0.01:
+	if vel.length_squared() < 0.0009 and absf(w) < 0.01:
 		vel = Vector2.ZERO  # at rest
 		w = 0.0
+	sway(_ax, _ay, dt)  # the body leans against the tyres' push
+
+
+## The body on its springs for dt seconds, with the car pushed at `ax` m/s² forward and `ay` to its right (the wreck's
+## own tyres, or the driving model's for a car still being driven).
+func sway(ax: float, ay: float, dt: float) -> void:
+	var r := spring(roll, roll_v, lean_roll(ay), ROLL_HZ, _roll_max, dt)
+	roll = r.x
+	roll_v = r.y
+	var p := spring(pitch, pitch_v, lean_pitch(ax), PITCH_HZ, _pitch_max, dt)
+	pitch = p.x
+	pitch_v = p.y
+
+
+## Where the body comes to rest, rolled, while the car is pushed at `ay` m/s² to its right (it leans away: out of a
+## turn, towards the side a slide is going); and pitched, while it speeds up at `ax` (nose down when slowing).
+func lean_roll(ay: float) -> float:
+	return ROLL_K * _lean * ay / G
+
+
+func lean_pitch(ax: float) -> float:
+	return -PITCH_K * _lean * ax / G
+
+
+## One mode of the body on its spring and damper: angle x, rate v, resting at eq, rocking at hz, for dt seconds; past
+## three quarters of `lim` it meets the rubber of the bump stop, which stiffens sharply, and it goes no further than
+## `lim`. Returns the new (angle, rate).
+static func spring(x: float, v: float, eq: float, hz: float, lim: float, dt: float) -> Vector2:
+	var k := TAU * hz
+	var n := maxi(1, ceili(dt / MAX_STEP))
+	var h := dt / float(n)
+	for _i in n:
+		var a := -k * k * (x - eq) - 2.0 * ZETA * k * v
+		var over := absf(x) - lim * 0.75
+		if over > 0.0:
+			a -= signf(x) * over * k * k * 12.0 + v * k * 1.5
+		v += a * h
+		x += v * h
+		if absf(x) > lim:
+			x = signf(x) * lim
+			if v * x > 0.0:
+				v *= -0.2
+	return Vector2(x, v)
+
+
+## A blow changed the car's velocity by `dv` (road frame) with a push at `at` m above the road: it rocks the body on its
+## springs. Seen along each of the car's axes the push lands above or below the body's own centre of gravity, and the
+## wheels hanging at the hubs are dragged along by the bottom of the body, so the blow swings the top of the body as
+## well as moving it (_rock).
+func kick(dv: Vector2, at: float) -> void:
+	var hd := heading()
+	var rt := Vector2(hd.y, -hd.x)
+	roll_v -= _rock(dv.dot(rt), at, ROLL_R2)    # (the top swung to the right is the right side going down)
+	pitch_v += _rock(dv.dot(hd), at, PITCH_R2)  # (the top swung forward is the nose going down)
+
+
+## How fast a blow worth `j` m/s of the whole car's speed along one of its axes, landing at height `at`, swings the top
+## of the body that way (rad/s). The body (the sprung part, its radius of gyration squared `r2`) takes the blow and
+## passes some of it to the wheels through the suspension at hub height, which moves with them: the impulses that
+## satisfy that, worked out exactly.
+func _rock(j: float, at: float, r2: float) -> float:
+	var ms := 1.0 - UNSPRUNG
+	var ii := ms * r2
+	var a := at - _hs
+	var b := _hub - _hs
+	var to_wheels := j * (1.0 / ms + a * b / ii) / (1.0 / UNSPRUNG + 1.0 / ms + b * b / ii)
+	return (j * a - to_wheels * b) / ii
 
 
 ## The share of the car's weight on each wheel (rear left, rear right, front left, front right; they add up to 1):
@@ -206,6 +328,8 @@ func wheel_loads() -> PackedFloat32Array:
 ## `min_sep` the least speed the two are to part at (0 = whatever the bounce gives).
 ## `e` < 0 and `mu` < 0 (the defaults) are worked out from how hard the blow is (bounce, rail_bounce, contact_mu).
 static func impact(a: Wreck, b: Wreck, n: Vector2, p: Vector2, e := -1.0, mu := -1.0, min_sep := 0.0) -> float:
+	var va0 := a.vel
+	var vb0 := b.vel if b else Vector2.ZERO
 	var ra := p - a.pos
 	var ima := 1.0 / a.mass
 	var iia := 1.0 / (a.mass * a.shape.k2)
@@ -249,6 +373,11 @@ static func impact(a: Wreck, b: Wreck, n: Vector2, p: Vector2, e := -1.0, mu := 
 	a.w = clampf(a.w, -MAX_SPIN, MAX_SPIN)
 	if b:
 		b.w = clampf(b.w, -MAX_SPIN, MAX_SPIN)
+	# the bodies rock on their springs: the blow lands between the two cars' bumpers, or on the rail's beam
+	var at := (a.bumper_h + b.bumper_h) * 0.5 if b else RAIL_H
+	a.kick(a.vel - va0, at)
+	if b:
+		b.kick(b.vel - vb0, at)
 	return j / a.mass
 
 

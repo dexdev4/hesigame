@@ -181,7 +181,11 @@ const BOONS := [
 	{"id": "eco", "name": "Eco tune", "desc": "Burns 25% less fuel for this run", "tag": "FUEL"},
 	{"id": "radar", "name": "Radar jammer", "desc": "Warns of a police speed check 250 m ahead, in time to slow down", "tag": "POLICE"},
 	{"id": "cash", "name": "Sponsor deal", "desc": "A bonus of $400 per stage cleared, now", "tag": "CASH"},
+	# rare: offered after about one boss in eight (RARE_CHANCE), never in the ordinary shuffle
+	{"id": "drift", "name": "Drift tune", "desc": "Rear-drive drift setup with a drift assist: slide it sideways for points, and every point counts 100 times. Driven like a real drift car", "tag": "RARE · DRIFT", "rare": true},
 ]
+const RARE_CHANCE := 0.12   # how often a rare upgrade is one of the cards after a boss
+const DRIFT_SCORE := 100    # the drift tune: every point counts this many times in the run's score (not in its money, nor in a stage's or a boss race's target)
 
 const TRAFFIC_COLORS := ["#c9ccd1", "#dfe2e4", "#26292f", "#50555d", "#1f3a66", "#9b1c1c",
 	"#5a1f2b", "#cbb995", "#2d4a36", "#7b8a99", "#a9b3bd", "#d9d5c9"]

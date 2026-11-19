@@ -138,6 +138,13 @@ class Run:
 	var fuel_paid := 0       # dollars spent on fuel this run
 	var fuel_from_run := 0   # ...of which came out of this run's earnings
 	var dry_t := 0.0         # seconds stood still with an empty tank
+	# the drift tune (a rare boss reward)
+	var drift := false       # fitted: the car is a rear-drive drift car (DriftModel) and every point counts Data.DRIFT_SCORE times
+	var cash_pts := 0        # the points without that: what the run's money, a stage's target and a boss race go by
+	var drift_pts := 0.0     # what the slide going on is worth so far (base points): banked when it ends, lost in a crash
+	var drift_t := 0.0       # how long it has gone on
+	var drift_off := 0.0     # how long since the car last slid (a short straight between linked slides keeps the chain)
+	var drift_peak := 0.0    # its biggest angle (radians)
 	var pit := {}            # pulling in to the pumps, refuelling, pulling out
 	var pit_skip := -1.0     # a fuel stop the player has chosen to pass
 	var pit_hint := -1.0     # the fuel stop already told 'slow down to pull in'
@@ -200,6 +207,7 @@ var _trap_first := -1.0     # --trap-at=METRES: the first speed check is at leas
 var _speeding := false      # --speeding: the test driver does not slow down for a speed check (test aid)
 var _test_radar := false    # --radar: every run starts with the radar jammer fitted (test aid)
 var _test_boon := ""        # --boon=ID: the test driver takes this upgrade after a boss, whether or not it is one of the three on offer (test aid)
+var _test_drift := false    # --drift-tune: runs start with the drift tune fitted (test aid)
 var _test_block := ""       # --cop-block=KIND: the player sits still behind a stopped car, the police car behind that (test aid)
 var auto_speed := 46.0  # --autospeed=M/S: how fast the test driver goes
 var _auto_look := 0.0   # --autolook=SECONDS: the test driver brakes when the road ahead is shorter than this many seconds of travel (0: 16 m, as it always did)
@@ -348,6 +356,10 @@ func _ready() -> void:
 			_test_radar = true
 		if a.begins_with("--boon="):  # the test driver takes this upgrade after every boss (test aid)
 			_test_boon = a.substr(7)
+		if a == "--drift-tune":  # runs start with the drift tune fitted (test aid)
+			_test_drift = true
+		if a == "--drift-drive":  # the test driver drives the drift tune itself, in linked drifts (test aid)
+			_drift_drive = true
 		if a.begins_with("--stations="):  # a fuel stop every KM km, tank range scaled to match (test aid)
 			Data.station_scale = float(a.substr(11)) / Data.STATION_EVERY_KM
 		if a.begins_with("--first-station="):  # the first fuel stop this many metres in (test aid)
@@ -1258,6 +1270,12 @@ func _update_traffic(dt: float) -> void:
 		c.braking = c.acc < (-0.4 if c.braking else -1.0)  # (the lights come on at 1 m/s² of braking and go off at 0.4)
 		c.z += c.v * dt
 		c.vx = 0.0
+		if c.tlane == c.lane and absf(c.x - Data.LANES[c.lane]) > 0.01:
+			# nudged off the middle of its lane by a knock: its driver eases it back
+			var off: float = Data.LANES[c.lane] - c.x
+			var mv := clampf(off, -0.7 * dt, 0.7 * dt)
+			c.x += mv
+			c.vx = mv / dt
 		if c.tlane == c.lane:
 			var stuck := lead != null and gap < 30.0 and lead.v < c.cruise - 2.0
 			c.lc_t -= dt * (1.0 + stage * 0.12) * (3.0 if stuck else 1.0)
@@ -1396,7 +1414,7 @@ func _impact(o: Vehicle, ct: Dictionary) -> float:
 	var w0 := pb.w
 	var v0 := pb.vel
 	Wreck.separate(pb, ob, ct.n, float(ct.depth))
-	var j := Wreck.impact(pb, ob, ct.n, ct.p, 0.2, 0.25, 1.5)
+	var j := Wreck.impact(pb, ob, ct.n, ct.p, -1.0, -1.0, 1.5)
 	_damage_pair(player, pb, o, ob, ct, j)
 	if autotest:
 		print("[autotest] impact j=%.1f player %.1f,%.1f -> %.1f,%.1f m/s spin %+.2f; other %s %.1f,%.1f -> %.1f,%.1f spin %+.2f; contact (%.2f, %.2f) n (%.2f, %.2f)" % [
@@ -1406,23 +1424,47 @@ func _impact(o: Vehicle, ct: Dictionary) -> float:
 	return j
 
 
-## The player's car against the guardrail on `side` (its last life): the blow at the corner that touches it.
-func _rail_impact(side: float) -> void:
+## The player's car against the guardrail on `side`: the blow at the corner that touches it, as for any rigid body
+## (Wreck.impact): a glancing scrape takes a little speed off and the beam springs the car back off it, an angled hit
+## takes a lot and swings the nose back towards the road (or, hit with the tail, away from it). `min_sep`: the least
+## speed it leaves the rail at (the beam's spring), so a car still in control is not held against it. Returns the
+## size of the blow; where it was is kept for the damage (_rail_p).
+var _rail_j := 0.0
+var _rail_p := Vector2.ZERO
+
+
+func _rail_impact(side: float, min_sep := 0.0) -> float:
 	var b := _body_of(player)
 	var w0 := b.w
 	var wc := HitShape.wall_contact(b.outline(false), side * Data.RAIL, side, 0.1)
 	if wc.is_empty():
-		return
-	Wreck.impact(b, null, wc.n, wc.p, 0.3, 0.35)
+		return 0.0
+	var j := Wreck.impact(b, null, wc.n, wc.p, -1.0, -1.0, min_sep)
 	_take_player_body(b, w0)
+	_rail_j = j
+	_rail_p = wc.p
+	return j
 
 
 ## A vehicle that has been hit: it keeps the rigid body it was given and is no longer driven. (A boss or
-## the police car keeps driving itself and only gets the change of speed.)
+## the police car keeps driving itself and only gets the change of speed.) A light tap (under LIGHT_TAP of speed
+## change and hardly turned) does not take a driver's car away from them: it is nudged, and drives on.
+const LIGHT_TAP := 1.5   # m/s
+const LIGHT_SPIN := 0.25  # rad/s
+
+
 func _make_wreck(o: Vehicle, b: Wreck) -> void:
 	o.hit = true
 	if o.is_boss or o.is_cop:
 		o.v = maxf(0.0, b.vel.y)
+		return
+	if o.wreck == null and (b.vel - Vector2(o.vx, o.v)).length() < LIGHT_TAP and absf(b.w) < LIGHT_SPIN and b.vel.y > 2.0:
+		o.v = b.vel.y
+		o.cruise = minf(o.cruise, o.v)   # (the driver lifts off after the knock)
+		o.x = b.pos.x
+		o.lane = Data.nearest_lane(o.x)
+		o.tlane = o.lane
+		o.sig_t = 0.0
 		return
 	if o.wreck == null:
 		o.cruise = 0.0
@@ -1461,7 +1503,7 @@ func _wreck_rail(b: Wreck) -> float:
 		if wc.is_empty():
 			continue
 		b.pos.x -= s * float(wc.depth)
-		worst = maxf(worst, Wreck.impact(b, null, wc.n, wc.p, 0.25, 0.3))
+		worst = maxf(worst, Wreck.impact(b, null, wc.n, wc.p))
 	return worst
 
 
@@ -1486,7 +1528,7 @@ func _wreck_contacts() -> void:
 				continue
 			var bb: Wreck = b.wreck if b.wreck else _body_of(b)
 			Wreck.separate(a.wreck, bb, ct.n, float(ct.depth))
-			var jj := Wreck.impact(a.wreck, bb, ct.n, ct.p, 0.2, 0.25)
+			var jj := Wreck.impact(a.wreck, bb, ct.n, ct.p)
 			if jj > 0.0:
 				_damage_pair(a, a.wreck, b, bb, ct, jj)
 				_make_wreck(b, bb)
@@ -2009,17 +2051,20 @@ func _mult() -> float:
 
 func _add_score(base: float, label: String, combo: int, kind := "") -> void:
 	if combo > 0:
+		var m0 := _mult()
 		run.combo += combo
 		run.combo_t = run.combo_time
-		sound.play("whoosh", randf_range(0.9, 1.15))
-		sound.play("ding", EngineAudio.combo_pitch(run.combo), -6.0)
+		# the score's whoosh (deeper and louder for a big one), and a ping when the multiplier goes up a whole number
+		if combo > 1:
+			sound.play("whoosh", randf_range(0.8, 0.9), 0.0)
+		else:
+			sound.play("whoosh", randf_range(0.97, 1.12), -3.0)
+		if floori(_mult()) > floori(m0):
+			sound.play("ping", EngineAudio.ping_pitch(floori(_mult())), -2.0)
+			hud.mult_up()
 	elif run.combo > 0:
 		run.combo_t = minf(run.combo_time, run.combo_t + 0.6)
-	var pts := roundi(base * _mult() * run.mods.score)
-	run.score += pts
-	run.stage_score += pts
-	if run.phase == "boss":
-		run.b_score += pts
+	var pts := _bank(roundi(base * _mult() * run.mods.score))
 	if label != "":
 		_notify("%s +%s" % [label, Fmt.num(pts)], kind, pts)
 
@@ -2118,6 +2163,11 @@ func _hit(reason: String, other: Vehicle = null, ct := {}) -> void:
 	run.invuln = 2.4 + run.armour
 	run.combo = 0
 	run.combo_t = 0.0
+	if run.drift and run.drift_pts > 0.0:
+		_notify("DRIFT LOST", "bad")   # (a slide that ends in a crash is worth nothing)
+	run.drift_pts = 0.0
+	run.drift_t = 0.0
+	run.drift_peak = 0.0
 	var jolt := 0.6
 	if other:
 		_impact(other, ct)
@@ -2128,11 +2178,11 @@ func _hit(reason: String, other: Vehicle = null, ct := {}) -> void:
 		_rail_impact(side)  # the last life: the corner that touches the rail takes the blow, the crash goes on from there
 		jolt = 0.8
 	else:
-		# a barrier: a glancing scrape costs little, hitting it at an angle a lot
-		var scrape := absf(v0 * sin(player.course))
-		player.v *= lerpf(0.9, 0.55, clampf(absf(player.course) / 0.35, 0.0, 1.0))
-		_damage_hit(player, _body_of(player), Vector2(side * Data.RAIL, player.z + player.l * 0.55), Vector2(-side, 0.0), maxf(3.0, scrape * 1.1))
-		jolt = 0.8
+		# a barrier: the blow was worked out where the car touched it (_rail_impact): a glancing scrape costs little
+		# speed and does little damage, hitting it at an angle a lot of both
+		var at := _rail_p if _rail_j > 0.0 else Vector2(side * Data.RAIL, player.z + player.l * 0.55)
+		_damage_hit(player, _body_of(player), at, Vector2(-side, 0.0), maxf(2.5, _rail_j * 1.15))
+		jolt = clampf(0.45 + _rail_j / 9.0, 0.45, 1.0)
 	shake = jolt
 	_flash.color.a = 0.25 + 0.2 * jolt
 	# the body rocks on its springs away from the blow, and a hard one stops time for a beat
@@ -2429,10 +2479,11 @@ func _start_crash(v0: float, side: float, other: Vehicle) -> void:
 	if absf(b.w) < 0.7 * k:
 		b.w = (signf(b.w) if b.w != 0.0 else side) * 0.7 * k
 	b.vel *= 0.92  # the crumpling takes a little of the speed
-	# fast enough and the tyres can dig in sideways and trip it over
-	# on its own a sliding car only sometimes digs in and flips; hitting
-	# something side-on while sliding (see _crash_collide) is what usually rolls it
-	crash.can_trip = v0 > 26.0 and randf() < clampf((v0 - 26.0) / 50.0, 0.08, 0.3)
+	# a car sliding on flat tarmac does not roll: its tyres cannot push sideways harder (about 1 g) than it takes to
+	# lift its centre of gravity over its outer wheels (its track over twice its height: 1.4 g for a car). Only a
+	# vehicle tall and narrow enough could (none of the player's cars); what rolls a car is something stopping its
+	# wheels short while it slides (the foot of the guardrail, see _crash_rail)
+	crash.can_trip = b.grip > b.shape.track / b.cg_h
 	run.dying = 8.0
 	_debris_at(Vector3(player.x, 0.7, -player.l * 0.6), Save.car_color(Data.car_by_id(Save.data.selected)), 40)
 	player.v = maxf(b.vel.y, 0.0)
@@ -2532,15 +2583,16 @@ func _crash_rail() -> void:
 		var h := b.heading()
 		var sl := b.vel.dot(Vector2(h.y, -h.x))
 		var into := b.point_vel(wc.p).x * s  # how fast the touching corner was going into the rail
-		var j := Wreck.impact(b, null, wc.n, wc.p, 0.3, 0.35)
+		var j := Wreck.impact(b, null, wc.n, wc.p)
 		if j <= 0.0:
 			continue
 		_damage_hit(player, b, wc.p, -Vector2(float(wc.n.x), float(wc.n.y)), j)
 		if into > 2.5:
 			sound.play("crash", 1.2, -6.0)
 			_spark_at(Vector3(wc.p.x, 0.6, -(wc.p.y - player.z)))
-		# sliding sideways into the barrier can trip it over too
-		if absf(sin(b.yaw)) > 0.5 and into > 6.0 and absf(wrapf(c.roll, -PI, PI)) < 0.35 and randf() < 0.4:
+		# sliding sideways into the barrier trips it over if it is going fast enough: the foot of the post and the beam
+		# stop the wheels and sills, below its centre of gravity (Wreck.trip_speed: about 6 m/s side-on for a car)
+		if absf(sin(b.yaw)) > 0.5 and into > b.trip_speed(0.3) and absf(wrapf(c.roll, -PI, PI)) < 0.35:
 			_crash_trip(signf(sl), into)
 
 
@@ -2632,7 +2684,7 @@ func _crash_collide(o: Vehicle, out: Array[PackedVector2Array]) -> void:
 	var vn := (b.point_vel(ct.p) - ob.point_vel(ct.p)).dot(n)  # how fast they close on each other
 	var slip := absf(b.vel.dot(r)) + absf(vn)
 	Wreck.separate(b, ob, n, float(ct.depth))
-	var j := Wreck.impact(b, ob, n, ct.p, 0.2, 0.25)
+	var j := Wreck.impact(b, ob, n, ct.p)
 	if j <= 0.0:
 		return  # already moving apart
 	_damage_pair(player, b, o, ob, ct, j)
@@ -2649,11 +2701,11 @@ func _crash_collide(o: Vehicle, out: Array[PackedVector2Array]) -> void:
 		shake = maxf(shake, minf(1.2, j * 0.08))
 		_vib(int(clampf(j * 8.0, 30.0, 150.0)))
 		_spark_at(Vector3(contact.x, 0.5, -(contact.y - player.z)))
-	# hit side-on while sliding sideways: the wheels catch and it rolls
+	# hit side-on while sliding sideways: the other car's bumper meets its flank at about the height of its centre of
+	# gravity, which shoves it rather than tipping it, so it takes a lot (Wreck.trip_speed at bumper height) to roll it
 	var side := n.dot(r)
-	if absf(side) > 0.55 and absf(wrapf(c.roll, -PI, PI)) < 0.35 and slip > 5.0:
-		if randf() < clampf(0.2 + j * 0.03 + slip * 0.025, 0.0, 0.85):
-			_crash_trip(signf(side), slip)
+	if absf(side) > 0.55 and absf(wrapf(c.roll, -PI, PI)) < 0.35 and slip > b.trip_speed(0.45):
+		_crash_trip(signf(side), slip)
 
 
 func _spark_at(pos: Vector3) -> void:
@@ -2692,13 +2744,15 @@ func _update_player(dt: float) -> void:
 		gas = false  # the tank is dry: the engine has nothing to burn
 	var brk := (in_brake if live else ap_brake) if not autotest else ap_brake
 	var vr: float = player.v / st.top
+	# the drift tune: the car is a rear-drive drift car (DriftModel), which works out its own speed from the pedals
+	var drifting := run != null and run.drift and live and (not autotest or _drift_drive) and player.v >= DriftModel.MIN_V
 	var a := 0.0
-	if gas:
+	if gas and not drifting:
 		a += CarStats.thrust(st, player.v)
-	a -= CarStats.drag(player.v)
+	a -= 0.0 if drifting else CarStats.drag(player.v)
 	if run and run.fuel <= 0.0 and state == S.PLAY:
 		a -= 1.8  # a dry engine drags the car down
-	if brk:
+	if brk and not drifting:
 		a -= CarStats.braking(st, player.v)
 	if on_shoulder:
 		a -= 2.5 + player.v * 0.05
@@ -2713,11 +2767,13 @@ func _update_player(dt: float) -> void:
 		if live and _pit_ready():
 			_start_pit()
 			return
-	player_accel = lerpf(player_accel, (player.v - v_before) / maxf(dt, 0.0001), minf(1.0, dt * 6.0))
-	if live and not autotest:
+	if drifting:
+		_drive_drift(dt, gas, brk)
+	elif live and not autotest:
 		_drive_manual(dt, brk, vr, _steer_val)
 	else:
 		_drive_steer(dt, brk, vr)
+	player_accel = lerpf(player_accel, (player.v - v_before) / maxf(dt, 0.0001), minf(1.0, dt * 6.0))
 	on_shoulder = absf(player.x) + player.w / 2.0 > Data.ROAD_HALF + 0.25 and not (player.x > 0.0 and _in_station_zone())
 	var side := signf(player.x)
 	# the car's outline, turned the way it points, is what meets the rail: a nose turned towards it touches first
@@ -2732,8 +2788,11 @@ func _update_player(dt: float) -> void:
 	elif absf(player.x) > lim:
 		var s := signf(player.x)
 		player.x = s * lim
+		_rail_j = 0.0
 		if not (live and run.invuln <= 0.0 and _fatal_next()):
-			_set_player_vx(-s * 2.6)  # (the last life keeps its speed and sideways movement: that is the crash)
+			_rail_impact(s, 1.2)  # (the last life keeps its speed and sideways movement: that is the crash)
+			if absf(player.course) < 0.02 or signf(player.course) == s:
+				_set_player_vx(-s * 1.2)  # (it did not touch at a corner the rail could push: it leaves at the beam's spring)
 		target_x = Data.LANES[3 if s > 0.0 else 0]
 		sparks.position = Vector3(s * Data.RAIL, 0.6, -2.0)
 		sparks.restart()
@@ -2812,6 +2871,145 @@ func _drive_manual(dt: float, brk: bool, vr: float, cmd: float) -> void:
 	player.x += player.vx * dt
 	player.z += v * cos(player.course) * dt
 	target_x = player.x  # the autopilot (if it takes over) starts from here
+
+
+## The drift tune's driving (DriftModel): your steering and pedals go to a rear-drive drift car with the drift assist
+## on; it moves along its direction of travel, which is not where its nose points while it slides. A knock's swing of
+## the nose goes into its turn rate (the tyres and the assist take it from there).
+var _drift_s := {}
+var _drift_drive := false   # --drift-drive: the test driver drives the drift tune itself (_drift_autopilot), with drifts
+
+
+func _drive_drift(dt: float, gas: bool, brk: bool) -> void:
+	if _drift_s.is_empty():
+		_drift_s = DriftModel.state()
+	var cmd := _steer_val
+	if autotest and _drift_drive:
+		var auto := _drift_autopilot(dt)
+		cmd = float(auto[0])
+		gas = bool(auto[1]) and not (run.fuel <= 0.0)
+		brk = bool(auto[2])
+	if _yaw_kick != 0.0:
+		player.yaw_rate += _yaw_kick
+		_yaw_kick = 0.0
+	DriftModel.drive(player, dt, st, player.l * 0.6, cmd, gas, brk, true, _drift_s)
+	player.braking = brk and not bool(_drift_s.handbrake)
+	_feel_load = lerpf(_feel_load, clampf(float(_drift_s.slide) + absf(float(_drift_s.lat)) / maxf(float(st.grip), 1.0) * 0.5, 0.0, 1.3), minf(1.0, dt * 14.0))
+	player.vx = player.v * sin(player.course)
+	player.x += player.vx * dt
+	player.z += player.v * cos(player.course) * dt
+	target_x = player.x
+
+
+## The test driver with the drift tune (--drift-drive): it weaves down the road in linked drifts. Every few seconds
+## it throws the car into a slide one way with the handbrake, holds it on the throttle while steering to keep its
+## line down the road, and flicks it into the other; it steers back to the middle and lifts off near the rails and
+## behind traffic. [steering, gas, brake]
+var _dd_t := 0.0
+var _dd_side := 1.0
+
+
+func _drift_autopilot(dt: float) -> Array:
+	_dd_t += dt
+	var line := -1.0 * player.course - 0.3 * player.yaw_rate - 0.08 * player.x   # keep going down the road, in the middle
+	var near_rail := absf(player.x) > Data.ROAD_HALF - 2.5
+	var blocked := false
+	for c in traffic:
+		if absf(c.x - player.x) < 3.0 and c.z > player.z and c.z - player.z < 40.0:
+			blocked = true
+	if near_rail or blocked or player.v < 20.0:
+		return [clampf(line * 1.5, -0.8, 0.8), player.v < 30.0 and not blocked, blocked and player.v > 22.0]
+	var phase := fmod(_dd_t, 3.0)
+	if phase < 0.3:
+		return [_dd_side * 0.8, false, true]   # into the slide: the handbrake with the wheel turned
+	if phase > 2.95:
+		_dd_side = -_dd_side
+	return [clampf(line, -0.6, 0.6), true, false]
+
+
+## The drift tune's sliding tyres: black marks on the road from the rear wheels, smoke off them and their squeal,
+## all as hard as they slide (k: 0 .. 1).
+var _drift_marked := false
+
+
+func _drift_marks(k: float, dt: float) -> void:
+	sound.set_squeal(k, dt)
+	if k < 0.05:
+		smoke.emitting = false
+		if _drift_marked:
+			for i in 4:
+				skids.lift(i)
+			_drift_marked = false
+		return
+	var contacts := player.model.wheel_contacts()
+	if contacts.size() < 4:
+		return
+	var fwd := Vector3(sin(player.yaw), 0.0, -cos(player.yaw))
+	var along: Array[float] = []
+	for c in contacts:
+		along.append(c.dot(fwd))
+	var mid := (along[0] + along[1] + along[2] + along[3]) / 4.0
+	var at := Vector3.ZERO
+	var n := 0
+	for i in contacts.size():
+		if along[i] < mid:   # (a rear wheel)
+			skids.add_point(i, contacts[i].x, player.z - contacts[i].z, clampf(0.35 + k * 0.65, 0.0, 1.0))
+			at += contacts[i]
+			n += 1
+		else:
+			skids.lift(i)
+	smoke.emitting = k > 0.2
+	if n > 0:
+		smoke.position = at / float(n) + Vector3(0.0, 0.25, 0.0)
+	_drift_marked = true
+
+
+## The drift tune's points (CarX Drift Racing's way): while the car slides at more than 12 degrees and 12 m/s it earns,
+## the more the faster and the wider (speed times the sine of the angle), and slides linked by a moment's straight
+## (DRIFT_GAP) are one drift. When the drift ends it is banked with a word for it and a link in the combo for every
+## 1.2 s it lasted (up to three); a crash before then loses it.
+const DRIFT_RATE := 3.0     # base points a second at 1 m/s fully sideways
+const DRIFT_ANGLE := 0.21   # rad (12 degrees): less than this is not a drift
+const DRIFT_GAP := 0.6      # s of running straight that end a drift
+var _drift_hud := 0.0
+
+
+func _drift_score(dt: float) -> void:
+	if not _live() or crash:
+		return
+	var ang := absf(DriftModel.angle(player))
+	if ang > DRIFT_ANGLE and player.v > 12.0:
+		run.drift_t += dt
+		run.drift_off = 0.0
+		run.drift_peak = maxf(run.drift_peak, ang)
+		run.drift_pts += DRIFT_RATE * player.v * sin(minf(ang, 1.2)) * dt
+	elif run.drift_t > 0.0:
+		run.drift_off += dt
+		if run.drift_off > DRIFT_GAP:
+			var deg := roundi(rad_to_deg(run.drift_peak))
+			var word := "DRIFT"
+			if run.drift_t > 4.0:
+				word = "EPIC DRIFT"
+			elif run.drift_t > 2.0 or deg > 40:
+				word = "GREAT DRIFT"
+			var links := clampi(int(run.drift_t / 1.2), 0, 3)
+			if autotest:
+				print("[autotest] drift banked: %.1f s, peak %d deg, %d base points" % [run.drift_t, deg, roundi(run.drift_pts)])
+			_add_score(run.drift_pts, "%s %d°" % [word, deg], links, "hot" if links > 1 else "")
+			run.drift_pts = 0.0
+			run.drift_t = 0.0
+			run.drift_peak = 0.0
+
+
+## What the HUD shows of the drift tune: the slide and what it is worth so far (with the tune's x100 and the combo),
+## or that the tune is fitted.
+func _drift_text() -> String:
+	if run == null or not run.drift:
+		return ""
+	if run.drift_t > 0.0 and run.drift_pts > 0.0:
+		var worth := roundi(run.drift_pts * _mult() * float(run.mods.score)) * Data.DRIFT_SCORE
+		return "%d° · +%s" % [roundi(rad_to_deg(absf(DriftModel.angle(player)))), Fmt.num(worth)]
+	return "DRIFT TUNE · x%d" % Data.DRIFT_SCORE
 
 
 ## Point the player's car so its sideways speed is vx (after a knock or a
@@ -2977,6 +3175,8 @@ func _start_run() -> void:
 	_apply_time(_hour)
 	_set_player_car()
 	run = Run.new()
+	_drift_s = DriftModel.state()
+	run.drift = _test_drift
 	run.lives = 3 + Save.perm_level("lives")
 	run.radar = _test_radar
 	station = {}
@@ -3010,6 +3210,7 @@ func _start_run() -> void:
 func _end_run(reason: String) -> void:
 	if run == null:
 		return
+	sound.set_squeal(0.0, 1.0)
 	_boss_mood_end(2.5)
 	var earned := maxi(0, _gross_earnings() - run.fuel_from_run)
 	Save.data.cash += earned
@@ -3072,11 +3273,21 @@ func _show_pick(bi: Dictionary, unlocked_new: bool) -> void:
 			continue  # a refuel is only offered when the tank could use it
 		if b.id == "radar" and run.radar:
 			continue  # (one jammer is all a car needs)
+		if b.get("rare", false):
+			continue  # (a rare one is never in the shuffle: see below)
 		pool.append(b)
 	pool.shuffle()
+	# a rare upgrade turns up now and then (with its own coin, so the run's random numbers do not move)
+	var rare := {}
+	for b in Data.BOONS:
+		if b.get("rare", false) and not (b.id == "drift" and run.drift) and (_deal_rng.randf() < Data.RARE_CHANCE or _test_boon == b.id):
+			rare = b
+			break
 	# two upgrades and a deal, when the run can take one (Deals): the upgrades are the first two of the shuffle, as ever
 	var run_cash: int = int(_funds().run)
 	var opts := Deals.cards(pool, Deals.available(run.lives, run_cash), _deal_rng.randf())
+	if not rare.is_empty():
+		opts[0] = rare   # (it takes the place of the first upgrade)
 	for i in opts.size():
 		if opts[i].get("deal", false):
 			opts[i] = opts[i].duplicate()
@@ -3158,6 +3369,12 @@ func _apply_boon(id: String) -> void:
 		"cash":
 			run.cash_bonus += 400 * run.stage
 			_notify("SPONSOR DEAL · +$%s" % Fmt.num(400 * run.stage), "hot")
+		"drift":
+			run.drift = true
+			_drift_s = DriftModel.state()
+			_notify("DRIFT TUNE FITTED · EVERY POINT x%d" % Data.DRIFT_SCORE, "hot")
+			if autotest:
+				print("[autotest] drift tune fitted")
 	_compute_stats()
 	_clear_road()
 	run.stage += 1
@@ -3864,15 +4081,14 @@ func _update_run(dt: float) -> void:
 		run.combo_t -= dt
 		if run.combo_t <= 0.0:
 			run.combo = 0
+	if run.drift:
+		_drift_score(dt)
 	if player.v > 33.0:
 		run.speed_acc += (player.v - 33.0) * 1.3 * dt * _mult() * run.mods.score
 		if run.speed_acc >= 1.0:
 			var n := int(run.speed_acc)
 			run.speed_acc -= n
-			run.score += n
-			run.stage_score += n
-			if run.phase == "boss":
-				run.b_score += n
+			_bank(n)
 	_update_fuel(dt)
 	if run == null:
 		return  # ran dry
@@ -4312,7 +4528,10 @@ func _sync_visuals(delta: float) -> void:
 		_kick += _kick_v * delta
 		player.model.set_roll(clampf(-player.v * player.yaw_rate * 0.0035, -0.035, 0.035) + _kick.x * 0.05)
 		player.model.set_pitch(clampf(-player_accel * 0.0018, -0.014, 0.02) + _kick.y * 0.05)
-		smoke.emitting = false
+		var sliding := 0.0   # the drift tune: how hard the rear tyres are sliding or spinning
+		if run and run.drift and _live() and not _drift_s.is_empty() and player.v > 6.0:
+			sliding = clampf(maxf((float(_drift_s.slide) - 0.25) / 0.75, float(_drift_s.spin) * 0.8), 0.0, 1.0)
+		_drift_marks(sliding, delta)
 	skids.update_view(player.z)
 	var cam_mode: String = Save.data.cam.mode
 	hud.set_speedo_visible(cam_mode != "cockpit")
@@ -4552,6 +4771,8 @@ func _update_hud() -> void:
 		"gear": sound.gear,
 		"rpm": sound.rpm / sound.redline,
 		"fast": player.v > 33.0,
+		"drift": _drift_text(),
+		"drift_hot": run.drift and run.drift_t > 0.0,
 		"boss": run.phase == "boss",
 		"cop": run.phase == "cop",
 		"inf": Save.setting("dev_lives") or godmode,
@@ -4955,6 +5176,7 @@ func _leave_garage() -> void:
 func _pause() -> void:
 	if state != S.PLAY:
 		return
+	sound.set_squeal(0.0, 1.0)
 	state = S.PAUSED
 	music.set_paused(true)
 	touches.clear()
@@ -5287,8 +5509,13 @@ func _on_act(action: String, arg: String) -> void:
 		"pick_demo":  # test aid (--open=pick_demo, or pick_demo:blood and the like for another deal): the upgrade pick screen with the wordiest cards, to see how it fits
 			var demo_deal: Dictionary = Deals.by_id(arg if Deals.is_deal(arg) else "gamble").duplicate()
 			demo_deal["after"] = Deals.preview(String(demo_deal.id), 3, 12400)
+			var first: Dictionary = Data.BOONS[12]
+			if arg == "rare":   # (pick_demo:rare: with the rare drift tune in the first place, as it turns up)
+				for bb in Data.BOONS:
+					if bb.get("rare", false):
+						first = bb
 			hud.show_pick("Copperhead beaten · +$200 prize", "The Copperhead is now for sale in the Garage. Choose one upgrade for the rest of this run.",
-				[Data.BOONS[12], Data.BOONS[10], demo_deal])
+				[first, Data.BOONS[10], demo_deal])
 		"refuel_demo":  # test aid (--open=refuel_demo): the pump screen at a stop where the prices have climbed a long way, to see how it fits
 			hud.show_refuel({"name": "Interstate Oil", "grade": "premium", "prices": {"regular": 41.59, "mid": 46.59, "premium": 56.59}, "rise": 0.17,
 				"fuel": 9.5, "tank": 52.0, "litres": 12.3, "bill": 696.0, "pumping": false, "bank": 12400, "run": 3400, "total": 15800, "to_fill": 2410.0,
@@ -5867,7 +6094,20 @@ func _clear_station_for(span: float) -> void:
 
 
 func _gross_earnings() -> int:
-	return run.score / 40 + int(run.dist / 50.0) + run.cash_bonus
+	return run.cash_pts / 40 + int(run.dist / 50.0) + run.cash_bonus   # (the points without the drift tune's x100)
+
+
+## Points earned: into the run's score (Data.DRIFT_SCORE times over with the drift tune), and as they are into what
+## the money, the stage's target and a boss race go by (so the tune makes the score, not the bosses or the bank, a
+## hundred times bigger). Returns what the score got.
+func _bank(pts: int) -> int:
+	var shown := pts * (Data.DRIFT_SCORE if run.drift else 1)
+	run.score += shown
+	run.stage_score += pts
+	run.cash_pts += pts
+	if run.phase == "boss":
+		run.b_score += pts
+	return shown
 
 
 ## Money that can pay for fuel: the bank, plus what this run has earned so far.

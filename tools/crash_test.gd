@@ -296,6 +296,40 @@ func _impacts() -> void:
 	_check(a.w < 0.0, "the rail pushes the nose back towards the road")
 	_check(a.vel.y < 29.0 and a.vel.y > 25.0, "it scrapes along it and loses some speed")
 	_check(a.energy() < e0, "energy is lost on the rail")
+	# how hard a blow is decides how much it bounces, as in real crashes: a bumper tap springs back, a crash crumples
+	_check(Wreck.bounce(1.5) > 0.25 and Wreck.bounce(15.0) < 0.08 and Wreck.bounce(5.0) < Wreck.bounce(2.0), "a tap bounces (%.2f at 1.5 m/s), a crash hardly (%.2f at 15 m/s)" % [Wreck.bounce(1.5), Wreck.bounce(15.0)])
+	_check(Wreck.contact_mu(1.0) < Wreck.contact_mu(15.0), "panels dig into each other harder in a hard hit than in a scrape")
+	for pair: Array in [[22.0, 20.0], [30.0, 10.0]]:
+		a = _car("sedan", 0.0, 0.0, 0.0, Vector2(0.0, pair[0]))
+		b = _car("sedan", 0.0, 4.5, 0.0, Vector2(0.0, pair[1]))
+		c = _contact(a, b)
+		var cl: float = pair[0] - pair[1]
+		Wreck.impact(a, b, c.n, c.p)
+		var part := (b.vel.y - a.vel.y) / cl
+		print("  rear-end at %.0f m/s closing: they part at %.2f of it" % [cl, part])
+		_check(_near(part, Wreck.bounce(cl), 0.01), "a %.0f m/s blow parts at the bounce its speed gives (%.2f)" % [cl, part])
+	_check(Wreck.bounce(2.0) > 0.25 and Wreck.bounce(20.0) < 0.07, "a 2 m/s tap springs apart, a 20 m/s crash nearly sticks")
+	# what it takes to roll a car over: something stopping its wheels short while it slides
+	var sd := Wreck.make("sedan")
+	var vn := Wreck.make("van")
+	print("  trip speeds: a sedan %.1f m/s side-on into a kerb (%.0f at bumper height), a van %.1f; a sedan's tyres hold %.2f g, it tips at %.2f g" % [
+		sd.trip_speed(0.3), sd.trip_speed(0.45), vn.trip_speed(0.3), sd.grip, sd.shape.track / sd.cg_h])
+	_check(sd.trip_speed(0.3) > 4.5 and sd.trip_speed(0.3) < 8.5, "a car trips over sliding side-on into the foot of a rail at 4.5 to 8.5 m/s")
+	_check(vn.trip_speed(0.3) < sd.trip_speed(0.3), "a van trips over sooner than a car")
+	_check(sd.trip_speed(0.45) > 12.0, "a blow at bumper height takes a lot to tip a car")
+	_check(sd.grip < sd.shape.track / sd.cg_h, "a car's tyres cannot roll it on flat tarmac")
+	# where the weight goes
+	var bk := _car("sedan", 0.0, 0.0, 0.0, Vector2(0.0, 30.0))
+	bk.brake = 1.0
+	bk.step(0.25)
+	var ld := bk.wheel_loads()
+	print("  braking hard: front wheels carry %.0f%% of the weight (rear %.0f%%)" % [(ld[2] + ld[3]) * 100.0, (ld[0] + ld[1]) * 100.0])
+	_check(ld[2] + ld[3] > ld[0] + ld[1] + 0.06, "braking puts weight on the front wheels")
+	var sl := _car("sedan", 0.0, 0.0, PI / 2.0, Vector2(0.0, 20.0))
+	sl.step(0.25)
+	ld = sl.wheel_loads()
+	print("  sliding sideways: left wheels %.0f%%, right %.0f%%" % [(ld[0] + ld[2]) * 100.0, (ld[1] + ld[3]) * 100.0])
+	_check(absf((ld[0] + ld[2]) - (ld[1] + ld[3])) > 0.3 and minf(ld[0] + ld[2], ld[1] + ld[3]) > 0.05, "sliding sideways moves weight onto the outer wheels, without lifting the inner ones")
 	# a hit is never a net force out of nowhere: a car at rest shoved by a slow one stays calm
 	a = _car("sedan", 0.0, 0.0, 0.0, Vector2(0.0, 5.0))
 	b = _car("sedan", 0.0, 4.45, 0.0, Vector2(0.0, 0.0))
@@ -325,7 +359,7 @@ func _play(a: Wreck, b: Wreck, secs: float, label: String) -> void:
 		var c := _contact(a, b)
 		if not c.is_empty():
 			Wreck.separate(a, b, c.n, c.depth)
-			var j := Wreck.impact(a, b, c.n, c.p, 0.2, 0.25)
+			var j := Wreck.impact(a, b, c.n, c.p)
 			if j > 0.0:
 				hits += 1
 				j_total += j
@@ -383,7 +417,7 @@ func _scenarios() -> void:
 			if not wc.is_empty():
 				through = maxf(through, float(wc.depth))
 				c.pos.x -= float(wc.depth)
-				if Wreck.impact(c, null, wc.n, wc.p, 0.25, 0.3) > 0.0:
+				if Wreck.impact(c, null, wc.n, wc.p) > 0.0:
 					hits += 1
 			e_grew = maxf(e_grew, c.energy() - e_prev)
 			e_prev = c.energy()
@@ -420,7 +454,7 @@ func _scenarios() -> void:
 			if not c.is_empty():
 				met = true
 				Wreck.separate(ca, cb, c.n, c.depth)
-				Wreck.impact(ca, cb, c.n, c.p, 0.2, 0.25)
+				Wreck.impact(ca, cb, c.n, c.p)
 			wmax = maxf(wmax, maxf(absf(ca.w), absf(cb.w)))
 			t += dt
 			if met and t > 1.0 and ca.vel.length() < 0.05 and cb.vel.length() < 0.05:

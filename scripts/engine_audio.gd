@@ -71,6 +71,8 @@ var _st_i := 0
 
 var _sfx := {}
 var _players: Array[AudioStreamPlayer] = []
+var _squeal: AudioStreamPlayer   # tyres sliding (the drift tune): a loop whose loudness and pitch follow the slide
+var _squeal_k := 0.0
 var _rng := RandomNumberGenerator.new()  # the sound's own noise: how much of it is made must never change the game's random numbers
 
 
@@ -123,6 +125,7 @@ func _ready() -> void:
 		add_child(p)
 		_players.append(p)
 	_sfx["whoosh"] = _make_whoosh()
+	_sfx["ping"] = _make_ping()
 	_sfx["crash"] = _make_crash()
 	_sfx["ding"] = _make_ding()
 	_sfx["tick"] = _make_tick()
@@ -130,6 +133,10 @@ func _ready() -> void:
 	_sfx["blowoff"] = _make_blowoff()
 	_sfx["siren"] = _make_siren()
 	_sfx["glass"] = _make_glass()
+	_squeal = AudioStreamPlayer.new()
+	_squeal.stream = _make_squeal()
+	_squeal.volume_db = -60.0
+	add_child(_squeal)
 	if _eng.is_empty():
 		set_car(Data.CARS[0])
 
@@ -214,6 +221,22 @@ func _rpm_for(v: float, top: float, g: int) -> float:
 ## Cockpit view: the engine is heard through the bulkhead, darker and closer.
 func set_interior(on: bool) -> void:
 	_interior = on
+
+
+## How hard the tyres are sliding, 0 (gripping) .. 1 (fully sideways, or spinning): the squeal fades in and climbs a
+## little in pitch with it, and stops when they grip again.
+func set_squeal(k: float, dt: float) -> void:
+	_squeal_k = move_toward(_squeal_k, clampf(k, 0.0, 1.0), dt * 6.0)
+	if _squeal == null:
+		return
+	if _squeal_k < 0.02:
+		if _squeal.playing:
+			_squeal.stop()
+		return
+	if not _squeal.playing:
+		_squeal.play()
+	_squeal.volume_db = linear_to_db(_squeal_k * 0.55)
+	_squeal.pitch_scale = 0.88 + 0.22 * _squeal_k
 
 
 ## Called every frame with the player's speed and pedals.
@@ -461,24 +484,99 @@ func _wav(samples: PackedFloat32Array, rate := RATE) -> AudioStreamWAV:
 	return w
 
 
-## Pass-by: band of noise that sweeps down in pitch (Doppler) as the car goes past.
+## The scoring sound: a whoosh of air past the car, the faster the closer. A band of noise whose pitch sweeps up as it
+## comes and down as it goes (a resonant filter from 320 Hz up to 2.8 kHz and back down to 520), over a low rush of air
+## for weight and a faint falling tone that gives it its "fwoosh". Made at the full rate (the top of it needs the room);
+## the game plays it lower and louder for a bigger score.
 func _make_whoosh() -> AudioStreamWAV:
-	var n := int(RATE * 0.55)
+	var rate := SFX_RATE
+	var n := int(rate * 0.5)
 	var out := PackedFloat32Array()
 	out.resize(n)
 	var low := 0.0
 	var band := 0.0
+	var low2 := 0.0
+	var band2 := 0.0
+	var soft := 0.0
+	var rush := 0.0
+	var ph := 0.0
 	for i in n:
 		var t := float(i) / n
-		var env := pow(sin(PI * minf(1.0, t * 1.4)), 2.0) * (1.0 - t)
-		var fc := lerpf(2600.0, 380.0, pow(t, 0.7))
-		var f := 2.0 * sin(PI * fc / RATE)
+		var env := smoothstep(0.0, 0.26, t) * pow(1.0 - smoothstep(0.26, 1.0, t), 1.6)
+		var fc := 320.0 + 2480.0 * exp(-pow((t - 0.3) / 0.17, 2.0)) + 200.0 * t
+		var f := 2.0 * sin(PI * fc / rate)
 		var nz := _rng.randf() * 2.0 - 1.0
+		# two resonant band-passes one after the other (about Q 2 each: a band that falls away steeply on both sides)
 		low += f * band
-		var high := nz - low - 0.5 * band
-		band += f * high
-		out[i] = band * env * 0.9
-	return _wav(out)
+		band += f * (nz - low - 0.5 * band)
+		low2 += f * band2
+		band2 += f * (band - low2 - 0.5 * band2)
+		soft += (band2 - soft) * 0.42         # (and the top taken off, above about 4 kHz)
+		rush += (nz - rush) * 0.035           # (the low rush of air, under 250 Hz)
+		var tf := lerpf(560.0, 170.0, t)
+		ph += TAU * tf / rate
+		out[i] = (soft * 1.1 + rush * 1.4 + sin(ph) * 0.1) * env
+	return _wav(_level(out, 0.42), rate)
+
+
+## A multiplier's ping (each time it goes up a whole number): a bright, clean strike of glass, quick to open and a third
+## of a second to ring out, with a quieter shimmer a twelfth and an octave and a half above it.
+func _make_ping() -> AudioStreamWAV:
+	var rate := SFX_RATE
+	var buf := PackedFloat32Array()
+	buf.resize(int(rate * 0.6))
+	var f0 := 1568.0   # G6
+	for i in buf.size():
+		var t := float(i) / rate
+		var open := 1.0 - exp(-t * 2200.0)
+		var s := sin(TAU * f0 * t) * exp(-t * 9.0)
+		s += sin(TAU * f0 * 3.0 * t) * 0.18 * exp(-t * 22.0)
+		s += sin(TAU * f0 * 2.76 * t) * 0.12 * exp(-t * 30.0)
+		s += (_rng.randf() * 2.0 - 1.0) * 0.25 * exp(-t * 1800.0)   # (the tick of the strike)
+		buf[i] = s * open
+	return _wav(_level(_room(buf), 0.34), rate)
+
+
+## The ping's pitch for a multiplier of n (2 and up): a step up a major scale for each whole number.
+const MAJOR := [0, 2, 4, 5, 7, 9, 11, 12]
+static func ping_pitch(n: int) -> float:
+	return pow(2.0, float(MAJOR[clampi(n - 2, 0, MAJOR.size() - 1)]) / 12.0)
+
+
+## Tyres sliding on tarmac: a cluster of close, wavering tones (the rubber's stick-slip) over a rough hiss, a loop of
+## 1.2 s whose tones each fit a whole number of cycles into it, so it repeats without a click.
+func _make_squeal() -> AudioStreamWAV:
+	var T := 1.2
+	var n := int(RATE * T)
+	var m := int(RATE * 0.03)   # (made 30 ms long, and that end blended into the start: the noise in it joins up too)
+	var out := PackedFloat32Array()
+	out.resize(n + m)
+	var parts := [[1180.0, 0.32, 7.0], [1265.0, 0.24, 5.0], [1410.0, 0.16, 9.0], [2390.0, 0.07, 6.0], [905.0, 0.12, 4.0]]
+	for p in parts:   # (whole numbers of cycles in the loop: the tone, and the waver on it)
+		p[0] = roundf(float(p[0]) * T) / T
+		p[2] = roundf(float(p[2]) * T) / T
+	var band := 0.0
+	var low := 0.0
+	for i in n + m:
+		var t := float(i) / RATE
+		var s := 0.0
+		for p in parts:
+			var wav := 1.0 + 0.012 * sin(TAU * float(p[2]) * t)
+			s += sin(TAU * float(p[0]) * t * wav) * float(p[1]) * (0.75 + 0.25 * sin(TAU * float(p[2]) * 1.7 * t))
+		var nz := _rng.randf() * 2.0 - 1.0
+		var f := 2.0 * sin(PI * 1800.0 / RATE)
+		low += f * band
+		band += f * (nz - low - 0.6 * band)
+		out[i] = (s * 0.8 + band * 0.35) * 0.7
+	for i in m:
+		var k := float(i) / float(m)
+		out[i] = out[i] * k + out[n + i] * (1.0 - k)
+	out.resize(n)
+	var w := _wav(out)
+	w.loop_mode = AudioStreamWAV.LOOP_FORWARD
+	w.loop_begin = 0
+	w.loop_end = n
+	return w
 
 
 ## Impact: low body thump, inharmonic metal ring and a little glass.
@@ -500,15 +598,6 @@ func _make_crash() -> AudioStreamWAV:
 			s += nz * 0.6  # glass tinkle
 		out[i] = s * 0.8
 	return _wav(out)
-
-
-## The scoring sound's pitch for a combo of n: a step up a major pentatonic scale for each link of the chain,
-## so a run of passes climbs a tune (G A B D E G A ...) instead of a chromatic crawl, and tops out.
-const PENTA := [0, 2, 4, 7, 9]
-static func combo_pitch(n: int) -> float:
-	var k := maxi(n, 0)
-	var semis: int = int(PENTA[k % 5]) + 12 * (k / 5)
-	return pow(2.0, minf(float(semis), 19.0) / 12.0)
 
 
 const SFX_RATE := 44100.0  # the bells are made at the full rate: a sparkle on top needs the room
@@ -554,7 +643,6 @@ func _level(buf: PackedFloat32Array, peak: float) -> PackedFloat32Array:
 	return buf
 
 
-## The scoring sound: one soft, glassy bell (G5; the game plays it higher up the pentatonic scale as the combo grows).
 ## The sound of a menu button going down: a short, soft, dry tick.
 func _make_tick() -> AudioStreamWAV:
 	var buf := PackedFloat32Array()
@@ -565,6 +653,7 @@ func _make_tick() -> AudioStreamWAV:
 	return _wav(_level(buf, 0.2), SFX_RATE)
 
 
+## A soft, glassy bell (G5): the menus' and the game's little rewards (the game plays it higher or lower).
 func _make_ding() -> AudioStreamWAV:
 	var buf := PackedFloat32Array()
 	buf.resize(int(SFX_RATE * 0.5))

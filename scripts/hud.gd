@@ -14,6 +14,7 @@ const AMBER_INK := Color("#1d1503")
 const TAIL := Color("#ff3b2a")
 const MUTED := Color("#b5c4ba")
 const RED_SIGN := Color("#5a1717")
+const RARE_BG := Color("#3a2a06")   # a rare upgrade's card (with an amber edge)
 const LANE_GREEN := Color("#5bd68b")
 const SCRIM := Color(0.03, 0.04, 0.05, 0.62)
 
@@ -42,6 +43,7 @@ var _goal: PanelContainer
 var _g := {}
 var _kmh: Label
 var _sp_tag: Label
+var _drift_lbl: Label   # the drift tune's readout: the slide's angle and what it is worth so far
 var _unit: Label
 var _rpm: ProgressBar
 var _pops: VBoxContainer
@@ -511,6 +513,12 @@ func _build_play() -> void:
 	_combo = _bar(_fill_amber, 7)
 	_combo.custom_minimum_size.x = 90
 	combo_row.add_child(_combo)
+	# the drift tune: what the slide is worth so far (shown only with the tune fitted)
+	_drift_lbl = _label("", 18, AMBER, mono_font)
+	_drift_lbl.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.6))
+	_drift_lbl.add_theme_constant_override("shadow_offset_y", 2)
+	_drift_lbl.visible = false
+	mid.add_child(_drift_lbl)
 
 	var right := HBoxContainer.new()
 	right.alignment = BoxContainer.ALIGNMENT_END
@@ -857,8 +865,20 @@ func _set_fill(bar: ProgressBar, fill: StyleBoxFlat) -> void:
 		bar.add_theme_stylebox_override("fill", fill)
 
 
+## The multiplier has gone up a whole number: its badge jumps.
+func mult_up() -> void:
+	if _mult_bg == null:
+		return
+	_mult_bg.pivot_offset = _mult_bg.size / 2.0
+	var tw := create_tween()
+	tw.tween_property(_mult_bg, "scale", Vector2(1.45, 1.45), 0.07).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.tween_property(_mult_bg, "scale", Vector2.ONE, 0.28).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+
 func update_play(d: Dictionary) -> void:
 	var feed_y := _mult_bg.global_position.y + _mult_bg.size.y + 6.0
+	if _drift_lbl.visible:
+		feed_y = maxf(feed_y, _drift_lbl.global_position.y + _drift_lbl.size.y + 6.0)   # (under the drift readout)
 	if mirror and mirror.is_visible_in_tree() and mirror.global_position.x < 360.0:
 		feed_y = maxf(feed_y, mirror.global_position.y + mirror.size.y + 6.0)  # (not behind the mirror)
 	_feed.position = Vector2(_mult_bg.global_position.x, feed_y) - play_layer.global_position
@@ -883,6 +903,13 @@ func update_play(d: Dictionary) -> void:
 	_set_fill(_rpm, _fill_red if d.rpm > 0.9 else (_fill_amber if d.rpm > 0.75 else _fill_white))
 	_set_font_color(_kmh, AMBER if d.fast else LINE)
 	_sp_tag.text = "HIGH SPEED BONUS" if d.fast else ""
+	var dt_txt: String = d.get("drift", "")
+	_drift_lbl.visible = dt_txt != ""
+	if dt_txt != "" and _drift_lbl.text != dt_txt:
+		_drift_lbl.text = dt_txt
+		var hot: bool = d.get("drift_hot", false)
+		_set_font_color(_drift_lbl, AMBER if hot else MUTED)
+		_drift_lbl.add_theme_font_size_override("font_size", 26 if hot else 17)
 	if d.has("fuel"):
 		var f: float = d.fuel
 		_fuel_bar.value = clampf(f, 0.0, 1.0)
@@ -2347,8 +2374,9 @@ func show_pick(eyebrow: String, line: String, boons: Array) -> void:
 		ch.queue_free()
 	for b in boons:
 		var deal: bool = b.get("deal", false)  # (a trade-off, not an upgrade: a red card)
+		var rare: bool = b.get("rare", false)  # (a rare upgrade: a gold card)
 		var btn := Button.new()
-		var sb := _flat(RED_SIGN if deal else SIGN_DEEP, 14, Color(BAD, 0.55) if deal else Color.TRANSPARENT, 3)
+		var sb := _flat(RARE_BG if rare else (RED_SIGN if deal else SIGN_DEEP), 14, AMBER if rare else (Color(BAD, 0.55) if deal else Color.TRANSPARENT), 4 if rare else 3)
 		sb.set_content_margin_all(18)
 		var hv := sb.duplicate() as StyleBoxFlat
 		hv.border_color = AMBER
@@ -2365,7 +2393,7 @@ func show_pick(eyebrow: String, line: String, boons: Array) -> void:
 		vb.offset_bottom = -14
 		var vp := get_viewport().get_visible_rect().size
 		var wide := vp.x > vp.y
-		vb.add_child(_label(b.tag, 16, BAD if deal else AMBER, mono_font))
+		vb.add_child(_label(("★ " + String(b.tag)) if rare else String(b.tag), 16, BAD if deal else AMBER, mono_font))
 		var nl := _label(String(b.name).to_upper(), 36 if wide else 40, LINE, display_font)
 		nl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		nl.custom_minimum_size.x = 80
@@ -2380,7 +2408,7 @@ func show_pick(eyebrow: String, line: String, boons: Array) -> void:
 			al.custom_minimum_size.x = 80
 			vb.add_child(al)
 		btn.add_child(vb)
-		btn.custom_minimum_size = Vector2(0, (270 if wide else 210) if deal else (230 if wide else 164))
+		btn.custom_minimum_size = Vector2(0, (270 if wide else 210) if (deal or rare) else (230 if wide else 164))
 		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		var id: String = b.id
 		btn.pressed.connect(func() -> void: act.emit("boon", id))

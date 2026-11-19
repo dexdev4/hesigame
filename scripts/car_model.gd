@@ -20,29 +20,126 @@ static var _beam_mesh: ArrayMesh
 # pillars: side-window pillar spans along the side, 0 = rear edge, 1 = front edge.
 const PROFILES := {
 	# BEGIN IMPORTED PROFILES
-	"kestrel": {
-		"mesh": "res://assets/models/car_kestrel.mesh",
-		"mesh_lq": "res://assets/models/car_kestrel_lq.mesh",
-		"body": [[0, 1.07, 0.847], [0.1, 1.051, 0.895], [0.3, 1.051, 0.976], [0.7, 1.051, 0.998], [1.2, 1.051, 0.997], [1.8, 1.051, 0.959], [2.4, 1.051, 0.952], [3, 0.904, 0.989], [3.5, 0.826, 0.968], [3.9, 0.737, 0.923], [4.2, 0.654, 0.809], [4.25, 0.61, 0.707]],
-		"gh": [0.07, 2.535, 0.295, 1.93, 1.011, 1.418, 0.919, 0.559],
+	"hot_hatch": {
+		"mesh": "res://assets/models/car_pulse.mesh",
+		"mesh_lq": "res://assets/models/car_pulse_lq.mesh",
+		"body": [[0, 0.989, 0.913], [0.1, 1.015, 0.944], [0.3, 0.929, 0.965], [0.7, 0.929, 0.994], [1.2, 0.929, 0.973], [1.8, 0.929, 0.954], [2.4, 0.929, 0.956], [3, 0.954, 0.977], [3.5, 0.85, 0.996], [3.9, 0.81, 0.977], [4.2, 0.788, 0.949], [4.368, 0.736, 0.897]],
+		"gh": [0.169, 2.836, 0.726, 2.086, 0.889, 1.447, 0.856, 0.651],
 		"pillars": [[0, 0.28], [0.5, 0.54], [0.93, 1]],
 		"rim_frac": 0.7,
-		"tyre": [0.235, 0.235],
-		"wheel": [0.35, 0.75, 3.39],
-		"wheel_x": [0.815, 0.8],
+		"tyre": [0.23, 0.23],
+		"wheel": [0.324, 0.796, 3.446],
+		"wheel_x": [0.785, 0.78],
+		"plate_y": 0.66,
+		"badge_y": 0.74,
+		"eye_back": 1.3,
+		"eye_y": 1.249,
+		"dash_drop": 0,
+		"dash_hw": 0.62,
+		"ws_base_hw": 0.58,
+		"mirror_d": 2.04,
+		"parts": "res://assets/models/car_pulse_parts/",
+		"paint_pbr": [0, 0.42, 1, 0.03],
+		"back": "#232427",
+		"eye": [-0.37, 1.1, -1.816],
+		"plate_z": -0.029},
+	"sport_sedan": {
+		"mesh": "res://assets/models/car_vector.mesh",
+		"mesh_lq": "res://assets/models/car_vector_lq.mesh",
+		"body": [[0, 1.018, 0.875], [0.1, 1.185, 0.918], [0.3, 1.215, 0.955], [0.7, 0.93, 0.996], [1.2, 0.93, 0.988], [1.8, 0.93, 0.953], [2.4, 0.93, 0.952], [3, 0.909, 0.964], [3.5, 0.868, 0.992], [3.9, 0.84, 0.987], [4.2, 0.825, 0.958], [4.537, 0.788, 0.889]],
+		"gh": [0.397, 2.665, 0.955, 1.975, 0.89, 1.475, 0.858, 0.622],
+		"pillars": [[0, 0.28], [0.5, 0.54], [0.93, 1]],
+		"rim_frac": 0.7,
+		"tyre": [0.24, 0.24],
+		"wheel": [0.327, 0.905, 3.555],
+		"wheel_x": [0.773, 0.773],
 		"plate_y": 0.62,
 		"badge_y": 0.74,
 		"eye_back": 1.3,
-		"eye_y": 1.248,
+		"eye_y": 1.25,
 		"dash_drop": 0,
-		"dash_hw": 0.53,
-		"ws_base_hw": 0.5,
-		"mirror_d": 1.88},
+		"dash_hw": 0.62,
+		"ws_base_hw": 0.59,
+		"mirror_d": 1.93,
+		"parts": "res://assets/models/car_vector_parts/",
+		"paint_pbr": [0, 0.42, 1, 0.03],
+		"back": "#1c1d20",
+		"eye": [-0.37, 1.07, -1.645],
+		"plate_z": -0.038},
+	"compact": {
+		"mesh": "res://assets/models/car_hornet.mesh",
+		"mesh_lq": "res://assets/models/car_hornet_lq.mesh",
+		"body": [[0, 0.921, 0.878], [0.1, 1.091, 0.924], [0.3, 0.918, 0.97], [0.7, 0.918, 1], [1.2, 0.918, 0.965], [1.8, 0.918, 0.964], [2.4, 0.918, 0.971], [3, 0.871, 0.998], [3.5, 0.795, 0.956], [3.687, 0.71, 0.827]],
+		"gh": [0.122, 2.582, 0.612, 2.012, 0.878, 1.487, 0.841, 0.665],
+		"pillars": [[0, 0.28], [0.5, 0.54], [0.93, 1]],
+		"rim_frac": 0.7,
+		"tyre": [0.201, 0.201],
+		"wheel": [0.298, 0.682, 2.982],
+		"wheel_x": [0.7, 0.705],
+		"plate_y": 0.66,
+		"badge_y": 0.74,
+		"eye_back": 1.3,
+		"eye_y": 1.238,
+		"dash_drop": 0,
+		"dash_hw": 0.54,
+		"ws_base_hw": 0.51,
+		"mirror_d": 1.96,
+		"parts": "res://assets/models/car_hornet_parts/",
+		"paint_pbr": [0, 0.42, 1, 0.03],
+		"back": "#1d1e21",
+		"eye": [-0.37, 1.16, -1.572],
+		"plate_z": -0.02},
+	"coupe": {
+		"mesh": "res://assets/models/car_comet.mesh",
+		"mesh_lq": "res://assets/models/car_comet_lq.mesh",
+		"body": [[0, 0.987, 0.887], [0.1, 0.987, 0.914], [0.3, 0.95, 0.951], [0.7, 0.829, 0.999], [1.2, 0.829, 0.979], [1.8, 0.829, 0.937], [2.4, 0.829, 1.076], [3, 0.785, 0.969], [3.5, 0.778, 0.982], [3.9, 0.731, 0.963], [4.2, 0.701, 0.92], [4.298, 0.676, 0.864]],
+		"gh": [0.316, 2.466, 1.056, 1.858, 0.789, 1.305, 0.874, 0.57],
+		"pillars": [[0, 0.28], [0.5, 0.54], [0.93, 1]],
+		"rim_frac": 0.7,
+		"tyre": [0.21, 0.21],
+		"wheel": [0.315, 0.861, 3.436],
+		"wheel_x": [0.775, 0.76],
+		"plate_y": 0.58,
+		"badge_y": 0.74,
+		"eye_back": 1.3,
+		"eye_y": 1.135,
+		"dash_drop": 0.17,
+		"dash_hw": 0.59,
+		"ws_base_hw": 0.56,
+		"mirror_d": 1.81,
+		"parts": "res://assets/models/car_comet_parts/",
+		"paint_pbr": [0.4, 0.36, 1, 0.03],
+		"back": "#1b1c1f",
+		"eye": [-0.37, 0.97, -1.456],
+		"plate_z": -0.029},
+	"kestrel": {
+		"mesh": "res://assets/models/car_kestrel.mesh",
+		"mesh_lq": "res://assets/models/car_kestrel_lq.mesh",
+		"body": [[0, 0.901, 0.935], [0.1, 0.928, 0.969], [0.3, 0.873, 0.987], [0.7, 0.873, 0.996], [1.2, 0.873, 0.992], [1.8, 0.873, 0.992], [2.4, 0.873, 0.992], [3, 0.864, 1], [3.5, 0.832, 0.996], [3.9, 0.806, 0.974], [4.016, 0.785, 0.944]],
+		"gh": [0.221, 2.741, 0.881, 2.171, 0.833, 1.39, 0.846, 0.655],
+		"pillars": [[0, 0.28], [0.5, 0.54], [0.93, 1]],
+		"rim_frac": 0.7,
+		"tyre": [0.181, 0.181],
+		"wheel": [0.295, 0.741, 3.211],
+		"wheel_x": [0.7, 0.7],
+		"plate_y": 0.585,
+		"badge_y": 0.74,
+		"eye_back": 1.3,
+		"eye_y": 1.193,
+		"dash_drop": 0,
+		"dash_hw": 0.58,
+		"ws_base_hw": 0.55,
+		"mirror_d": 2.12,
+		"parts": "res://assets/models/car_kestrel_parts/",
+		"paint_pbr": [0.4, 0.36, 1, 0.03],
+		"back": "#2b2c2f",
+		"eye": [-0.37, 1.12, -1.771],
+		"plate_z": -0.029},
 	"bruiser": {
 		"mesh": "res://assets/models/car_bruiser.mesh",
 		"mesh_lq": "res://assets/models/car_bruiser_lq.mesh",
-		"body": [[0, 1.007, 0.891], [0.1, 1.069, 0.932], [0.3, 1.055, 0.956], [0.7, 1.045, 0.989], [1.2, 0.961, 0.992], [1.8, 0.961, 0.977], [2.4, 0.961, 0.965], [3, 0.984, 0.965], [3.5, 0.95, 0.977], [3.9, 0.957, 0.989], [4.2, 0.957, 0.981], [5.08, 0.824, 0.908]],
-		"gh": [0.842, 2.9, 1.43, 2.29, 0.921, 1.38, 0.832, 0.596],
+		"body": [[0, 1.016, 0.896], [0.1, 1.069, 0.933], [0.3, 1.056, 0.956], [0.7, 1.045, 0.987], [1.2, 0.966, 0.991], [1.8, 0.966, 0.976], [2.4, 0.966, 0.963], [3, 0.983, 0.965], [3.5, 0.951, 0.976], [3.9, 0.959, 0.985], [4.2, 0.959, 0.977], [5.08, 0.84, 0.913]],
+		"gh": [0.83, 2.93, 1.43, 2.29, 0.926, 1.38, 0.834, 0.6],
 		"pillars": [[0, 0.28], [0.5, 0.54], [0.93, 1]],
 		"rim_frac": 0.7,
 		"tyre": [0.264, 0.264],
@@ -53,161 +150,249 @@ const PROFILES := {
 		"eye_back": 1.3,
 		"eye_y": 1.21,
 		"dash_drop": 0,
-		"dash_hw": 0.63,
-		"ws_base_hw": 0.59,
+		"dash_hw": 0.65,
+		"ws_base_hw": 0.61,
 		"mirror_d": 2.24,
 		"parts": "res://assets/models/car_bruiser_parts/",
-		"paint_pbr": [0, 0.42, 1, 0.03]},
+		"paint_pbr": [0, 0.42, 1, 0.03],
+		"back": "#1a1a1c",
+		"eye": [-0.37, 1.06, -1.9],
+		"plate_z": -0.038},
 	"copperhead": {
 		"mesh": "res://assets/models/car_copperhead.mesh",
 		"mesh_lq": "res://assets/models/car_copperhead_lq.mesh",
-		"body": [[0, 0.879, 0.857], [0.1, 0.899, 0.913], [0.3, 0.91, 0.95], [0.7, 1.037, 1], [1.2, 0.995, 0.997], [1.8, 0.995, 0.954], [2.4, 0.995, 0.944], [3, 0.857, 0.942], [3.5, 0.841, 0.976], [3.9, 0.82, 0.95], [4.2, 0.791, 0.959], [4.8, 0.648, 0.715]],
-		"gh": [0.73, 2.495, 1.33, 2.055, 0.955, 1.289, 0.83, 0.524],
+		"body": [[0, 1.018, 0.872], [0.1, 1.035, 0.907], [0.3, 0.849, 0.931], [0.7, 0.849, 0.975], [1.2, 0.849, 0.999], [1.8, 0.849, 0.939], [2.4, 0.849, 0.922], [3, 0.89, 0.934], [3.5, 0.881, 0.971], [3.9, 0.881, 0.97], [4.2, 0.836, 0.973], [4.818, 0.806, 0.903]],
+		"gh": [0.261, 2.801, 1.212, 2.179, 0.809, 1.3, 0.836, 0.563],
 		"pillars": [[0, 0.28], [0.5, 0.54], [0.93, 1]],
 		"rim_frac": 0.7,
-		"tyre": [0.265, 0.265],
-		"wheel": [0.36, 1.02, 3.85],
-		"wheel_x": [0.835, 0.81],
-		"plate_y": 0.62,
+		"tyre": [0.279, 0.279],
+		"wheel": [0.343, 1.111, 3.861],
+		"wheel_x": [0.795, 0.8],
+		"plate_y": 0.47,
 		"badge_y": 0.74,
 		"eye_back": 1.3,
-		"eye_y": 1.088,
+		"eye_y": 1.13,
 		"dash_drop": 0.17,
-		"dash_hw": 0.52,
-		"ws_base_hw": 0.49,
-		"mirror_d": 2.01},
+		"dash_hw": 0.62,
+		"ws_base_hw": 0.58,
+		"mirror_d": 2.13,
+		"parts": "res://assets/models/car_copperhead_parts/",
+		"paint_pbr": [0.4, 0.36, 1, 0.03],
+		"back": "#2a1d14",
+		"eye": [-0.37, 1.04, -1.841],
+		"plate_z": -0.029},
 	"halcyon": {
 		"mesh": "res://assets/models/car_halcyon.mesh",
 		"mesh_lq": "res://assets/models/car_halcyon_lq.mesh",
-		"body": [[0, 0.841, 0.871], [0.1, 0.856, 0.923], [0.3, 0.874, 0.965], [0.7, 0.919, 0.995], [1.2, 0.896, 1], [1.8, 0.896, 0.947], [2.4, 0.896, 0.918], [3, 0.794, 0.937], [3.5, 0.795, 0.888], [3.9, 0.73, 0.94], [4.2, 0.623, 0.875], [4.5, 0.473, 0.666]],
-		"gh": [0.815, 2.655, 1.555, 2.325, 0.856, 1.104, 0.744, 0.545],
+		"body": [[0, 1.001, 0.823], [0.1, 1.001, 0.923], [0.3, 0.993, 0.97], [0.7, 0.835, 1], [1.2, 0.835, 0.998], [1.8, 0.835, 0.946], [2.4, 0.835, 0.924], [3, 0.864, 0.961], [3.5, 0.774, 0.978], [3.9, 0.719, 0.973], [4.2, 0.65, 0.958], [4.593, 0.459, 0.734]],
+		"gh": [0.641, 2.931, 1.521, 2.331, 0.795, 1.18, 0.798, 0.602],
 		"pillars": [[0, 0.28], [0.5, 0.54], [0.93, 1]],
 		"rim_frac": 0.7,
-		"tyre": [0.27, 0.27],
-		"wheel": [0.35, 0.87, 3.52],
-		"wheel_x": [0.87, 0.835],
+		"tyre": [0.269, 0.269],
+		"wheel": [0.343, 0.881, 3.531],
+		"wheel_x": [0.825, 0.835],
 		"plate_y": 0.5,
 		"badge_y": 0.63,
-		"eye_back": 1.49,
-		"eye_y": 0.832,
+		"eye_back": 1.36,
+		"eye_y": 1.01,
 		"dash_drop": 0.17,
-		"dash_hw": 0.5,
-		"ws_base_hw": 0.47,
-		"mirror_d": 2.28},
+		"dash_hw": 0.63,
+		"ws_base_hw": 0.6,
+		"mirror_d": 2.28,
+		"parts": "res://assets/models/car_halcyon_parts/",
+		"paint_pbr": [0, 0.3, 1, 0.03],
+		"back": "#18181a",
+		"eye": [-0.37, 0.93, -1.981],
+		"plate_z": -0.029},
 	"static": {
 		"mesh": "res://assets/models/car_static.mesh",
 		"mesh_lq": "res://assets/models/car_static_lq.mesh",
-		"body": [[0, 0.841, 0.871], [0.1, 0.856, 0.923], [0.3, 0.874, 0.965], [0.7, 0.919, 0.995], [1.2, 0.899, 1], [1.8, 0.899, 0.947], [2.4, 0.899, 0.918], [3, 0.794, 0.937], [3.5, 0.795, 0.888], [3.9, 0.73, 0.94], [4.2, 0.623, 0.875], [4.5, 0.473, 0.666]],
-		"gh": [0.835, 2.655, 1.555, 2.325, 0.859, 1.104, 0.744, 0.545],
+		"body": [[0, 0.946, 0.829], [0.1, 0.962, 0.906], [0.3, 0.977, 0.957], [0.7, 0.971, 0.999], [1.2, 0.828, 0.998], [1.8, 0.828, 0.954], [2.4, 0.828, 0.928], [3, 0.828, 1.006], [3.5, 0.785, 0.99], [3.9, 0.785, 0.994], [4.2, 0.723, 0.971], [4.764, 0.469, 0.686]],
+		"gh": [0.762, 3.052, 1.672, 2.424, 0.788, 1.175, 0.78, 0.54],
 		"pillars": [[0, 0.28], [0.5, 0.54], [0.93, 1]],
 		"rim_frac": 0.7,
-		"tyre": [0.27, 0.27],
-		"wheel": [0.35, 0.87, 3.52],
-		"wheel_x": [0.87, 0.835],
+		"tyre": [0.289, 0.289],
+		"wheel": [0.35, 1.002, 3.762],
+		"wheel_x": [0.835, 0.84],
 		"plate_y": 0.5,
 		"badge_y": 0.63,
-		"eye_back": 1.49,
-		"eye_y": 0.828,
+		"eye_back": 1.37,
+		"eye_y": 1.005,
 		"dash_drop": 0.17,
-		"dash_hw": 0.5,
-		"ws_base_hw": 0.47,
-		"mirror_d": 2.28},
+		"dash_hw": 0.59,
+		"ws_base_hw": 0.56,
+		"mirror_d": 2.37,
+		"parts": "res://assets/models/car_static_parts/",
+		"paint_pbr": [0.4, 0.36, 1, 0.03],
+		"back": "#8e8f8c",
+		"eye": [-0.37, 0.93, -2.052],
+		"plate_z": 0},
 	"marshal": {
 		"mesh": "res://assets/models/car_marshal.mesh",
 		"mesh_lq": "res://assets/models/car_marshal_lq.mesh",
-		"body": [[0, 0.942, 0.781], [0.1, 0.99, 0.873], [0.3, 1.007, 0.926], [0.7, 1.111, 0.993], [1.2, 1.071, 1], [1.8, 1.071, 0.961], [2.4, 1.071, 0.951], [3, 1.119, 0.949], [3.5, 0.901, 0.985], [3.9, 0.843, 0.966], [4.2, 0.789, 0.96], [4.765, 0.61, 0.704]],
-		"gh": [0.75, 2.975, 1.35, 2.425, 1.031, 1.398, 0.951, 0.556],
+		"body": [[0, 1.045, 0.902], [0.1, 1.084, 0.935], [0.3, 1.085, 0.95], [0.7, 0.963, 0.982], [1.2, 0.963, 0.998], [1.8, 0.963, 0.985], [2.4, 0.963, 0.984], [3, 0.963, 0.984], [3.5, 0.96, 0.986], [3.9, 0.94, 0.998], [4.2, 0.928, 0.98], [5.311, 0.823, 0.402]],
+		"gh": [0.591, 3.051, 1.418, 1.674, 0.923, 1.565, 0.853, 0.209],
 		"pillars": [[0, 0.28], [0.5, 0.54], [0.93, 1]],
 		"rim_frac": 0.7,
-		"tyre": [0.245, 0.245],
-		"wheel": [0.35, 1.035, 3.885],
-		"wheel_x": [0.815, 0.8],
-		"plate_y": 0.62,
+		"tyre": [0.24, 0.24],
+		"wheel": [0.345, 1.091, 4.131],
+		"wheel_x": [0.8, 0.8],
+		"plate_y": 0.64,
 		"badge_y": 0.74,
 		"eye_back": 1.3,
-		"eye_y": 1.228,
+		"eye_y": 1.283,
 		"dash_drop": 0,
-		"dash_hw": 0.53,
-		"ws_base_hw": 0.5,
-		"mirror_d": 2.38,
+		"dash_hw": 0.65,
+		"ws_base_hw": 0.62,
+		"mirror_d": 1.62,
 		"parts": "res://assets/models/car_marshal_parts/",
-		"paint_pbr": [0.6, 0.24, 0, 0]},
+		"paint_pbr": [0.4, 0.36, 1, 0.03],
+		"back": "#2a2b2e",
+		"eye": [-0.37, 1.14, -2.091],
+		"plate_z": -0.029},
 	"lastexit": {
 		"mesh": "res://assets/models/car_lastexit.mesh",
 		"mesh_lq": "res://assets/models/car_lastexit_lq.mesh",
-		"body": [[0, 0.814, 0.813], [0.1, 0.856, 0.923], [0.3, 0.874, 0.965], [0.7, 0.917, 0.996], [1.2, 0.899, 1], [1.8, 0.899, 0.947], [2.4, 0.899, 0.92], [3, 0.813, 0.931], [3.5, 0.795, 0.888], [3.9, 0.735, 0.94], [4.2, 0.623, 0.875], [4.515, 0.473, 0.666]],
-		"gh": [0.85, 2.67, 1.57, 2.34, 0.859, 1.104, 0.744, 0.545],
+		"body": [[0, 0.93, 0.853], [0.1, 0.96, 0.927], [0.3, 1.129, 0.959], [0.7, 0.969, 0.994], [1.2, 0.805, 0.998], [1.8, 0.805, 0.957], [2.4, 0.805, 0.913], [3, 0.805, 1.039], [3.5, 0.757, 0.97], [3.9, 0.762, 0.979], [4.2, 0.684, 0.968], [4.873, 0.424, 0.761]],
+		"gh": [0.821, 3.131, 0.247, 2.261, 0.765, 1.174, 0.766, 0.883],
 		"pillars": [[0, 0.28], [0.5, 0.54], [0.93, 1]],
 		"rim_frac": 0.7,
-		"tyre": [0.27, 0.27],
-		"wheel": [0.35, 0.885, 3.535],
-		"wheel_x": [0.87, 0.835],
+		"tyre": [0.304, 0.304],
+		"wheel": [0.353, 1.071, 3.801],
+		"wheel_x": [0.855, 0.87],
 		"plate_y": 0.5,
 		"badge_y": 0.63,
-		"eye_back": 1.49,
-		"eye_y": 0.828,
+		"eye_back": 1.37,
+		"eye_y": 1.004,
 		"dash_drop": 0.17,
-		"dash_hw": 0.5,
-		"ws_base_hw": 0.47,
-		"mirror_d": 2.29,
+		"dash_hw": 0.63,
+		"ws_base_hw": 0.59,
+		"mirror_d": 2.21,
 		"parts": "res://assets/models/car_lastexit_parts/",
-		"paint_pbr": [0.6, 0.24, 0, 0]},
+		"paint_pbr": [0.4, 0.36, 1, 0.03],
+		"back": "#141416",
+		"eye": [-0.37, 0.9, -2.161]},
 	"vanta": {
 		"mesh": "res://assets/models/car_vanta.mesh",
 		"mesh_lq": "res://assets/models/car_vanta_lq.mesh",
-		"body": [[0, 0.942, 0.781], [0.1, 0.99, 0.873], [0.3, 1.007, 0.926], [0.7, 1.111, 0.993], [1.2, 1.072, 1], [1.8, 1.072, 0.961], [2.4, 1.072, 0.951], [3, 1.119, 0.949], [3.5, 0.901, 0.985], [3.9, 0.843, 0.966], [4.2, 0.789, 0.96], [4.765, 0.61, 0.704]],
-		"gh": [0.75, 2.975, 1.35, 2.425, 1.032, 1.398, 0.914, 0.556],
+		"body": [[0, 0.952, 0.835], [0.1, 1.022, 0.898], [0.3, 0.992, 0.937], [0.7, 0.856, 0.981], [1.2, 0.856, 0.992], [1.8, 0.856, 0.958], [2.4, 0.856, 0.953], [3, 0.856, 1.078], [3.5, 0.839, 0.986], [3.9, 0.829, 0.992], [4.2, 0.799, 0.991], [4.762, 0.688, 0.852]],
+		"gh": [0.482, 3.04, 1.15, 2.23, 0.816, 1.42, 0.86, 0.597],
 		"pillars": [[0, 0.28], [0.5, 0.54], [0.93, 1]],
 		"rim_frac": 0.7,
-		"tyre": [0.245, 0.245],
-		"wheel": [0.35, 1.035, 3.885],
-		"wheel_x": [0.815, 0.8],
-		"plate_y": 0.62,
+		"tyre": [0.25, 0.25],
+		"wheel": [0.332, 1.05, 3.9],
+		"wheel_x": [0.785, 0.79],
+		"plate_y": 0.6,
 		"badge_y": 0.74,
 		"eye_back": 1.3,
-		"eye_y": 1.228,
+		"eye_y": 1.176,
 		"dash_drop": 0,
-		"dash_hw": 0.53,
-		"ws_base_hw": 0.5,
-		"mirror_d": 2.38},
+		"dash_hw": 0.64,
+		"ws_base_hw": 0.6,
+		"mirror_d": 2.18,
+		"parts": "res://assets/models/car_vanta_parts/",
+		"paint_pbr": [0.4, 0.36, 1, 0.03],
+		"back": "#1b1c1f",
+		"eye": [-0.37, 1.07, -1.95],
+		"plate_z": -0.038},
 	"suv": {
 		"mesh": "res://assets/models/car_traffic_suv.mesh",
 		"mesh_lq": "res://assets/models/car_traffic_suv_lq.mesh",
-		"body": [[0, 1.208, 0.811], [0.1, 1.308, 0.917], [0.3, 1.308, 0.954], [0.7, 1.308, 0.997], [1.2, 1.308, 1], [1.8, 1.308, 0.972], [2.4, 1.308, 0.965], [3, 1.33, 0.967], [3.5, 1.083, 0.991], [3.9, 1.037, 0.979], [4.2, 0.992, 0.971], [4.765, 0.826, 0.726]],
-		"gh": [0.085, 2.9, 0.365, 2.185, 1.268, 1.77, 0.931, 0.67],
+		"body": [[0, 1.105, 0.9], [0.1, 1.05, 0.938], [0.3, 1.05, 0.977], [0.7, 1.05, 0.991], [1.2, 1.05, 0.998], [1.8, 1.05, 0.995], [2.4, 1.05, 0.994], [3, 1.05, 0.994], [3.5, 1.045, 1], [3.9, 1.013, 0.998], [4.2, 0.995, 0.989], [4.644, 0.92, 0.899]],
+		"gh": [0.082, 3.022, 0.492, 2.122, 1.01, 1.707, 0.874, 0.617],
 		"pillars": [[0, 0.28], [0.5, 0.54], [0.93, 1]],
 		"rim_frac": 0.7,
-		"tyre": [0.255, 0.255],
-		"wheel": [0.392, 0.965, 3.815],
-		"wheel_x": [0.84, 0.83],
-		"plate_y": 0.7,
+		"tyre": [0.22, 0.22],
+		"wheel": [0.36, 1.022, 3.722],
+		"wheel_x": [0.8, 0.8],
+		"plate_y": 0.8,
 		"badge_y": 0.95,
 		"eye_back": 1.3,
-		"eye_y": 1.6,
+		"eye_y": 1.37,
 		"dash_drop": 0,
-		"dash_hw": 0.62,
-		"ws_base_hw": 0.59,
-		"mirror_d": 2.14,
+		"dash_hw": 0.68,
+		"ws_base_hw": 0.64,
+		"mirror_d": 2.07,
+		"parts": "res://assets/models/car_traffic_suv_parts/",
+		"paint_pbr": [0.4, 0.36, 1, 0.03],
+		"back": "#3a3c40",
+		"eye": [-0.37, 1.3, -1.972],
+		"plate_z": -0.02,
 		"lod_near": 18,
 		"no_cabin": false},
 	"van": {
 		"mesh": "res://assets/models/car_traffic_van.mesh",
 		"mesh_lq": "res://assets/models/car_traffic_van_lq.mesh",
-		"body": [[0, 2.15, 0.922], [0.1, 1.39, 0.961], [0.3, 1.39, 0.978], [0.7, 1.39, 0.999], [1.2, 1.39, 0.998], [1.8, 1.39, 0.978], [2.4, 1.39, 0.978], [3, 1.39, 0.978], [3.5, 1.39, 0.977], [3.9, 1.39, 0.991], [4.2, 1.269, 0.992], [5.215, 0.867, 0.769]],
-		"gh": [0.033, 4.04, 0.075, 3.17, 1.35, 2.25, 0.948, 0.849],
+		"body": [[0, 1.607, 0.973], [0.1, 2.381, 0.98], [0.3, 2.397, 0.991], [0.7, 2.4, 0.993], [1.2, 2.4, 1], [1.8, 2.398, 0.994], [2.4, 2.395, 0.993], [3, 2.388, 0.993], [3.5, 1.03, 0.993], [3.9, 1.03, 0.993], [4.2, 1.03, 1], [5.427, 0.963, 0.899]],
+		"gh": [3.347, 4.412, 0.11, 3.242, 0.99, 2.4, 0.948, 0.74],
 		"pillars": [[0, 0.28], [0.5, 0.54], [0.93, 1]],
 		"rim_frac": 0.7,
-		"tyre": [0.235, 0.235],
-		"wheel": [0.385, 1.165, 4.415],
-		"wheel_x": [0.845, 0.845],
-		"plate_y": 0.7,
+		"tyre": [0.21, 0.21],
+		"wheel": [0.36, 1.172, 4.472],
+		"wheel_x": [0.86, 0.86],
+		"plate_y": 0.62,
 		"badge_y": 0.95,
 		"eye_back": 1.3,
-		"eye_y": 1.71,
+		"eye_y": 0.82,
 		"dash_drop": 0,
 		"dash_hw": 0.7,
 		"ws_base_hw": 0.7,
-		"mirror_d": 3.12,
+		"mirror_d": 3.19,
+		"parts": "res://assets/models/car_traffic_van_parts/",
+		"paint_pbr": [0, 0.42, 1, 0.03],
+		"back": "#3a3b3e",
+		"eye": [-0.42, 1.52, -3.432],
+		"plate_z": -0.02,
+		"lod_near": 18,
+		"no_cabin": false},
+	"sedan": {
+		"mesh": "res://assets/models/car_traffic_sedan.mesh",
+		"mesh_lq": "res://assets/models/car_traffic_sedan_lq.mesh",
+		"body": [[0, 1.043, 0.891], [0.1, 1.05, 0.913], [0.3, 1.046, 0.939], [0.7, 0.946, 0.968], [1.2, 0.946, 0.979], [1.8, 0.946, 0.968], [2.4, 0.946, 0.964], [3, 0.96, 0.966], [3.5, 0.904, 0.995], [3.9, 0.876, 0.988], [4.2, 0.841, 0.995], [4.909, 0.766, 0.886]],
+		"gh": [0.537, 2.847, 1.097, 2.187, 0.906, 1.44, 0.844, 0.622],
+		"pillars": [[0, 0.28], [0.5, 0.54], [0.93, 1]],
+		"rim_frac": 0.7,
+		"tyre": [0.21, 0.21],
+		"wheel": [0.334, 1.062, 3.887],
+		"wheel_x": [0.8, 0.8],
+		"plate_y": 0.62,
+		"badge_y": 0.95,
+		"eye_back": 1.3,
+		"eye_y": 1.266,
+		"dash_drop": 0,
+		"dash_hw": 0.64,
+		"ws_base_hw": 0.6,
+		"mirror_d": 2.14,
+		"parts": "res://assets/models/car_traffic_sedan_parts/",
+		"paint_pbr": [0.4, 0.36, 1, 0.03],
+		"back": "#3a3631",
+		"eye": [-0.37, 1.1, -1.867],
+		"plate_z": -0.02,
+		"lod_near": 18,
+		"no_cabin": false},
+	"hatch": {
+		"mesh": "res://assets/models/car_traffic_hatch.mesh",
+		"mesh_lq": "res://assets/models/car_traffic_hatch_lq.mesh",
+		"body": [[0, 0.986, 0.904], [0.1, 1.049, 0.939], [0.3, 0.928, 0.971], [0.7, 0.928, 0.986], [1.2, 0.928, 0.973], [1.8, 0.928, 0.97], [2.4, 0.928, 0.973], [3, 0.882, 1], [3.5, 0.83, 0.995], [3.9, 0.801, 0.954], [4.077, 0.762, 0.889]],
+		"gh": [0.105, 2.505, 0.555, 1.785, 0.888, 1.455, 0.847, 0.632],
+		"pillars": [[0, 0.28], [0.5, 0.54], [0.93, 1]],
+		"rim_frac": 0.7,
+		"tyre": [0.191, 0.191],
+		"wheel": [0.31, 0.703, 3.255],
+		"wheel_x": [0.76, 0.762],
+		"plate_y": 0.7,
+		"badge_y": 0.95,
+		"eye_back": 1.3,
+		"eye_y": 1.248,
+		"dash_drop": 0,
+		"dash_hw": 0.6,
+		"ws_base_hw": 0.57,
+		"mirror_d": 1.73,
+		"parts": "res://assets/models/car_traffic_hatch_parts/",
+		"paint_pbr": [0, 0.42, 1, 0.03],
+		"back": "#2f3033",
+		"eye": [-0.37, 1.12, -1.505],
+		"plate_z": -0.02,
 		"lod_near": 18,
 		"no_cabin": false},
 	"truck": {
@@ -238,16 +423,6 @@ const PROFILES := {
 	# crease_h / tumble = shoulder crease height and how far the side leans in
 	# above it; sharp = crisp crease; grille = "frame" (chrome-framed),
 	# "none" (mid-engine cars breathe through the bumper), "bar" (slim slot).
-	"hatch": {
-		"mesh": "res://assets/models/cars/hatch.mesh", "mesh_lq": "res://assets/models/cars/hatch_lq.mesh",
-		"body": [[0.0, 0.84, 0.88], [0.08, 0.92, 0.95], [0.35, 0.97, 0.99], [1.2, 0.98, 1.0], [2.4, 0.95, 1.0], [3.15, 0.89, 1.0], [3.62, 0.84, 0.98], [3.9, 0.76, 0.93], [4.0, 0.66, 0.88]],
-		"gh": [0.12, 3.12, 0.64, 2.22, 0.97, 1.43, 0.92, 0.74], "pillars": [[0.0, 0.24], [0.52, 0.57], [0.93, 1.0]],
-		"roof_drop": 0.08, "rim_frac": 0.62, "tyre": [0.215, 0.215], "head": [-0.17, -0.05, 0.32], "tail": [-0.27, -0.08, 0.55], "wheel": [0.33, 0.78, 3.28], "exhaust": 1, "corner": [0.18, 0.3], "flare": [0.02, 0.02], "crease_h": 0.66},
-	"sedan": {
-		"mesh": "res://assets/models/cars/sedan.mesh", "mesh_lq": "res://assets/models/cars/sedan_lq.mesh",
-		"body": [[0.0, 0.86, 0.9], [0.1, 0.93, 0.96], [0.5, 0.98, 1.0], [1.2, 0.99, 1.0], [3.0, 0.96, 1.0], [3.7, 0.9, 1.0], [4.3, 0.84, 0.97], [4.6, 0.75, 0.92], [4.7, 0.66, 0.88]],
-		"gh": [0.95, 3.56, 1.56, 2.76, 0.98, 1.41, 0.93, 0.78], "pillars": [[0.0, 0.14], [0.49, 0.53], [0.93, 1.0]],
-		"roof_drop": 0.03, "rim_frac": 0.66, "tyre": [0.235, 0.235], "head": [-0.16, -0.05, 0.3], "tail": [-0.22, -0.07, 0.48], "wheel": [0.335, 0.98, 3.8], "exhaust": 2, "corner": [0.2, 0.3], "flare": [0.025, 0.02], "crease_h": 0.68},
 	# compact performance saloon after the 2007 E90 M3: 4.58 m long, 1.82 m wide,
 	# 2.76 m wheelbase, short rear and front overhangs, long bonnet, high short
 	# boot, kinked C-pillar, flared wings, quad exhausts
@@ -293,33 +468,6 @@ const PROFILES := {
 		"gh": [1.65, 3.72, 2.3, 3.1, 0.78, 1.13, 0.84, 0.62], "pillars": [[0.0, 0.3], [0.9, 1.0]],
 		"roof_drop": 0.05, "rim_frac": 0.73, "tyre": [0.335, 0.275], "head": [-0.085, -0.03, 0.42], "projectors": 0, "tail": [-0.1, -0.045, 0.52], "wheel": [0.36, 0.95, 3.72], "exhaust": 4, "spoiler": "wing", "diffuser": true, "grille": "none",
 		"corner": [0.3, 0.46], "flare": [0.07, 0.06], "fender": [0.06, 0.085], "crease_h": 0.55, "tumble": 0.11},
-	# starter coupe: body from an imported model (assets/models/starter_coupe.mesh,
-	# split into paint, glass and lamps); this profile only shapes its cabin
-	"coupe": {
-		"mesh": "res://assets/models/starter_coupe.mesh",
-		"body": [[0.0, 0.88, 0.84], [0.25, 0.93, 0.95], [0.6, 0.97, 1.0], [2.6, 0.94, 1.0], [3.0, 0.86, 0.98], [3.5, 0.8, 0.95], [4.0, 0.7, 0.9], [4.3, 0.6, 0.8]],
-		"gh": [0.62, 2.83, 1.45, 2.1, 0.93, 1.2, 0.74, 0.54], "pillars": [[0.0, 0.3], [0.9, 1.0]],
-		"rim_frac": 0.68, "tyre": [0.245, 0.245], "wheel": [0.345, 0.82, 3.44], "wheel_x": [0.778, 0.752], "badge_y": 0.7, "eye_back": 1.3, "dash_drop": 0.17, "dash_hw": 0.52, "ws_base_hw": 0.4, "mirror_d": 2.3},
-	# hot hatch, from an imported model (assets/models/hatchback.mesh)
-	"hot_hatch": {
-		"mesh": "res://assets/models/hatchback.mesh",
-		"body": [[0.0, 1.0, 0.86], [0.25, 1.03, 0.95], [0.6, 1.04, 1.0], [2.4, 0.97, 1.0], [2.75, 0.95, 1.0], [3.0, 0.9, 0.99], [3.5, 0.83, 0.97], [4.0, 0.71, 0.9], [4.25, 0.6, 0.75]],
-		"gh": [0.1, 2.72, 0.5, 2.15, 1.0, 1.33, 0.78, 0.56], "pillars": [[0.0, 0.3], [0.9, 1.0]],
-		"rim_frac": 0.7, "tyre": [0.246, 0.246], "wheel": [0.35, 0.75, 3.39], "wheel_x": [0.815, 0.8], "badge_y": 0.74, "plate_y": 0.62,
-		"dash_drop": 0.12, "dash_hw": 0.6, "ws_base_hw": 0.5, "mirror_d": 2.2},
-	# sports saloon, from an imported model (assets/models/sport_sedan.mesh)
-	"sport_sedan": {
-		"mesh": "res://assets/models/sport_sedan.mesh",
-		"body": [[0.0, 0.96, 0.84], [0.25, 1.0, 0.93], [0.6, 1.02, 0.98], [1.2, 1.0, 1.0], [3.0, 0.97, 1.0], [3.3, 0.95, 1.0], [3.6, 0.89, 0.99], [4.0, 0.82, 0.97], [4.5, 0.72, 0.92], [4.75, 0.6, 0.8]],
-		"gh": [0.72, 3.2, 1.35, 2.5, 0.99, 1.32, 0.78, 0.56], "pillars": [[0.0, 0.25], [0.9, 1.0]],
-		"rim_frac": 0.7, "tyre": [0.246, 0.246], "wheel": [0.35, 1.02, 3.87], "wheel_x": [0.815, 0.8], "badge_y": 0.74, "plate_y": 0.62,
-		"dash_drop": 0.13, "dash_hw": 0.55, "ws_base_hw": 0.42, "mirror_d": 2.45},
-	# compact hatchback coupe, also from an imported model (assets/models/compact_coupe.mesh)
-	"compact": {
-		"mesh": "res://assets/models/compact_coupe.mesh",
-		"body": [[0.0, 0.96, 0.88], [0.25, 1.05, 0.97], [0.5, 1.0, 1.0], [2.4, 0.95, 1.0], [2.75, 0.87, 0.98], [3.25, 0.8, 0.96], [3.75, 0.7, 0.92], [4.05, 0.6, 0.82]],
-		"gh": [0.35, 2.66, 0.9, 1.85, 0.97, 1.26, 0.74, 0.54], "pillars": [[0.0, 0.3], [0.9, 1.0]],
-		"rim_frac": 0.68, "tyre": [0.234, 0.234], "wheel": [0.335, 0.71, 3.21], "wheel_x": [0.768, 0.752], "badge_y": 0.75, "eye_back": 1.2, "dash_drop": 0.17, "dash_hw": 0.52, "ws_base_hw": 0.4, "mirror_d": 2.05},
 }
 
 
@@ -369,7 +517,12 @@ static var _glass_cracked_shader: Shader
 static var _paint_shader_2s: Shader
 
 
-static func _car_shader_mat(key: String, params: Dictionary, two_sided := false) -> ShaderMaterial:
+static func _car_shader_mat(key: String, params: Dictionary, two_sided := false, back := Color(0, 0, 0, 0)) -> ShaderMaterial:
+	if back.a > 0.0:   # (the body of a car with its own interior: the inside of it, seen through the glass, in the lining's colour)
+		key += "|back" + back.to_html(false)
+		two_sided = true
+		params = params.duplicate()
+		params["back_color"] = Color(back, 1.0)
 	if _mats.has(key):
 		return _mats[key]
 	if _paint_shader == null:
@@ -410,7 +563,8 @@ static func pearl_shift(c: Color) -> Color:
 
 ## Paint in a colour and a finish (FINISH_LOOKS): gloss, semi-gloss, matte, metallic, pearlescent, candy or chrome.
 ## A pearlescent paint has two colours: `c` and the one under it that it turns to (`under`; with no alpha, one is made from c).
-static func paint(c: Color, finish := "gloss", under := Color(0, 0, 0, 0)) -> Material:
+## `back`: the colour of the inside of a body with its own interior (see _car_shader_mat).
+static func paint(c: Color, finish := "gloss", under := Color(0, 0, 0, 0), back := Color(0, 0, 0, 0)) -> Material:
 	var look: Dictionary = FINISH_LOOKS.get(finish, FINISH_LOOKS.gloss)
 	var params := {"base_color": c.darkened(0.04)}
 	params.merge(look)
@@ -427,7 +581,7 @@ static func paint(c: Color, finish := "gloss", under := Color(0, 0, 0, 0)) -> Ma
 		params["base_color"] = c.lightened(0.08)  # (the metal in the paint takes some of the body colour out of it)
 	elif finish == "matte":
 		params["base_color"] = c.darkened(0.14)  # (flat paint is duller than the same colour with a gloss over it)
-	return _car_shader_mat("paint|%s|%s|%s" % [c.to_html(), finish if FINISH_LOOKS.has(finish) else "gloss", key_under], params)
+	return _car_shader_mat("paint|%s|%s|%s" % [c.to_html(), finish if FINISH_LOOKS.has(finish) else "gloss", key_under], params, false, back)
 
 
 ## Polished chrome: a mirror of the surroundings.
@@ -1269,7 +1423,8 @@ static func _cpe2_mesh(path: String) -> ArrayMesh:
 
 ## The material of a surface whose name carries a model's own material ("gloss~0b0c0e~0.00~0.42": its colour, how metallic and
 ## how rough it is), in the car paint shader so that it reflects the sky as the rest of the car does. null for a plain name.
-static func material_of(full: String) -> Material:
+## `back`: the colour of the inside of a body with its own interior, for the body's materials (see _car_shader_mat).
+static func material_of(full: String, back := Color(0, 0, 0, 0)) -> Material:
 	var parts := full.split("~")
 	if parts.size() < 4:
 		return null
@@ -1303,7 +1458,7 @@ static func material_of(full: String) -> Material:
 	# everything else in the car paint shader, drawn from both sides as the model's materials are, with its clear coat
 	return _car_shader_mat(mkey, {"base_color": col, "metallic": metal, "roughness": rough, "coat": coat, "coat_roughness": coat_r,
 		"reflect_amount": lerpf(maxf(clampf((0.6 - rough) * 1.5, 0.04, 0.9), coat * 0.8), 1.0, metal),
-		"reflect_f0": lerpf(0.04, 0.75, metal) * (1.0 - rough * 0.5), "metal_tint": clampf(metal * 2.0, 0.0, 1.0)}, true)   # (a metal's reflections take its colour: dark metal stays dark)
+		"reflect_f0": lerpf(0.04, 0.75, metal) * (1.0 - rough * 0.5), "metal_tint": clampf(metal * 2.0, 0.0, 1.0)}, true, back)   # (a metal's reflections take its colour: dark metal stays dark)
 
 
 ## Put the materials on a mesh whose surfaces are named by their material.
@@ -1894,8 +2049,10 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a"), style 
 	_body_mi = body
 	var M := {}
 	if kit.has("surfaces"):
+		# a model with its own interior: the inside of its body, seen through the glass, is drawn in the lining's colour
+		var back := Color(String(PROFILES[shape_id].back)) if PROFILES.get(shape_id, {}).has("back") else Color(0, 0, 0, 0)
 		M = {
-			"paint": paint(color, String(style.get("finish", "gloss")), Color(String(style.pearl)) if String(style.get("pearl", "")) != "" else Color(0, 0, 0, 0)),
+			"paint": paint(color, String(style.get("finish", "gloss")), Color(String(style.pearl)) if String(style.get("pearl", "")) != "" else Color(0, 0, 0, 0), back),
 			"glass": _glass(), "glass_solid": _glass_solid(),
 			"dark": mat(Color("#18191b"), 0.0, 0.6), "gloss": _gloss(), "under": mat(Color("#0b0c0e"), 0.0, 0.95),
 			"chrome": _chrome(), "plate": mat(Color("#e8e6dc"), 0.0, 0.6),
@@ -1907,7 +2064,7 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a"), style 
 			# the factory finish of a model that says what its paint is: as the model has it
 			var pb: Array = pr_look.paint_pbr
 			M["paint"] = material_of("paint~%s~%.2f~%.2f~%.2f~%.2f~000000~0.0" % [color.to_html(false), float(pb[0]), float(pb[1]),
-				float(pb[2]) if pb.size() > 2 else 0.0, float(pb[3]) if pb.size() > 3 else 0.05])
+				float(pb[2]) if pb.size() > 2 else 0.0, float(pb[3]) if pb.size() > 3 else 0.05], back)
 		M["cargo"] = M.paint
 		if kit.get("truck", false):
 			M["paint"] = paint(cab_color)  # tractor unit; the box keeps the main colour
@@ -1915,7 +2072,7 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a"), style 
 		_surface_names = names
 		var full: Array = kit.get("mat_names", names)
 		for i in names.size():
-			var own := material_of(String(full[i]))   # (a part in the model's own material)
+			var own := material_of(String(full[i]), back)   # (a part in the model's own material)
 			body.set_surface_override_material(i, own if own else M[names[i]])
 		# the light version of the body takes over beyond LOD_NEAR
 		var kit_lq := _kit(shape_id, style, true)
@@ -1926,7 +2083,9 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a"), style 
 		_surface_names_far = names_lq
 		var full_lq: Array = kit_lq.get("mat_names", names_lq)
 		for i in names_lq.size():
-			var own_lq := material_of(String(full_lq[i]))
+			var own_lq := material_of(String(full_lq[i]), back)
+			if back.a > 0.0 and String(names_lq[i]) == "glass":
+				own_lq = _glass_solid()   # (a model's interior is drawn only as far as its detailed body: past that the glass is dark)
 			far.set_surface_override_material(i, own_lq if own_lq else M[names_lq[i]])
 		var near: float = kit.get("lod_near", LOD_NEAR)  # detailed imported/forged bodies hand over sooner
 		_lod(body, 0.0, near)
@@ -1950,6 +2109,10 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a"), style 
 			_cabin_mi.material_override = mat(Color("#222327"), 0.0, 0.85)
 		_cabin_mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		_body.add_child(_cabin_mi)
+		if _own_cabin:
+			# only as far as the detailed body: the light one past it is too rough to keep the interior inside it (its
+			# vertices are merged on a 6 cm grid), and its glass is dark there (see above). tools/interior_check.py
+			_lod(_cabin_mi, 0.0, float(kit.get("lod_near", LOD_NEAR)))
 	if own_parts.has("steer"):   # ...and its steering wheel, which turns with the car's
 		_own_steer = MeshInstance3D.new()
 		_own_steer.mesh = own_parts.steer[0]
@@ -1958,7 +2121,7 @@ func build(shape_id: String, color: Color, cab_color := Color("#b5322a"), style 
 		_own_steer.transform = _own_steer_base
 		_own_steer.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		_body.add_child(_own_steer)
-		_lod(_own_steer, 0.0, LOD_NEAR)
+		_lod(_own_steer, 0.0, float(kit.get("lod_near", LOD_NEAR)))   # (with the interior)
 
 	_tail_own = material_of(String(kit.get("tail_name", ""))) as StandardMaterial3D
 	if _tail_own:   # the model's own tail lamps, and the same lit harder when braking
@@ -3062,6 +3225,9 @@ func cockpit_eye() -> Vector3:
 	if _eye_cache != Vector3.INF:
 		return _eye_cache
 	var pr: Dictionary = PROFILES.get(_shape_id, PROFILES.sedan)
+	if pr.has("eye") and _own_cabin:   # (a model with its own interior: where its seat and steering wheel put the driver's eyes)
+		_eye_cache = Vector3(float(pr.eye[0]), float(pr.eye[1]), float(pr.eye[2]))
+		return _eye_cache
 	if not pr.has("gh"):
 		return Vector3(-0.42, 1.72, -3.95)
 	var g: Array = pr.gh
@@ -3186,8 +3352,8 @@ const CABINS := {
 		"dials": ["#ff3b30", "#e6e6e6", "#ff3b30"], "seats": "bucket", "accent": "#d0202a"},
 	"compact": {"vents": "round", "strip_kind": "paint", "leather": "#1c1c1e", "insert": "#d9a21b", "stitch": "#f5c52e", "ambient": "#f5c52e", "strip": "#d9a21b", "wheel": "flat", "marker": "#f5c52e", "screen": "wide",
 		"dials": ["#f5c52e", "#f5c52e", "#ffffff"], "seats": "bucket", "accent": "#f5c52e"},
-	"coupe": {"vents": "rect", "strip_kind": "brushed", "bezel": "chrome", "leather": "#8a6038", "insert": "#a67848", "stitch": "#e8d8b8", "ambient": "#ffe2b0", "strip": "#b9bfc5", "trim": "#4a382a", "carpet": "#2a221c", "wheel": "round", "spokes": [0.0, 3.14159], "hub": "round",
-		"screen": "wide", "dials": ["#e8d8b8", "#e8d8b8", "#ff7a2a"], "two_tone": true, "liner": "#6a6258"},
+	"coupe": {"vents": "round", "strip_kind": "brushed", "leather": "#1c1c1e", "insert": "#3a3b3f", "stitch": "#c41a1a", "ambient": "#ff3b30", "strip": "#4a4e55", "trim": "#232427", "wheel": "round", "marker": "#c41a1a",
+		"screen": "wide", "dials": ["#e6e6e6", "#e6e6e6", "#ff3b30"], "seats": "bucket", "liner": "#2a2b2e", "accent": "#c41a1a"},
 	"hatch": {"vents": "rect", "strip_kind": "paint", "leather": "#4a4e55", "insert": "#6a7078", "stitch": "#2aa198", "ambient": "#2aa198", "strip": "#5a5f66", "trim": "#3a3d42", "dash": "#25272b", "wheel": "round", "spokes": [0.35, 2.79, 1.5708, 1.5708],
 		"screen": "retro", "dials": ["#e6e6e6", "#e6e6e6", "#ff4a2a"], "liner": "#7a7c80"},
 	"sedan": {"vents": "rect", "strip_kind": "wood", "bezel": "chrome", "leather": "#b8a488", "insert": "#c8b69a", "stitch": "#8a7458", "ambient": "#fff2d8", "strip": "#6b4a2e", "trim": "#8a7860", "carpet": "#3a3228", "wheel": "round", "spokes": [0.3, 2.84, 1.2, 1.94], "hub": "round",
@@ -3517,7 +3683,9 @@ func _build_interior() -> void:
 
 	# the roof, pillars and door tops, seen from the driver's seat
 	var liner := Color(String(cab.get("liner", "#5c5e63")))
-	_inner = _inner_shell(liner)
+	# (a model with its own interior draws the inside of its body itself, in its lining's colour: see the paint shader's
+	# back_color. The prepared shell is for the older models split by their texture, whose window edges are ragged.)
+	_inner = null if pr.has("back") else _inner_shell(liner)
 	if _inner:
 		_inner.visible = false
 		_body.add_child(_inner)

@@ -55,9 +55,9 @@ func heading() -> Vector2:
 	return Vector2(sin(yaw), cos(yaw))
 
 
-## The world outline of the car (turned about its middle).
-func outline() -> Array[PackedVector2Array]:
-	return shape.world(pos.x, pos.y - shape.length / 2.0, yaw, shape.length / 2.0)
+## The world outline of the car (turned about its middle); without the door mirrors for the guardrails.
+func outline(with_mirrors := true) -> Array[PackedVector2Array]:
+	return shape.world(pos.x, pos.y - shape.length / 2.0, yaw, shape.length / 2.0, with_mirrors)
 
 
 ## Speed of whatever is at world point p (on the body).

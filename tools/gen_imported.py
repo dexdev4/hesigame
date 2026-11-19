@@ -11,12 +11,14 @@ ROOT = os.path.join(HERE, "..")
 
 # shape id -> profile json (the converted model's name)
 MANIFEST = {
+    "hot_hatch": "car_pulse", "sport_sedan": "car_vector", "compact": "car_hornet", "coupe": "car_comet",
     "kestrel": "car_kestrel", "bruiser": "car_bruiser", "copperhead": "car_copperhead",
     "halcyon": "car_halcyon", "static": "car_static",
     "marshal": "car_marshal", "lastexit": "car_lastexit", "vanta": "car_vanta",
-    "suv": "car_traffic_suv", "van": "car_traffic_van", "truck": "car_traffic_truck",
+    "suv": "car_traffic_suv", "van": "car_traffic_van", "sedan": "car_traffic_sedan", "hatch": "car_traffic_hatch",
+    "truck": "car_traffic_truck",
 }
-TRAFFIC = {"suv", "van", "truck"}
+TRAFFIC = {"suv", "van", "sedan", "hatch", "truck"}
 # bodies whose tail lamps run across the tail at the usual height of the name, and that have a pocket for the plate modelled in lower down
 TAIL_BAR = {"halcyon", "static", "lastexit"}
 FLAGS = {"van": {"van": True}, "truck": {"truck": True}}
@@ -57,6 +59,10 @@ def entry(sid, name):
         pr["parts"] = "res://assets/models/%s_parts/" % name   # (its own wheels, brake callipers, interior and steering wheel)
     if d.get("paint_pbr"):  # (the model's own paint: how metallic and rough its factory finish is)
         pr["paint_pbr"] = [round(v, 3) for v in d["paint_pbr"][1:]]   # metallic, roughness, clear coat, its roughness
+    if d.get("back"):   # (a model with its own interior: the colour of the inside of its body, seen through the glass)
+        pr["back"] = d["back"]
+    if d.get("eye"):    # (...and where its seat and steering wheel put the driver's eyes)
+        pr["eye"] = d["eye"]
     if d.get("plate"):  # (a model that has its own number plate: the game's goes where it is)
         pr["plate_y"] = d["plate"][0]
         pr["plate_z"] = d["plate"][1]
@@ -66,7 +72,8 @@ def entry(sid, name):
     if sid in TRAFFIC:
         pr["lod_near"] = 18.0
         pr["no_cabin"] = sid == "truck"
-        pr["plate_y"] = 0.82 if sid == "truck" else 0.7
+        if not d.get("plate"):   # (a model with its own plate keeps it where it is)
+            pr["plate_y"] = 0.82 if sid == "truck" else 0.7
         pr["badge_y"] = 0.95
         if sid == "truck":
             ax = d["axles"]

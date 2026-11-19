@@ -3,7 +3,9 @@ extends RefCounted
 ## A car's hit box: its outline seen from above (scripts/hulls.gd, made from the
 ## car models by tools/make_hulls.py), so a tapering nose, rounded tail corners
 ## and wheel-arch flares count and the empty corners of a plain rectangle do not.
-## The outline is one convex piece (two for the truck: its box and its cab).
+## The outline is one convex piece (two for the truck: its box and its cab), and
+## the door mirrors are two small pieces of their own: they stand out past the
+## body above the beltline, so they meet other cars but not the guardrails.
 ##
 ## Local coordinates: x across the car (+ right), y along it from the rear
 ## bumper forwards. "World" outlines are in road coordinates (x across the
@@ -16,12 +18,14 @@ extends RefCounted
 ## a crash knows where the cars touched as well as how far they overlap. That
 ## point is what makes an off-centre hit spin a car.
 
-const INSET := 0.05  # the outline is pulled in this far: a graze with the paint is not a crash
+const INSET := 0.015        # the outline is pulled in this far: it touches when the paint does, not a whisker before
+const MIRROR_INSET := 0.008
 
 static var _all := {}
 
 var id := ""
 var parts: Array[PackedVector2Array] = []
+var mirrors: Array[PackedVector2Array] = []
 var length := 4.5
 var width := 1.9
 var rear_axle := 0.9
@@ -52,19 +56,24 @@ func _init(shape_id := "sedan") -> void:
 			for i in range(0, flat.size(), 2):
 				poly.append(Vector2(float(flat[i]), float(flat[i + 1])))
 			parts.append(_inset(poly))
+		for flat: Array in h.get("mirrors", []):
+			var poly := PackedVector2Array()
+			for i in range(0, flat.size(), 2):
+				poly.append(Vector2(float(flat[i]), float(flat[i + 1])))
+			mirrors.append(_inset(poly, MIRROR_INSET))
 		rear_axle = float(h.axles[0])
 		front_axle = float(h.axles[1])
 		track = float(h.track)
 	k2 = (width * width + length * length) / 12.0
 	var r2 := 0.0
-	for part in parts:
+	for part in parts + mirrors:
 		for p in part:
 			r2 = maxf(r2, Vector2(p.x, p.y - length / 2.0).length_squared())
 	radius = sqrt(r2)
 
 
-## The outline moved in by INSET all round (corners mitred), counter-clockwise.
-static func _inset(poly: PackedVector2Array) -> PackedVector2Array:
+## The outline moved in by `by` all round (corners mitred), counter-clockwise.
+static func _inset(poly: PackedVector2Array, by := INSET) -> PackedVector2Array:
 	var n := poly.size()
 	var area := 0.0
 	for i in n:
@@ -81,7 +90,7 @@ static func _inset(poly: PackedVector2Array) -> PackedVector2Array:
 		var n1 := Vector2(e1.y, -e1.x)  # outward, for a counter-clockwise outline
 		var n2 := Vector2(e2.y, -e2.x)
 		var k := 1.0 + n1.dot(n2)
-		out.append(cur - (n1 + n2) * (INSET / maxf(k, 0.2)))
+		out.append(cur - (n1 + n2) * (by / maxf(k, 0.2)))
 	# very short edges can fold a corner back on itself: take the convex outline of what is left
 	var hull := Geometry2D.convex_hull(out)
 	if hull.size() > 1 and hull[0].is_equal_approx(hull[hull.size() - 1]):
@@ -96,11 +105,12 @@ static func _inset(poly: PackedVector2Array) -> PackedVector2Array:
 
 ## The outline in road coordinates. The pivot (the point `pivot` metres up the
 ## car from the rear bumper) is at (x, z + pivot) and the car is turned about it.
-func world(x: float, z: float, yaw: float, pivot := 0.0) -> Array[PackedVector2Array]:
+## With the door mirrors (for meeting other cars), or without (for the guardrails).
+func world(x: float, z: float, yaw: float, pivot := 0.0, with_mirrors := true) -> Array[PackedVector2Array]:
 	var s := sin(yaw)
 	var c := cos(yaw)
 	var out: Array[PackedVector2Array] = []
-	for part in parts:
+	for part in (parts + mirrors if with_mirrors else parts):
 		var q := PackedVector2Array()
 		q.resize(part.size())
 		for i in part.size():
@@ -186,20 +196,28 @@ static func _span_at(parts_w: Array[PackedVector2Array], y: float) -> Vector2:
 ## The gap across the road between two cars, as the driver sees it: the least
 ## sideways distance between their outlines along the stretch where they are
 ## side by side (negative: they overlap there). Cars nose to tail use the
-## nearest ends, so a close pass just ahead or behind still counts.
+## nearest ends, so a close pass just ahead or behind still counts. The outlines'
+## spans change straight between their corners, so the least gap is at one of the
+## corners in that stretch (or its ends), and only those are looked at: a door
+## mirror, 20 cm long, is never stepped over.
 static func lateral_gap(a: Array[PackedVector2Array], b: Array[PackedVector2Array]) -> float:
 	var ya := y_range(a)
 	var yb := y_range(b)
 	var lo := maxf(ya.x, yb.x)
 	var hi := minf(ya.y, yb.y)
 	var best := INF
-	var samples := 7
+	var ys := PackedFloat32Array()
 	if lo > hi:
-		samples = 1
-		lo = (ya.y + yb.x) * 0.5 if ya.y < yb.x else (yb.y + ya.x) * 0.5
-		hi = lo
-	for i in samples:
-		var y := lo if samples == 1 else lerpf(lo, hi, float(i) / float(samples - 1))
+		ys.append((ya.y + yb.x) * 0.5 if ya.y < yb.x else (yb.y + ya.x) * 0.5)
+	else:
+		ys.append(lo)
+		ys.append(hi)
+		for parts_w: Array[PackedVector2Array] in [a, b]:
+			for part in parts_w:
+				for p in part:
+					if p.y > lo and p.y < hi:
+						ys.append(p.y)
+	for y in ys:
 		var sa := _span_at(a, clampf(y, ya.x, ya.y))
 		var sb := _span_at(b, clampf(y, yb.x, yb.y))
 		if sa.x > sa.y or sb.x > sb.y:
@@ -299,13 +317,34 @@ static func _pair(a: PackedVector2Array, b: PackedVector2Array) -> Dictionary:
 
 
 ## Contact between two cars' world outlines (arrays of convex parts): {} or the deepest {n, depth, p} (see _pair).
+## When more than one pair of parts overlaps (a door mirror as well as the body), the depth is how far b has to go along
+## that normal to clear all of them, so one push parts the cars.
 static func contact(a: Array[PackedVector2Array], b: Array[PackedVector2Array]) -> Dictionary:
 	var best := {}
+	var hits := 0
 	for pa in a:
 		for pb in b:
 			var c := _pair(pa, pb)
-			if not c.is_empty() and (best.is_empty() or c.depth > best.depth):
+			if c.is_empty():
+				continue
+			hits += 1
+			if best.is_empty() or c.depth > best.depth:
 				best = c
+	if hits > 1:
+		var n: Vector2 = best.n
+		var depth: float = best.depth
+		for pa in a:
+			for pb in b:
+				if _pair(pa, pb).is_empty():
+					continue
+				var hi := -INF
+				for p in pa:
+					hi = maxf(hi, p.dot(n))
+				var lo := INF
+				for q in pb:
+					lo = minf(lo, q.dot(n))
+				depth = maxf(depth, hi - lo)
+		best.depth = depth
 	return best
 
 

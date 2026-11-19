@@ -24,6 +24,9 @@ uniform vec4 pearl_color : source_color = vec4(1.0, 1.0, 1.0, 1.0);  // pearlesc
 uniform float pearl : hint_range(0.0, 1.0) = 0.0;
 uniform float candy : hint_range(0.0, 1.0) = 0.0;        // candy: a deep tinted lacquer over bright metal
 uniform float sheen : hint_range(0.0, 1.0) = 0.0;        // matte and satin: a soft glow at glancing angles instead of reflections
+// The inside of a model's body and greenhouse, seen through the glass: a material drawn from both sides (render_mode
+// cull_disabled, see CarModel._car_shader_mat) shows its back faces in this colour when its alpha is set.
+uniform vec4 back_color : source_color = vec4(0.0);
 
 varying vec3 obj_p;
 
@@ -99,5 +102,13 @@ void fragment() {
 			vec3 seen = car_environment(rf, aa) * 0.25 + vec3(glint) * 0.7;
 			EMISSION += seen * mix(vec3(1.0), base_color.rgb * 1.6, flake_tint) * dotm * flake * fade * 2.2 * occ;
 		}
+	}
+	if (back_color.a > 0.5 && !FRONT_FACING) {   // the lining of the cabin: matt, in the shade of the roof
+		ALBEDO = back_color.rgb * ao * 0.7;
+		METALLIC = 0.0;
+		ROUGHNESS = 0.85;
+		CLEARCOAT = 0.0;
+		SPECULAR = 0.3;
+		EMISSION = vec3(0.0);
 	}
 }

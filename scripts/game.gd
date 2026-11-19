@@ -1410,7 +1410,7 @@ func _impact(o: Vehicle, ct: Dictionary) -> float:
 func _rail_impact(side: float) -> void:
 	var b := _body_of(player)
 	var w0 := b.w
-	var wc := HitShape.wall_contact(b.outline(), side * Data.RAIL, side, 0.1)
+	var wc := HitShape.wall_contact(b.outline(false), side * Data.RAIL, side, 0.1)
 	if wc.is_empty():
 		return
 	Wreck.impact(b, null, wc.n, wc.p, 0.3, 0.35)
@@ -1457,7 +1457,7 @@ func _update_wreck_car(c: Vehicle, dt: float) -> void:
 func _wreck_rail(b: Wreck) -> float:
 	var worst := 0.0
 	for s: float in [1.0, -1.0]:
-		var wc := HitShape.wall_contact(b.outline(), s * Data.RAIL, s)
+		var wc := HitShape.wall_contact(b.outline(false), s * Data.RAIL, s)
 		if wc.is_empty():
 			continue
 		b.pos.x -= s * float(wc.depth)
@@ -2525,7 +2525,7 @@ func _crash_rail() -> void:
 	var c := crash
 	var b := c.body
 	for s: float in [1.0, -1.0]:
-		var wc := HitShape.wall_contact(b.outline(), s * Data.RAIL, s)
+		var wc := HitShape.wall_contact(b.outline(false), s * Data.RAIL, s)
 		if wc.is_empty():
 			continue
 		b.pos.x -= s * float(wc.depth)

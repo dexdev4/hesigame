@@ -51,15 +51,19 @@ func _hit_shapes() -> void:
 	print("== hit boxes")
 	for id in Data.SHAPES:
 		var h := HitShape.of(id)
-		var xr := HitShape.x_range(h.world(0.0, 0.0, 0.0))
-		var yr := HitShape.y_range(h.world(0.0, 0.0, 0.0))
+		var xr := HitShape.x_range(h.world(0.0, 0.0, 0.0, 0.0, false))   # (the body, without the door mirrors)
+		var yr := HitShape.y_range(h.world(0.0, 0.0, 0.0, 0.0, false))
 		var sh: Dictionary = Data.SHAPES[id]
 		# the outline is the car: about its width and length (less the pulled-in edge, plus any flare), and symmetric
 		_check(absf(xr.x + xr.y) < 0.01, "%s: outline is symmetric (%.3f %.3f)" % [id, xr.x, xr.y])
 		_check(_near(xr.y - xr.x, float(sh.w), 0.2), "%s: outline width %.2f is the car's %.2f" % [id, xr.y - xr.x, sh.w])
 		_check(_near(yr.y - yr.x, float(sh.l), 0.2 if id != "truck" else 0.3), "%s: outline length %.2f is the car's %.2f" % [id, yr.y - yr.x, sh.l])
+		# the door mirrors stand out a little past the body, the same on each side
+		if not h.mirrors.is_empty():
+			var xm := HitShape.x_range(h.world(0.0, 0.0, 0.0))
+			_check(absf(xm.x + xm.y) < 0.01 and xm.y - xr.y > 0.02 and xm.y - xr.y < 0.35, "%s: mirrors stand out %.2f m a side" % [id, xm.y - xr.y])
 		# each part is convex and counter-clockwise
-		for part in h.parts:
+		for part in h.parts + h.mirrors:
 			var n := part.size()
 			var convex := true
 			for i in n:
@@ -69,13 +73,13 @@ func _hit_shapes() -> void:
 				if (b - a).cross(c - b) < -0.0001:
 					convex = false
 			_check(convex, "%s: outline is convex and counter-clockwise" % id)
-	# two cars side by side: touching exactly when their outlines overlap
+	# two cars side by side: touching exactly when their outlines overlap (door mirrors and all)
 	var k := HitShape.of("kestrel")
 	for gap: float in [-0.3, -0.1, -0.05, 0.05, 0.3]:
 		var a := _car("kestrel", 0.0, 0.0)
 		var b := _car("kestrel", 1.9 + gap, 0.0)  # centres 1.9 + gap apart: the outline is 1.82 wide (pulled in 0.04 a side)
 		var hit := not _contact(a, b).is_empty()
-		var ow := k.x_reach(0.0).y * 2.0
+		var ow := HitShape.x_range(k.world(0.0, 0.0, 0.0)).y * 2.0
 		var want: bool = 1.9 + gap < ow
 		_check(hit == want, "side by side, centres %.2f apart (outline %.2f wide): contact %s" % [1.9 + gap, ow, hit])
 		var g := HitShape.lateral_gap(a.outline(), b.outline())
@@ -103,8 +107,9 @@ func _hit_shapes() -> void:
 		var ok: bool = _near(n.length(), 1.0, 0.001) and float(c.depth) > 0.0
 		pb.pos += n * (float(c.depth) + 0.002)
 		var again := 0
-		while not _contact(pa, pb).is_empty() and again < 4 and (ia == "truck" or ib == "truck"):
-			var c2 := _contact(pa, pb)  # the truck is two pieces: it may take a second push to clear the other
+		while not _contact(pa, pb).is_empty() and again < 4:
+			var c2 := _contact(pa, pb)  # (a car is more than one piece, the body and its door mirrors, and the truck the box
+			# and the cab: when the cars cross deep, the push that clears one pair can press another into each other)
 			pb.pos += (c2.n as Vector2) * (float(c2.depth) + 0.002)
 			again += 1
 		ok = ok and _contact(pa, pb).is_empty()
@@ -142,12 +147,12 @@ func _hit_shapes() -> void:
 	# the guardrail
 	var half := k.x_reach(0.0).y
 	var r := _car("kestrel", 7.8, 0.0, 0.0)  # the car's side reaches 7.8 + 0.9 = 8.7, rail at 8.8: clear
-	_check(HitShape.wall_contact(r.outline(), 8.8, 1.0).is_empty(), "car clear of the rail")
+	_check(HitShape.wall_contact(r.outline(false), 8.8, 1.0).is_empty(), "car clear of the rail")
 	r.pos.x = 8.0
-	var wc := HitShape.wall_contact(r.outline(), 8.8, 1.0)
+	var wc := HitShape.wall_contact(r.outline(false), 8.8, 1.0)   # (the mirrors stand above the rail)
 	_check(not wc.is_empty() and _near(wc.depth, 8.0 + half - 8.8, 0.02), "car %.0f cm through the rail: depth %.3f" % [(8.0 + half - 8.8) * 100.0, wc.get("depth", -1.0)])
 	var rr := _car("kestrel", 7.7, 0.0, 0.4)  # nose turned towards the rail: the nose corner touches it first
-	wc = HitShape.wall_contact(rr.outline(), 8.8, 1.0)
+	wc = HitShape.wall_contact(rr.outline(false), 8.8, 1.0)
 	print("  rail, nose in at 0.4 rad, middle of the car at x=7.7: ", "no contact" if wc.is_empty() else "depth %.2f at y %.2f (the nose is at y %.2f)" % [wc.depth, wc.p.y - rr.pos.y, rr.shape.length / 2.0])
 
 
@@ -280,10 +285,10 @@ func _impacts() -> void:
 	_check(_near(a.vel.y + 3.5 * b.vel.y, 30.0 + 3.5 * 18.0, 0.01), "momentum is conserved with the truck")
 	# the guardrail: a car at 29 m/s and 5 degrees into the rail on the right
 	a = _car("sedan", 7.0, 0.0, 0.1, Vector2(2.9, 29.0))
-	var wc := HitShape.wall_contact(a.outline(), 8.8, 1.0)
+	var wc := HitShape.wall_contact(a.outline(false), 8.8, 1.0)
 	while wc.is_empty():
 		a.pos += a.vel * (1.0 / 240.0)
-		wc = HitShape.wall_contact(a.outline(), 8.8, 1.0)
+		wc = HitShape.wall_contact(a.outline(false), 8.8, 1.0)
 	e0 = a.energy()
 	j = Wreck.impact(a, null, wc.n, wc.p, 0.25, 0.3)
 	print("  rail at 29 m/s, 6 degrees off, nose in: afterwards %.2f across %.2f along, spin %+.2f rad/s (the nose is pushed back to the road), impulse %.2f" % [a.vel.x, a.vel.y, a.w, j])
@@ -374,7 +379,7 @@ func _scenarios() -> void:
 		var e_grew := 0.0
 		while t < 15.0:
 			c.step(dt)
-			var wc := HitShape.wall_contact(c.outline(), 8.8, 1.0)
+			var wc := HitShape.wall_contact(c.outline(false), 8.8, 1.0)
 			if not wc.is_empty():
 				through = maxf(through, float(wc.depth))
 				c.pos.x -= float(wc.depth)
@@ -428,5 +433,9 @@ func _scenarios() -> void:
 		worst_t = maxf(worst_t, t)
 	print("  %d random crashes: worst spin %.2f rad/s, most any car turned %.2f revolutions, longest %.1f s to rest" % [n_ok, worst_w, worst_turns, worst_t])
 	_check(n_ok > 200, "most random pairs actually met")
-	_check(worst_turns < 1.5, "no random crash turns a car more than a turn and a half (%.2f)" % worst_turns)
+	# (the hardest of these is one clean blow: the Kestrel at 190 km/h clipping the rear corner of a sedan at 105, which
+	# turns the sedan a turn and a half before it stops, never at the spin cap. With the hit boxes as exact as the cars,
+	# the corner is where the car's corner is, a little further from the middle than the old pulled-in box: 1.51 turns
+	# against 1.47. What keeps a car from spinning like a top is the cap on the spin rate, checked above.)
+	_check(worst_turns < 1.6, "no random crash turns a car more than about a turn and a half (%.2f)" % worst_turns)
 	_check(worst_t < 24.0, "every random crash ends")

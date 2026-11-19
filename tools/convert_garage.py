@@ -3,7 +3,9 @@
 
 That layout (unlike the older models, which convert_coupe.py splits by their painted texture) names every part by its
 material, and keeps the glass, the interior, the steering wheel, the lamps, the wheels and the brake callipers as nodes of
-their own. The car faces -z with its tail at +z, metres, y up (so only the tail is moved to z = 0: CarModel space is x right,
+their own. Material names are either the designer's own export's ("Trim_Black", see BY_MAT) or tools/garage/export.js's,
+"category:key" (the category is the game's surface: "gloss:trim", "dark:tl"). Colours are as the garage designer keeps
+them: linear, a 2.2 power of the colour it was given (so the 2.2 root gives back exactly the designer's colour). The car faces -z with its tail at +z, metres, y up (so only the tail is moved to z = 0: CarModel space is x right,
 y up, the rear bumper at z = 0 and the nose towards -z).
 
     python3 tools/convert_garage.py MODEL.glb OUT.mesh [lq]
@@ -11,8 +13,9 @@ y up, the rear bumper at z = 0 and the nose towards -z).
 writes OUT.mesh (CPE2, the surfaces CarModel draws) and, without lq, tools/profiles/OUT.json (the measurements
 tools/gen_imported.py turns into the car's profile). With lq: the light distance version (vertices merged on a 6 cm grid).
 
-Left out: the interior and the steering wheel (the game builds each car's cockpit itself), the wheels and the callipers (the
-game's own wheels, in the rim style chosen in the workshop, stand where the model's wheels are).
+The interior, the steering wheel, the wheels and the brake callipers go into OUT_parts/ (see the end), for the game to put on
+the car; the profile also says what colour the inside of the body is ("back": the designer draws the back faces of the body
+and the greenhouse in it, seen through the glass), and where the driver's eyes are ("eye").
 """
 import json
 import os
@@ -23,6 +26,7 @@ import numpy as np
 
 src, out = sys.argv[1:3]
 LQ = "lq" in sys.argv[3:]
+GRID = next((float(a[5:]) for a in sys.argv[3:] if a.startswith("grid=")), 0.06)   # the light version's merge grid, metres
 
 # material -> game surface (CarModel: paint, glass, dark, gloss, under, chrome, plate, head, headlens, grille, tail)
 BY_MAT = {
@@ -31,7 +35,16 @@ BY_MAT = {
     "Plate": "plate", "Chrome": "chrome", "Rim_Inner": "gloss", "Glass": "glass",
     "Light_DRL": "head", "Light_Projector": "head", "Light_Indicator": "headlens", "Light_Tail": "tail",
 }
+CATEGORIES = {"paint", "glass", "dark", "gloss", "under", "chrome", "plate", "head", "headlens", "grille", "tail"}
 SKIP_NODES = ("Interior", "SteeringWheel", "Wheel_", "Caliper_")
+
+
+def kind_of(mname):
+    """The game surface a material goes into: by its name in the designer's own export, or by its category (export.js)."""
+    if mname in BY_MAT:
+        return BY_MAT[mname]
+    cat = mname.split(":")[0] if ":" in mname else None
+    return cat if cat in CATEGORIES else None
 
 d = open(src, "rb").read()
 ln = struct.unpack("<I", d[12:16])[0]
@@ -66,8 +79,9 @@ def node_xf(n):
 
 
 def srgb(c):
+    """A linear colour value as the designer's colour (it keeps colours as a 2.2 power of the colour it was given)."""
     c = max(0.0, min(1.0, float(c)))
-    return 12.92 * c if c <= 0.0031308 else 1.055 * c ** (1 / 2.4) - 0.055
+    return c ** (1 / 2.2)
 
 
 def tex_average(ti):
@@ -191,7 +205,7 @@ for ci in root.get("children", []):
         continue
     for q in j["meshes"][n["mesh"]]["primitives"]:
         mname = j["materials"][q["material"]].get("name", "") if "material" in q else ""
-        kind = BY_MAT.get(mname)
+        kind = kind_of(mname)
         if kind is None:
             print("leaving out", name, mname)
             continue
@@ -226,8 +240,6 @@ def measure():
     P0 = np.concatenate([res[k][0] for k in res if k.split("~")[0] in ("paint", "gloss", "dark", "chrome", "under", "grille", "plate", "tail", "head", "headlens")])
     G = np.concatenate([res[k][0] for k in res if k.split("~")[0] == "glass"])
     L = float(-P0[:, 2].min())
-    low = P0[P0[:, 1] < 0.8]   # (below the mirrors)
-    W = float(2 * np.abs(low[:, 0]).max())
     D = -P0[:, 2]
     roof0 = float(max(P0[:, 1].max(), G[:, 1].max()))
     side = G[np.abs(G[:, 0]) > 0.45]
@@ -236,6 +248,10 @@ def measure():
     gd = -up[:, 2] if len(up) else -G[:, 2]
     g0 = float(np.percentile(gd, 0.5))
     g1 = float(np.percentile(gd, 99.5))
+    # the width of the body and the tyres, without the door mirrors (which stand out above the beltline beside the front of
+    # the side windows: on a low car they hang below 0.8 m), as tools/make_hulls.py outlines the body
+    mirror = (P0[:, 1] > belt - 0.06) & (D > g1 - 0.55) & (D < g1 + 0.4)
+    W = float(2 * max(np.abs(P0[~mirror, 0]).max(), max((abs(w[1][0]) + w[2] / 2 for w in wheels), default=0.0)))
     allp = np.concatenate([P0, G])
     hi = -allp[allp[:, 1] > roof0 - 0.045, 2]
     g2 = float(hi.min())
@@ -255,7 +271,8 @@ def measure():
         tp = float(P0[sel, 1].max())
         if g0 < dd < g1:
             tp = min(tp, belt + 0.04)
-        body.append([round(dd, 3), round(tp, 3), round(float(np.abs(P0[sel, 0]).max()) / (W / 2), 3)])
+        lo = sel & (P0[:, 1] < 0.8)   # (the width below the mirrors)
+        body.append([round(dd, 3), round(tp, 3), round(float(np.abs(P0[lo if lo.any() else sel, 0]).max()) / (W / 2), 3)])
     front = [w for w in wheels if w[1][2] < 0]
     rear = [w for w in wheels if w[1][2] >= 0]
     r = float(np.mean([w[3] for w in wheels]))
@@ -265,10 +282,13 @@ def measure():
     tyre = float(np.mean([w[2] for w in wheels]))
     axles = sorted(set(round(REAR - w[1][2], 2) for w in wheels))
     plate = None
-    if "plate" in res:  # (the model's own number plate)
-        pp = res["plate"][0]
-        plate = [round(float((pp[:, 1].min() + pp[:, 1].max()) / 2), 3), round(float(pp[:, 2].max()), 3)]
-    pm = next((m for m in j["materials"] if m.get("name") == "Paint"), None)
+    plates = [res[k][0] for k in res if k.split("~")[0] == "plate"]
+    if plates:  # (the model's own number plate at the back: the game letters that one)
+        pp = np.concatenate(plates)
+        pp = pp[pp[:, 2] > -0.6]
+        if len(pp):
+            plate = [round(float((pp[:, 1].min() + pp[:, 1].max()) / 2), 3), round(float(pp[:, 2].max()), 3)]
+    pm = next((m for m in j["materials"] if m.get("name") in ("Paint", "paint:paint")), None)
     paint_pbr = None
     if pm:
         pbr = pm.get("pbrMetallicRoughness", {})
@@ -276,7 +296,12 @@ def measure():
         cc = pm.get("extensions", {}).get("KHR_materials_clearcoat", {})
         paint_pbr = ["#" + "".join("%02x" % int(round(srgb(v) * 255)) for v in c[:3]), float(pbr.get("metallicFactor", 0.0)), float(pbr.get("roughnessFactor", 0.5)),
                      float(cc.get("clearcoatFactor", 0.0)), float(cc.get("clearcoatRoughnessFactor", 0.0))]
-    return {"plate": plate, "paint_pbr": paint_pbr, "L": round(L, 3), "W": round(W, 3), "roof": round(roof0, 3), "belt": round(belt, 3),
+    inside = j.get("extras", {}).get("interior", {})   # (export.js: the colours of the inside, and the driver's eyes)
+    eye = None
+    if "eye" in inside:
+        e = inside["eye"]
+        eye = [round(float(e[0]), 3), round(float(e[1]), 3), round(float(e[2]) - REAR, 3)]
+    return {"plate": plate, "paint_pbr": paint_pbr, "back": inside.get("shell"), "shelf": inside.get("shelf"), "eye": eye, "L": round(L, 3), "W": round(W, 3), "roof": round(roof0, 3), "belt": round(belt, 3),
             "gh": [round(g0, 3), round(g1, 3), round(g2, 3), round(g3, 3), round(belt, 3), round(roof0, 3), round(wbase / (W / 2), 3), round(wroof / (W / 2), 3)],
             "body": body, "wheel": [round(r, 3), round(rear_d, 3), round(front_d, 3)], "wheel_x": [round(wx[0], 3), round(wx[1], 3)],
             "tyre": round(tyre, 3), "ws_hw": round(ws_hw, 3), "axles": [float(a) for a in axles]}
@@ -305,7 +330,7 @@ def write_cpe2(path, res, lq=False):
         for k in names:
             pp, nn = res[k]
             if lq:
-                key = np.round(pp / 0.06).astype(np.int64)
+                key = np.round(pp / GRID).astype(np.int64)
                 uq, inv = np.unique(key, axis=0, return_inverse=True)
                 inv = inv.reshape(-1)
                 cnt = np.bincount(inv, minlength=len(uq)).astype(np.float64)

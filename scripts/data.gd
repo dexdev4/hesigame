@@ -10,22 +10,22 @@ const RAIL := 8.8        # guardrail position (m)
 # c0/c1 = cabin start/end as a fraction of length, ins = cabin side inset.
 const SHAPES := {
 	# BEGIN IMPORTED SHAPES
-	"hot_hatch": {"w": 1.84, "l": 4.37, "b": 0.8, "t": 1.45, "c0": 0.15, "c1": 0.66, "ins": 0.15},
-	"sport_sedan": {"w": 1.87, "l": 4.54, "b": 0.8, "t": 1.48, "c0": 0.15, "c1": 0.66, "ins": 0.15},
-	"compact": {"w": 1.65, "l": 3.69, "b": 0.8, "t": 1.49, "c0": 0.15, "c1": 0.66, "ins": 0.15},
-	"coupe": {"w": 1.83, "l": 4.30, "b": 0.8, "t": 1.30, "c0": 0.15, "c1": 0.66, "ins": 0.15},
-	"kestrel": {"w": 1.68, "l": 4.02, "b": 0.8, "t": 1.39, "c0": 0.15, "c1": 0.66, "ins": 0.15},
+	"hot_hatch": {"w": 1.84, "l": 4.37, "b": 0.8, "t": 1.47, "c0": 0.15, "c1": 0.66, "ins": 0.15},
+	"sport_sedan": {"w": 1.87, "l": 4.54, "b": 0.8, "t": 1.52, "c0": 0.15, "c1": 0.66, "ins": 0.15},
+	"compact": {"w": 1.65, "l": 3.69, "b": 0.8, "t": 1.66, "c0": 0.15, "c1": 0.66, "ins": 0.15},
+	"coupe": {"w": 1.83, "l": 4.30, "b": 0.8, "t": 1.36, "c0": 0.15, "c1": 0.66, "ins": 0.15},
+	"kestrel": {"w": 1.68, "l": 4.02, "b": 0.8, "t": 1.59, "c0": 0.15, "c1": 0.66, "ins": 0.15},
 	"bruiser": {"w": 1.98, "l": 5.08, "b": 0.8, "t": 1.38, "c0": 0.15, "c1": 0.66, "ins": 0.15},
 	"copperhead": {"w": 1.99, "l": 4.82, "b": 0.8, "t": 1.30, "c0": 0.15, "c1": 0.66, "ins": 0.15},
 	"halcyon": {"w": 2.00, "l": 4.59, "b": 0.8, "t": 1.18, "c0": 0.15, "c1": 0.66, "ins": 0.15},
 	"static": {"w": 2.01, "l": 4.76, "b": 0.8, "t": 1.18, "c0": 0.15, "c1": 0.66, "ins": 0.15},
 	"marshal": {"w": 1.94, "l": 5.31, "b": 0.8, "t": 1.56, "c0": 0.15, "c1": 0.66, "ins": 0.15},
 	"lastexit": {"w": 2.10, "l": 4.87, "b": 0.8, "t": 1.17, "c0": 0.15, "c1": 0.66, "ins": 0.15},
-	"vanta": {"w": 1.92, "l": 4.76, "b": 0.8, "t": 1.42, "c0": 0.15, "c1": 0.66, "ins": 0.15},
-	"suv": {"w": 1.87, "l": 4.64, "b": 0.8, "t": 1.71, "c0": 0.15, "c1": 0.66, "ins": 0.15},
+	"vanta": {"w": 1.92, "l": 4.76, "b": 0.8, "t": 1.46, "c0": 0.15, "c1": 0.66, "ins": 0.15},
+	"suv": {"w": 1.87, "l": 4.65, "b": 0.8, "t": 1.71, "c0": 0.15, "c1": 0.66, "ins": 0.15},
 	"van": {"w": 2.01, "l": 5.43, "b": 0.8, "t": 2.40, "c0": 0.15, "c1": 0.66, "ins": 0.15, "van": true},
-	"sedan": {"w": 1.90, "l": 4.91, "b": 0.8, "t": 1.44, "c0": 0.15, "c1": 0.66, "ins": 0.15},
-	"hatch": {"w": 1.77, "l": 4.08, "b": 0.8, "t": 1.46, "c0": 0.15, "c1": 0.66, "ins": 0.15},
+	"sedan": {"w": 1.90, "l": 4.91, "b": 0.8, "t": 1.48, "c0": 0.15, "c1": 0.66, "ins": 0.15},
+	"hatch": {"w": 1.77, "l": 4.08, "b": 0.8, "t": 1.63, "c0": 0.15, "c1": 0.66, "ins": 0.15},
 	"truck": {"w": 2.52, "l": 10.96, "b": 0.8, "t": 3.91, "c0": 0.15, "c1": 0.66, "ins": 0.15, "truck": true},
 	# END IMPORTED SHAPES
 	# compact performance saloon (proportions after the 2007 E90 M3)
@@ -138,8 +138,12 @@ func finish_by_id(id: String) -> Dictionary:
 		if f.id == id:
 			return f
 	return FINISHES[0]
+## The workshop's wheel designs, every one built with the garage designer's own wheel (tools/garage/export_wheels.js:
+## assets/models/wheels/) and fitted to each car's rims and tyres (besides each car's own, "Factory").
 const RIMS := [["steel", "Steel"], ["5spoke", "5-spoke"], ["multi", "Multi-spoke"], ["mesh", "Mesh"], ["turbine", "Turbine"], ["double", "Double-spoke"],
-	["split", "Split-spoke"], ["blade", "Blade"], ["aero", "Aero"], ["wire", "Wire"], ["tri", "Tri-spoke"], ["star", "Star"], ["vent", "Vented disc"], ["deep", "Deep dish"]]
+	["split", "Split-spoke"], ["blade", "Blade"], ["aero", "Aero"], ["wire", "Wire"], ["tri", "Tri-spoke"], ["star", "Star"], ["vent", "Vented disc"], ["deep", "Deep dish"],
+	["y5", "Y-spoke"], ["twist10", "Twisted 10"], ["classic", "Classic 5"], ["pepper", "Pepper-pot"], ["forged", "Forged twin"], ["rally", "Rally"],
+	["hubcap", "Steel & cap"], ["mono12", "Monoblock 12"], ["directional", "Directional"], ["track7", "Track 7"]]
 const RIM_CHROME := "#e6eaee"  # (the wheel colour that is polished chrome)
 const RIM_COLORS := [["Silver", "#c3c8ce"], ["Chrome", "#e6eaee"], ["Gunmetal", "#5b5f64"], ["Anthracite", "#34373c"],
 	["Black", "#2a2c30"], ["Gloss black", "#0d0e10"], ["White", "#f3f5ef"], ["Gold", "#c9a227"],

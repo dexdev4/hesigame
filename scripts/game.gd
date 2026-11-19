@@ -531,7 +531,7 @@ func _build_showroom() -> void:
 	if showroom == "inspect":
 		var car: Dictionary
 		if _inspect[0] == "police":  # the police car
-			car = {"shape": "sedan", "color": "#f2f3f5", "style": {"rim": "steel", "badge": "POLICE", "plate": "PD 911"}}
+			car = {"shape": "sedan", "color": "#f2f3f5", "style": {"rim": "hubcap", "badge": "POLICE", "plate": "PD 911"}}
 		elif _inspect[0].begins_with("t_"):  # a traffic model: t_SHAPE
 			car = {"shape": _inspect[0].substr(2), "color": "#2f5d8c", "style": CarModel.traffic_style(_inspect[0].substr(2))}
 		else:
@@ -3031,6 +3031,8 @@ func _end_run(reason: String) -> void:
 	var wear_now := Save.wear(String(Save.data.selected))
 	if Data.is_wrecked(wear_now):
 		notes.append("Your car is wrecked. It cannot be driven until it is repaired in the Workshop: $%s." % Fmt.num(Save.repair_price(Data.car_by_id(Save.data.selected))))
+	elif wear_now > Hud.REPAIR_SHOW:
+		notes.append("Your car is %d%% worn, and slower for it: the button below repairs it for $%s." % [roundi(wear_now * 100.0), Fmt.num(Save.repair_price(Data.car_by_id(Save.data.selected)))])
 	elif wear_now >= 0.02:
 		notes.append("Your car is %d%% worn: repairs in the Workshop cost $%s." % [roundi(wear_now * 100.0), Fmt.num(Data.repair_cost(Data.car_by_id(Save.data.selected), wear_now))])
 	var next_car := {}
@@ -3237,7 +3239,7 @@ func _start_cop(gap := COP_GAP, from_trap := false) -> void:
 	_cop_reversing = false
 	boss.model = CarModel.new()
 	var t_build := PerfProbe.t()
-	boss.model.build("sedan", Color("#f2f3f5"), Color("#b5322a"), {"rim": "steel", "badge": "POLICE", "plate": "PD 911"})
+	boss.model.build("sedan", Color("#f2f3f5"), Color("#b5322a"), {"rim": "hubcap", "badge": "POLICE", "plate": "PD 911"})
 	PerfProbe.note("build police car", t_build)
 	boss.model.add_lightbar(sh.t)
 	var tag := Label3D.new()
@@ -3518,7 +3520,7 @@ func _trap_next() -> void:
 func _trap_spawn(z: float) -> void:
 	var sh: Dictionary = Data.SHAPES.sedan
 	var m := CarModel.new()
-	m.build("sedan", Color("#f2f3f5"), Color("#b5322a"), {"rim": "steel", "badge": "POLICE", "plate": "PD 911"})
+	m.build("sedan", Color("#f2f3f5"), Color("#b5322a"), {"rim": "hubcap", "badge": "POLICE", "plate": "PD 911"})
 	m.add_lightbar(sh.t)
 	m.lightbar_off()
 	m.position = Vector3(0.0, 0.0, float(sh.l) / 2.0)  # (the node stands at its middle, so that it turns about that)
@@ -5120,6 +5122,19 @@ func _on_act(action: String, arg: String) -> void:
 				_compute_stats()
 				_enter_garage()
 			hud.render_garage()
+		"repair_now":   # the repair button on the garage's front panel and at the end of a run: pay, and it is fixed
+			var nid: String = Save.data.selected
+			var ncost := Save.repair_price(Data.car_by_id(nid))
+			if Save.wear(nid) > 0.004 and Save.data.cash >= ncost:
+				Save.data.cash -= ncost
+				Save.repair(nid)  # (this saves, too)
+				_compute_stats()
+				sound.play("ding", 1.4)
+				if arg == "menu":
+					_set_player_car()
+					_enter_garage()  # (the car on the turntable comes back mended, with a flash of light)
+				# (at the end of a run the crashed car stays where it is: the next run, or the garage, builds it mended)
+				hud.repaired(ncost)
 		"repair":
 			var rid: String = Save.data.selected
 			var rw := Save.wear(rid)

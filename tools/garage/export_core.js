@@ -20,11 +20,18 @@ const WANT = ARGS.slice(1);
 const CAT = {paint: 'paint', glass: 'glass', glassDark: 'glass', trim: 'gloss', gloss: 'gloss', matte: 'dark', chrome: 'chrome', satin: 'chrome',
   rimInner: 'gloss', void: 'dark', chassis: 'under', liner: 'under', hl: 'gloss', hlChrome: 'chrome', drl: 'head', proj: 'head', warm: 'head',
   cyan: 'head', tl: 'dark', tlGlow: 'tail', tlDim: 'tail', amber: 'headlens', amberLens: 'dark', rev: 'dark', grille: 'grille', slats: 'grille',
-  vent: 'grille', carbon: 'gloss', plate: 'plate', flashR: 'dark', flashB: 'dark', rubber: 'dark', shelf: 'dark', seam: 'dark'};
+  vent: 'grille', carbon: 'gloss', plate: 'plate', flashR: 'dark', flashB: 'dark', rubber: 'dark', shelf: 'dark', seam: 'dark',
+  chmsl: 'brake'};   // (brake: lit only while the car brakes: the third brake light, see details.js)
 const HEAD = new Set(['drl', 'proj', 'warm', 'cyan']), TAIL = new Set(['tlGlow', 'tlDim']), IND = new Set(['amber']);
-// patterns the designer draws in its shader (the game has no textures for them): how much each darkens the colour on average,
-// and how much of a lit pattern (a gauge, a screen) glows
-const PAT_K = {1: .48, 2: .63, 3: .95, 4: 1.05, 5: .585, 9: .85, 10: .8, 11: .92, 12: .85};
+// patterns the designer draws in its shader: the game's car shader draws these too (the material says which, in
+// extras.pattern: a mesh grille, slats, carbon, a vent's louvres, quilting, tartan, pleats, wood), from where the part is;
+// the others (the tyre's) darken the colour by what they average out to; and how much of a lit pattern (a gauge, a screen)
+// glows
+const SHADER_PAT = new Set([1, 2, 3, 5, 9, 10, 11, 12]);
+const PAT_K = {4: 1.05};
+// the lamps that are lit with the headlights (the low beams' projectors and bulbs, the amber parking lamps): the game lights
+// them at dusk only, as on a real car by day; the running lights, tail lights and the rest stay lit (extras.beam)
+const BEAM = new Set(['proj', 'warm', 'amber']);
 const PAT_E = {7: .3, 8: .15};
 
 // ---------------------------------------------------------------- polygons with attributes
@@ -181,10 +188,11 @@ function exportCar(S0) {
   }
 
   // ---- the wheels and brake callipers, each about its own centre (the game turns them)
-  const corners = {};
+  const corners = {}, rims = {};
   for (const front of [true, false]) for (const sg of [1, -1]) {
     const nm = (front ? 'F' : 'R') + (sg > 0 ? 'L' : 'R');
     corners[nm] = [front ? W.xF : W.xR, front ? W.rF : W.rR, sg * (front ? W.zF : W.zR)];
+    rims[nm] = front ? W.rimF : W.rimR;
     for (const q of __buildWheel(S, front)) {
       const c = q.clone();
       if (sg < 0) { c.xf(M3.sc(1, 1, -1)); for (let i = 0; i < c.I.length; i += 3) { const t = c.I[i + 1]; c.I[i + 1] = c.I[i + 2]; c.I[i + 2] = t; } }
@@ -192,7 +200,7 @@ function exportCar(S0) {
       for (let i = 0; i < c.I.length; i += 3) out.tri(node, c.mat, vert(c, c.I[i]), vert(c, c.I[i + 1]), vert(c, c.I[i + 2]));
     }
   }
-  return {S, out, L, corners, steer: globalThis.__steerFrame, eye: cut ? cut.eye : null};
+  return {S, out, L, corners, rims, steer: globalThis.__steerFrame, eye: cut ? cut.eye : null};
 }
 
 // ---------------------------------------------------------------- the file
@@ -217,6 +225,8 @@ function writeGLB(file, car) {
     const glass = cat === 'glass';
     const o = {name: cat + ':' + key, doubleSided: true,
       pbrMetallicRoughness: {baseColorFactor: [alb[0], alb[1], alb[2], glass ? tint : 1], metallicFactor: m.prm[0], roughnessFactor: m.prm[1]}};
+    if (SHADER_PAT.has(m.pat)) o.extras = {pattern: m.pat};
+    if (BEAM.has(key)) o.extras = Object.assign(o.extras || {}, {beam: 1});
     if (glass) o.alphaMode = 'BLEND';
     const ext = {};
     if (m.prm[2] > 0) { ext.KHR_materials_clearcoat = {clearcoatFactor: m.prm[2], clearcoatRoughnessFactor: .03}; used.add('KHR_materials_clearcoat'); }
@@ -251,6 +261,7 @@ function writeGLB(file, car) {
     if (name.startsWith('Wheel_') || name.startsWith('Caliper_')) {
       const c = corners[name.slice(-2)];
       node.translation = toG(c[0], c[1], c[2]);
+      if (name.startsWith('Wheel_')) node.extras = {rim: car.rims[name.slice(-2)]};   // (the rim's radius: the workshop's wheels are fitted to it)
       xf = (x, y, z) => [-z, y, x];
     } else if (name === 'SteeringWheel' && steer) {
       const t = toG(steer.wc[0], steer.wc[1], steer.wc[2]), ph = -steer.th, cs = Math.cos(ph), sn = Math.sin(ph);

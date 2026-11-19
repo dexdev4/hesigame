@@ -208,6 +208,9 @@ func _button(text: String, kind: String, action: String, arg := "") -> Button:
 	if kind == "amber":
 		bg = AMBER
 		fg = AMBER_INK
+	elif kind == "red":   # (the repair button: what needs doing first)
+		bg = REPAIR_RED
+		fg = LINE
 	var normal := _flat(bg, 12)
 	if kind == "ghost":
 		normal = _flat(Color.TRANSPARENT, 12, LINE, 3)
@@ -1380,6 +1383,11 @@ func _build_menu() -> void:
 		_menu["b_" + k] = bar
 	_menu["start"] = _button("START RUN  →", "amber", "map")
 	v.add_child(_menu.start)
+	# a car over REPAIR_SHOW worn: a button to have it fixed there and then, its price on it
+	_menu["repair"] = _button("REPAIR CAR", "red", "repair_now", "menu")
+	_menu.repair.add_theme_font_size_override("font_size", 28)
+	_menu.repair.visible = false
+	v.add_child(_menu.repair)
 	var btns := GridContainer.new()
 	btns.columns = 3
 	btns.add_theme_constant_override("h_separation", 10)
@@ -1462,9 +1470,11 @@ func render_menu() -> void:
 	# with your permanent upgrades applied, and what damage has taken off
 	var wear := Save.wear(String(c.id))
 	var wrecked := Data.is_wrecked(wear)
-	_menu.dmg.text = "WRECKED · 100% · REPAIR IT TO DRIVE" if wrecked else (("DAMAGED · %d%% WORN · REPAIR IT IN THE WORKSHOP" % roundi(wear * 100.0)) if wear >= 0.02 else "")
+	_menu.dmg.text = "WRECKED · 100% · REPAIR IT TO DRIVE" if wrecked else (("DAMAGED · %d%% WORN · SLOWER UNTIL IT IS REPAIRED" % roundi(wear * 100.0))
+		if wear > REPAIR_SHOW else ("DAMAGED · %d%% WORN · REPAIR IT IN THE WORKSHOP" % roundi(wear * 100.0)) if wear >= 0.02 else "")
 	_menu.dmg.visible = wear >= 0.02
 	(_menu.start as Button).text = "REPAIR YOUR CAR  →" if wrecked else "START RUN  →"
+	_repair_button(_menu.repair)
 	var levels := {}
 	for k in CarStats.PERM_KEYS:
 		levels[k] = Save.perm_level(k)
@@ -1790,7 +1800,10 @@ class WheelIcon extends Control:
 		"5spoke": {"n": 5, "w0": 0.16, "w1": 0.3}, "multi": {"n": 10, "w0": 0.08, "w1": 0.11}, "mesh": {"n": 10, "w0": 0.06, "w1": 0.07, "pair": 0.34},
 		"turbine": {"n": 14, "w0": 0.08, "w1": 0.17, "twist": 0.42}, "double": {"n": 5, "w0": 0.08, "w1": 0.1, "pair": 0.11},
 		"blade": {"n": 7, "w0": 0.09, "w1": 0.26, "twist": 0.75}, "tri": {"n": 3, "w0": 0.3, "w1": 0.55}, "star": {"n": 8, "w0": 0.09, "w1": 0.24},
-		"deep": {"n": 6, "w0": 0.17, "w1": 0.27},
+		"deep": {"n": 6, "w0": 0.17, "w1": 0.27}, "twist10": {"n": 10, "w0": 0.07, "w1": 0.1, "twist": 0.32},
+		"classic": {"n": 5, "w0": 0.2, "w1": 0.28}, "forged": {"n": 6, "w0": 0.07, "w1": 0.09, "pair": 0.12, "twist": 0.28},
+		"rally": {"n": 6, "w0": 0.18, "w1": 0.2}, "mono12": {"n": 12, "w0": 0.05, "w1": 0.06},
+		"directional": {"n": 5, "w0": 0.1, "w1": 0.21, "twist": 0.5}, "track7": {"n": 7, "w0": 0.1, "w1": 0.13},
 	}
 
 	func _spoke(c: Vector2, rad: float, ang: float, twist: float, r0: float, r1: float, w0: float, w1: float, col: Color) -> void:
@@ -1812,10 +1825,13 @@ class WheelIcon extends Control:
 		draw_circle(c, rad, Color("#16171a"))                  # the tyre
 		draw_circle(c, rad * 0.74, dark)                       # the dark behind the spokes
 		match design:
-			"steel":
-				draw_circle(c, rad * 0.72, metal.darkened(0.3))
-				for k in 6:
-					draw_circle(c + Vector2.from_angle(TAU * k / 6.0) * rad * 0.46, rad * 0.06, dark)
+			"steel", "hubcap", "pepper":
+				draw_circle(c, rad * 0.72, metal.darkened(0.3) if design != "pepper" else metal.darkened(0.1))
+				var holes := 8 if design == "hubcap" else 6
+				for k in holes:
+					draw_circle(c + Vector2.from_angle(TAU * k / holes) * rad * (0.5 if design == "pepper" else 0.46), rad * (0.1 if design == "pepper" else 0.06), dark)
+				if design == "hubcap":   # (a big chrome cap over the middle)
+					draw_circle(c, rad * 0.36, Color("#e8ebee"))
 			"aero":
 				draw_circle(c, rad * 0.72, metal.darkened(0.12))
 				for k in 8:
@@ -1829,7 +1845,7 @@ class WheelIcon extends Control:
 			"wire":
 				for k in 28:
 					_spoke(c, rad, TAU * k / 28.0, 0.5 if k % 2 == 0 else -0.5, 0.12, 0.7, 0.025, 0.03, metal)
-			"split":
+			"split", "y5":
 				for k in 5:
 					var a := TAU * k / 5.0
 					_spoke(c, rad, a, 0.0, 0.1, 0.42, 0.17, 0.12, metal)
@@ -1842,7 +1858,7 @@ class WheelIcon extends Control:
 					var base := TAU * k / n
 					if sp.has("pair"):
 						for tw in [-float(sp.pair), float(sp.pair)]:
-							_spoke(c, rad, base + tw * 0.4, tw * 0.6, 0.12, 0.7, float(sp.w0), float(sp.w1), metal)
+							_spoke(c, rad, base + tw * 0.4, tw * 0.6 + float(sp.get("twist", 0.0)), 0.12, 0.7, float(sp.w0), float(sp.w1), metal)
 					else:
 						_spoke(c, rad, base, float(sp.get("twist", 0.0)), 0.12, 0.7, float(sp.w0), float(sp.w1), metal)
 		draw_arc(c, rad * 0.72, 0.0, TAU, 48, metal, maxf(2.0, rad * 0.075))  # the lip of the rim
@@ -1995,6 +2011,19 @@ func render_garage() -> void:
 	var sel_car := Data.car_by_id(Save.data.selected)
 	for t in GARAGE_TABS:
 		_style_tab(_garage["tab_" + t[0]] as Button, garage_tab == t[0])
+	# a car more than REPAIR_SHOW worn: the repair tab says so, in red with the price, whichever tab is open
+	var rtab := _garage.tab_repair as Button
+	if Save.wear(String(sel_car.id)) > REPAIR_SHOW:
+		rtab.text = "REPAIR $%s" % Fmt.num(Save.repair_price(sel_car))
+		if garage_tab != "repair":
+			var rsb := _flat(REPAIR_RED, 12)
+			rsb.set_content_margin_all(10)
+			for k in ["normal", "pressed", "focus", "hover"]:
+				rtab.add_theme_stylebox_override(k, rsb)
+			for k in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
+				rtab.add_theme_color_override(k, LINE)
+	else:
+		rtab.text = "REPAIR"
 	var on_cars := garage_tab == "cars"
 	_garage.title.text = "GARAGE" if on_cars else "WORKSHOP"
 	_garage.eyebrow.text = "EXIT 12 · SERVICE AREA" if on_cars else "WORKING ON · " + String(sel_car.name).to_upper()
@@ -2681,6 +2710,9 @@ func _build_over() -> void:
 	v.add_child(_over.note)
 	_over["again"] = _button("RUN AGAIN  →", "amber", "start")
 	v.add_child(_over.again)
+	_over["repair"] = _button("REPAIR CAR", "red", "repair_now", "over")
+	_over.repair.visible = false
+	v.add_child(_over.repair)
 	var btns := _row(14)
 	v.add_child(btns)
 	btns.add_child(_button("GARAGE", "light", "garage"))
@@ -2696,7 +2728,36 @@ func show_over(reason: String, score: String, dist: String, bosses: String, cash
 	_over.cash.text = cash
 	_over.note.text = note
 	(_over.again as Button).text = "REPAIR YOUR CAR  →" if Save.wrecked(String(Save.data.selected)) else "RUN AGAIN  →"
+	_repair_button(_over.repair)
 	show_screen("over")
+
+
+## A car more worn than this has a repair button on the garage's front panel and at the end of a run.
+const REPAIR_SHOW := 0.10
+const REPAIR_RED := Color("#c23a2b")
+
+
+## The repair button for the car you drive: shown when it is more than REPAIR_SHOW worn (a wreck is sent to the
+## repair by the main button already), with the price on it, or what is still missing when the cash falls short.
+func _repair_button(b: Button) -> void:
+	var id := String(Save.data.selected)
+	var wear := Save.wear(id)
+	b.visible = wear > REPAIR_SHOW and not Data.is_wrecked(wear)
+	if not b.visible:
+		return
+	var cost := Save.repair_price(Data.car_by_id(id))
+	var afford := int(Save.data.cash) >= cost
+	b.text = ("REPAIR CAR  ·  $%s" % Fmt.num(cost)) if afford else ("REPAIR $%s  ·  NEED $%s MORE" % [Fmt.num(cost), Fmt.num(cost - int(Save.data.cash))])
+	b.disabled = not afford
+
+
+## The car was just repaired from one of those buttons (for `cost`): the end-of-run screen says so, the buttons go.
+func repaired(cost: int) -> void:
+	var c := Data.car_by_id(String(Save.data.selected))
+	if screens.has("over") and (screens.over as Control).visible:
+		_over.note.text = "Repaired for $%s: your %s is as good as new." % [Fmt.num(cost), c.name]
+	_repair_button(_over.repair)
+	render_menu()
 
 
 

@@ -59,6 +59,8 @@ def entry(sid, name):
         pr["parts"] = "res://assets/models/%s_parts/" % name   # (its own wheels, brake callipers, interior and steering wheel)
     if d.get("paint_pbr"):  # (the model's own paint: how metallic and rough its factory finish is)
         pr["paint_pbr"] = [round(v, 3) for v in d["paint_pbr"][1:]]   # metallic, roughness, clear coat, its roughness
+    if d.get("rim"):    # (the model's own rims: the workshop's wheels are fitted to the same size)
+        pr["rim_frac"] = round(d["rim"] / d["wheel"][0], 3)
     if d.get("back"):   # (a model with its own interior: the colour of the inside of its body, seen through the glass)
         pr["back"] = d["back"]
     if d.get("eye"):    # (...and where its seat and steering wheel put the driver's eyes)

@@ -90,23 +90,34 @@ func _hash_mesh(m: Mesh) -> int:
 	return h
 
 
+## A value of a kit by what is in it: a mesh by its arrays, a dictionary (the shell, the model's own parts) and an array
+## by their contents in order, anything else by its value (never an object by its identity, which differs from run to run).
+func _hash_value(v: Variant) -> int:
+	if v is Mesh:
+		return _hash_mesh(v)
+	if v is Dictionary:
+		var hv := 0
+		var ks := (v as Dictionary).keys()
+		ks.sort()
+		for kk in ks:
+			hv = (hv * 31) ^ _hash_value((v as Dictionary)[kk]) ^ int(hash(str(kk)))
+		return hv
+	if v is Array:
+		var ha := 5
+		for e in v:
+			ha = (ha * 31) ^ _hash_value(e)
+		return ha
+	if v is Object:
+		return 0
+	return int(hash(v))
+
+
 func _hash_kit(kit: Dictionary, full: bool, label: String) -> int:
 	var h := 7
 	var keys := kit.keys()
 	keys.sort()
 	for k in keys:
-		var v: Variant = kit[k]
-		var hv := 0
-		if v is Mesh:
-			hv = _hash_mesh(v)
-		elif v is Dictionary:  # (the shell)
-			hv = 0
-			var ks := (v as Dictionary).keys()
-			ks.sort()
-			for kk in ks:
-				hv = (hv * 31) ^ int(hash((v as Dictionary)[kk]))
-		else:
-			hv = int(hash(v))
+		var hv := _hash_value(kit[k])
 		h = (h * 131) ^ hv ^ int(hash(str(k)))
 		if full:
 			_lines.append("%s %s %08x" % [label, k, hv & 0xffffffff])

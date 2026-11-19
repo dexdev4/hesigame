@@ -35,7 +35,7 @@ BY_MAT = {
     "Plate": "plate", "Chrome": "chrome", "Rim_Inner": "gloss", "Glass": "glass",
     "Light_DRL": "head", "Light_Projector": "head", "Light_Indicator": "headlens", "Light_Tail": "tail",
 }
-CATEGORIES = {"paint", "glass", "dark", "gloss", "under", "chrome", "plate", "head", "headlens", "grille", "tail"}
+CATEGORIES = {"paint", "glass", "dark", "gloss", "under", "chrome", "plate", "head", "headlens", "grille", "tail", "brake"}
 SKIP_NODES = ("Interior", "SteeringWheel", "Wheel_", "Caliper_")
 
 
@@ -98,7 +98,8 @@ def tex_average(ti):
 
 def mat_tag(m):
     """A material as it is written into a surface's name: colour (sRGB), metalness, roughness, clear coat and its roughness,
-    and the glow (colour, strength): "e1a11a~0.00~0.42~1.00~0.03~000000~0.0"."""
+    the glow (colour, strength), the pattern the game's shader draws on it (0 none, see car_paint.gdshader) and whether it is a
+    lamp lit only with the headlights (1: see CarModel.material_of): "e1a11a~0.00~0.42~1.00~0.03~000000~0.0~0~0"."""
     pbr = m.get("pbrMetallicRoughness", {})
     c = list(pbr.get("baseColorFactor", [1, 1, 1, 1]))
     if "baseColorTexture" in pbr:   # (a texture darkens the colour: the game has no texture for it, so the colour takes its average)
@@ -110,8 +111,9 @@ def mat_tag(m):
     e = m.get("emissiveFactor", [0, 0, 0])
     es = float(ext.get("KHR_materials_emissive_strength", {}).get("emissiveStrength", 1.0)) if any(v > 0 for v in e) else 0.0
     ehex = "".join("%02x" % int(round(srgb(v) * 255)) for v in e[:3])
-    return "%s~%.2f~%.2f~%.2f~%.2f~%s~%.1f" % (hexc, float(pbr.get("metallicFactor", 1.0)), float(pbr.get("roughnessFactor", 1.0)),
-        float(cc.get("clearcoatFactor", 0.0)), float(cc.get("clearcoatRoughnessFactor", 0.0)), ehex, es)
+    ex = m.get("extras", {})
+    return "%s~%.2f~%.2f~%.2f~%.2f~%s~%.1f~%d~%d" % (hexc, float(pbr.get("metallicFactor", 1.0)), float(pbr.get("roughnessFactor", 1.0)),
+        float(cc.get("clearcoatFactor", 0.0)), float(cc.get("clearcoatRoughnessFactor", 0.0)), ehex, es, int(ex.get("pattern", 0)), int(ex.get("beam", 0)))
 
 
 def glass_tag(m):
@@ -198,7 +200,7 @@ for ci in root.get("children", []):
     if name.startswith("Wheel_"):
         prim = j["meshes"][n["mesh"]]["primitives"][0]
         wp = acc(prim["attributes"]["POSITION"])
-        wheels.append([name, t, float(wp[:, 0].max() - wp[:, 0].min()), float(wp[:, 1].max())])
+        wheels.append([name, t, float(wp[:, 0].max() - wp[:, 0].min()), float(wp[:, 1].max()), float(n.get("extras", {}).get("rim", 0.0))])
     if name.startswith(SKIP_NODES) and "mesh" in n:
         extras.append([name, n, M, t])
     if name.startswith(SKIP_NODES) or "mesh" not in n:
@@ -301,7 +303,9 @@ def measure():
     if "eye" in inside:
         e = inside["eye"]
         eye = [round(float(e[0]), 3), round(float(e[1]), 3), round(float(e[2]) - REAR, 3)]
-    return {"plate": plate, "paint_pbr": paint_pbr, "back": inside.get("shell"), "shelf": inside.get("shelf"), "eye": eye, "L": round(L, 3), "W": round(W, 3), "roof": round(roof0, 3), "belt": round(belt, 3),
+    rims = [w[4] for w in wheels if len(w) > 4 and w[4] > 0]
+    return {"plate": plate, "paint_pbr": paint_pbr, "back": inside.get("shell"), "shelf": inside.get("shelf"), "eye": eye,
+            "rim": round(float(np.mean(rims)), 4) if rims else None, "L": round(L, 3), "W": round(W, 3), "roof": round(roof0, 3), "belt": round(belt, 3),
             "gh": [round(g0, 3), round(g1, 3), round(g2, 3), round(g3, 3), round(belt, 3), round(roof0, 3), round(wbase / (W / 2), 3), round(wroof / (W / 2), 3)],
             "body": body, "wheel": [round(r, 3), round(rear_d, 3), round(front_d, 3)], "wheel_x": [round(wx[0], 3), round(wx[1], 3)],
             "tyre": round(tyre, 3), "ws_hw": round(ws_hw, 3), "axles": [float(a) for a in axles]}
@@ -316,7 +320,7 @@ if not LQ:
 
 # binary, as convert_coupe.py writes it: magic, surface count, then per surface: name, vertex count, positions, normals,
 # index count, indices (vertices shared where position and normal match)
-ORDER = ["paint", "glass", "dark", "under", "chrome", "gloss", "grille", "plate", "headlens", "head", "tail"]
+ORDER = ["paint", "glass", "dark", "under", "chrome", "gloss", "grille", "plate", "headlens", "head", "tail", "brake"]
 
 
 def write_cpe2(path, res, lq=False):

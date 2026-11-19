@@ -1,0 +1,1764 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Redline Rush — Garage Concepts</title>
+<meta name="theme-color" content="#0d6a42">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800;900&family=Overpass:wght@400;600;800&family=Overpass+Mono:wght@500;700&display=swap">
+<style>
+/* A dark studio turntable for each car; UI borrows the game's highway-sign green, amber and type. */
+:root{
+  --sign:#0d6a42;--sign-deep:#08482c;--sign-line:#f3f5ef;--ink:#f3f5ef;--muted:#b5c4ba;--amber:#f5b52e;
+  --f-display:'Big Shoulders Display','Arial Narrow',Impact,sans-serif;--f-body:'Overpass',system-ui,-apple-system,sans-serif;--f-mono:'Overpass Mono',ui-monospace,Menlo,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;overflow:hidden;background:#0b0d10;color:var(--ink);font-family:var(--f-body);-webkit-tap-highlight-color:transparent}
+#gl{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:grab;transition:opacity .15s}
+#gl:active{cursor:grabbing}
+.top{position:fixed;left:0;right:0;top:0;padding:calc(env(safe-area-inset-top) + 14px) calc(env(safe-area-inset-right) + 18px) 0 calc(env(safe-area-inset-left) + 18px);pointer-events:none}
+.eyebrow{font-family:var(--f-mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
+.eyebrow b{color:var(--amber);font-weight:700}
+h1{margin:2px 0 0;font-family:var(--f-display);font-weight:900;font-size:clamp(38px,9vw,64px);line-height:.92;letter-spacing:.01em;text-transform:uppercase}
+.tag{margin-top:6px;display:inline-block;font-family:var(--f-mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;background:var(--sign);color:var(--ink);padding:4px 8px 3px;border-radius:4px;box-shadow:0 0 0 2px var(--sign-line) inset}
+.tag.boss{background:#5a1717}
+#panel{position:fixed;left:0;right:0;bottom:0;padding:0 0 calc(env(safe-area-inset-bottom) + 10px);display:flex;flex-direction:column;gap:8px;pointer-events:none}
+#panel>*{pointer-events:auto}
+.row{display:flex;gap:8px;align-items:center;padding:0 calc(env(safe-area-inset-right) + 14px) 0 calc(env(safe-area-inset-left) + 14px)}
+#views{display:flex;background:rgba(8,11,13,.62);border-radius:999px;padding:3px;gap:2px;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+#views button{border:0;background:transparent;color:var(--muted);font-family:var(--f-mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;padding:8px 8px 6px;border-radius:999px;cursor:pointer}
+@media (max-width:420px){#views button{padding:8px 6px 6px;font-size:10px}#notesBtn{padding:9px 9px 7px;font-size:10px}}
+
+#views button[aria-pressed="true"]{background:var(--sign-line);color:#0b2a1b}
+#notesBtn{margin-left:auto;border:0;background:rgba(8,11,13,.62);color:var(--ink);font-family:var(--f-mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;padding:9px 12px 7px;border-radius:999px;cursor:pointer;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);white-space:nowrap}
+#notesBtn::after{content:' +';color:var(--amber)}
+#panel.open #notesBtn::after{content:' −'}
+.notes{display:none;margin:0 calc(env(safe-area-inset-right) + 14px) 0 calc(env(safe-area-inset-left) + 14px);background:var(--sign);border-radius:12px;box-shadow:0 0 0 2px var(--sign-line) inset,0 10px 30px rgba(0,0,0,.45);padding:14px 16px 12px;max-height:46vh;overflow:auto}
+#panel.open .notes{display:block}
+.notes p{margin:0 0 10px;font-size:14px;line-height:1.4}
+.cues{display:grid;gap:2px;margin-bottom:10px}
+.cues span{font-family:var(--f-mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+.cues b{font-family:var(--f-display);font-weight:800;font-size:20px;letter-spacing:.02em;line-height:1.05}
+#cNotes{margin:0 0 10px;padding-left:18px;font-size:13px;line-height:1.45;color:#e2ebe5}
+#cNotes li{margin-bottom:3px}
+#cStats{display:grid;grid-template-columns:repeat(2,1fr);gap:6px 14px}
+.st{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:8px;font-family:var(--f-mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.st i{height:5px;border-radius:3px;background:linear-gradient(90deg,var(--amber) calc(var(--v)*100%),rgba(255,255,255,.18) 0)}
+.st b{color:var(--ink);font-weight:700}
+#strip{display:flex;gap:6px;overflow-x:auto;padding:2px calc(env(safe-area-inset-right) + 14px) 4px calc(env(safe-area-inset-left) + 14px);scrollbar-width:none;align-items:center}
+#strip::-webkit-scrollbar{display:none}
+.grp{flex:none;font-family:var(--f-mono);font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);writing-mode:vertical-rl;transform:rotate(180deg);padding:0 2px;opacity:.8}
+.chip{flex:none;display:flex;align-items:center;gap:7px;border:0;border-radius:10px;background:rgba(8,11,13,.66);color:var(--ink);font-family:var(--f-display);font-weight:800;font-size:17px;letter-spacing:.03em;text-transform:uppercase;padding:9px 12px 7px;cursor:pointer;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+.chip i{width:12px;height:12px;border-radius:3px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.45)}
+.chip[aria-pressed="true"]{background:var(--sign);box-shadow:0 0 0 2px var(--sign-line) inset}
+#fallback[hidden]{display:none}
+#fallback{position:fixed;inset:0;display:grid;place-items:center;padding:30px;text-align:center;color:var(--muted)}
+@media (min-width:1100px){.notes{position:fixed;right:calc(env(safe-area-inset-right) + 18px);top:calc(env(safe-area-inset-top) + 18px);width:340px;max-height:none;margin:0;display:block}#notesBtn{display:none}}
+</style>
+</head>
+<body>
+<canvas id="gl" aria-label="3D car viewer. Drag to orbit, pinch to zoom."></canvas>
+<header class="top">
+  <div class="eyebrow">Redline Rush · <b>Garage concepts</b></div>
+  <h1 id="cName">Kestrel</h1>
+  <div id="cTag" class="tag"></div>
+</header>
+<section id="panel">
+  <div class="notes" id="notes">
+    <p id="cBlurb"></p>
+    <div class="cues"><span>Real-world references</span><b id="cCues"></b></div>
+    <ul id="cNotes"></ul>
+    <div id="cStats"></div>
+  </div>
+  <div class="row">
+    <nav id="views" aria-label="Camera">
+      <button data-v="3/4" aria-pressed="true">3/4</button><button data-v="chase">Chase</button><button data-v="side">Side</button><button data-v="front">Front</button><button data-v="rear">Rear</button><button data-v="inside">Inside</button>
+    </nav>
+    <button id="notesBtn" aria-expanded="false" aria-controls="notes">Notes</button>
+  </div>
+  <div id="strip" role="tablist" aria-label="Cars"></div>
+</section>
+<div id="fallback" hidden>This viewer needs WebGL 2, which this browser doesn't have turned on.</div>
+<script>
+'use strict';
+/* ============================================================
+   Redline Rush — garage concept renderer
+   Procedural car modeller (lofted bodies, greenhouses, wheels,
+   projected light/grille decals) + a small WebGL2 studio renderer.
+   ============================================================ */
+
+// ---------- math ----------
+const clamp=(v,a,b)=>v<a?a:v>b?b:v, lerp=(a,b,t)=>a+(b-a)*t;
+const smoothstep=(a,b,x)=>{const t=clamp((x-a)/(b-a),0,1);return t*t*(3-2*t);};
+const vsub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]], vadd=(a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]];
+const vmul=(a,s)=>[a[0]*s,a[1]*s,a[2]*s], vdot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+const vcross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
+const vnorm=a=>{const l=Math.hypot(a[0],a[1],a[2])||1;return [a[0]/l,a[1]/l,a[2]/l];};
+function hexLin(h){const n=parseInt(h.slice(1),16);return [(n>>16)&255,(n>>8)&255,n&255].map(c=>Math.pow(c/255,2.2));}
+function m4persp(fov,asp,n,f){const t=1/Math.tan(fov/2);return new Float32Array([t/asp,0,0,0,0,t,0,0,0,0,(f+n)/(n-f),-1,0,0,2*f*n/(n-f),0]);}
+function m4look(e,c,u){const z=vnorm(vsub(e,c)),x=vnorm(vcross(u,z)),y=vcross(z,x);
+  return new Float32Array([x[0],y[0],z[0],0,x[1],y[1],z[1],0,x[2],y[2],z[2],0,-vdot(x,e),-vdot(y,e),-vdot(z,e),1]);}
+function m4mul(a,b){const o=new Float32Array(16);for(let c=0;c<4;c++)for(let r=0;r<4;r++){let s=0;for(let k=0;k<4;k++)s+=a[k*4+r]*b[c*4+k];o[c*4+r]=s;}return o;}
+// 3x3 row-major helpers
+const M3={
+  I:()=>[1,0,0,0,1,0,0,0,1],
+  rx:a=>{const c=Math.cos(a),s=Math.sin(a);return [1,0,0,0,c,-s,0,s,c];},
+  ry:a=>{const c=Math.cos(a),s=Math.sin(a);return [c,0,s,0,1,0,-s,0,c];},
+  rz:a=>{const c=Math.cos(a),s=Math.sin(a);return [c,-s,0,s,c,0,0,0,1];},
+  sc:(x,y,z)=>[x,0,0,0,y,0,0,0,z],
+  mul:(a,b)=>{const o=[];for(let r=0;r<3;r++)for(let c=0;c<3;c++)o[r*3+c]=a[r*3]*b[c]+a[r*3+1]*b[3+c]+a[r*3+2]*b[6+c];return o;},
+  // columns = basis vectors u,v,w (maps local x,y,z to them)
+  basis:(u,v,w)=>[u[0],v[0],w[0],u[1],v[1],w[1],u[2],v[2],w[2]]
+};
+
+// monotone cubic interpolation through [[x,y],...]
+function curve(pts){
+  const n=pts.length,xs=pts.map(p=>p[0]),ys=pts.map(p=>p[1]);
+  if(n===1)return()=>ys[0];
+  const d=[],m=new Array(n);
+  for(let i=0;i<n-1;i++)d[i]=(ys[i+1]-ys[i])/(xs[i+1]-xs[i]);
+  m[0]=d[0];m[n-1]=d[n-2];
+  for(let i=1;i<n-1;i++)m[i]=d[i-1]*d[i]<=0?0:(d[i-1]+d[i])/2;
+  for(let i=0;i<n-1;i++){if(d[i]===0){m[i]=m[i+1]=0;continue;}const a=m[i]/d[i],b=m[i+1]/d[i],s=a*a+b*b;if(s>9){const t=3/Math.sqrt(s);m[i]=t*a*d[i];m[i+1]=t*b*d[i];}}
+  return x=>{
+    if(x<=xs[0])return ys[0]+m[0]*(x-xs[0])*0; if(x>=xs[n-1])return ys[n-1];
+    let lo=0,hi=n-1;while(hi-lo>1){const mid=(lo+hi)>>1;if(xs[mid]>x)hi=mid;else lo=mid;}
+    const h=xs[hi]-xs[lo],t=(x-xs[lo])/h,t2=t*t,t3=t2*t;
+    return (2*t3-3*t2+1)*ys[lo]+(t3-2*t2+t)*h*m[lo]+(-2*t3+3*t2)*ys[hi]+(t3-t2)*h*m[hi];
+  };
+}
+
+// ---------- mesh parts ----------
+class Part{
+  constructor(mat){this.mat=mat;this.P=[];this.N=[];this.M=[];this.T=[];this.I=[];}
+  get count(){return this.P.length/3;}
+  v(x,y,z,u=0,w=0){this.P.push(x,y,z);this.N.push(0,0,0);this.M.push(-1,-1,-1);this.T.push(u,w);return this.P.length/3-1;}
+  q(a,b,c,d){this.I.push(a,b,c,a,c,d);}
+  t(a,b,c){this.I.push(a,b,c);}
+  normals(){const P=this.P,N=this.N,I=this.I;N.fill(0);
+    for(let i=0;i<I.length;i+=3){const a=I[i]*3,b=I[i+1]*3,c=I[i+2]*3;
+      const e1x=P[b]-P[a],e1y=P[b+1]-P[a+1],e1z=P[b+2]-P[a+2],e2x=P[c]-P[a],e2y=P[c+1]-P[a+1],e2z=P[c+2]-P[a+2];
+      const nx=e1y*e2z-e1z*e2y,ny=e1z*e2x-e1x*e2z,nz=e1x*e2y-e1y*e2x;
+      N[a]+=nx;N[a+1]+=ny;N[a+2]+=nz;N[b]+=nx;N[b+1]+=ny;N[b+2]+=nz;N[c]+=nx;N[c+1]+=ny;N[c+2]+=nz;}
+    for(let i=0;i<N.length;i+=3){const l=Math.hypot(N[i],N[i+1],N[i+2])||1;N[i]/=l;N[i+1]/=l;N[i+2]/=l;}
+    return this;}
+  flip(){const I=this.I;for(let i=0;i<I.length;i+=3){const t=I[i+1];I[i+1]=I[i+2];I[i+2]=t;}for(let i=0;i<this.N.length;i++)this.N[i]=-this.N[i];return this;}
+  orientOut(c){let s=0;const P=this.P,N=this.N;for(let i=0;i<P.length;i+=3)s+=N[i]*(P[i]-c[0])+N[i+1]*(P[i+1]-c[1])+N[i+2]*(P[i+2]-c[2]);if(s<0)this.flip();return this;}
+  xf(m,t=[0,0,0],from=0){const P=this.P,N=this.N;
+    for(let i=from*3;i<P.length;i+=3){const x=P[i],y=P[i+1],z=P[i+2];
+      P[i]=m[0]*x+m[1]*y+m[2]*z+t[0];P[i+1]=m[3]*x+m[4]*y+m[5]*z+t[1];P[i+2]=m[6]*x+m[7]*y+m[8]*z+t[2];
+      const a=N[i],b=N[i+1],c=N[i+2];N[i]=m[0]*a+m[1]*b+m[2]*c;N[i+1]=m[3]*a+m[4]*b+m[5]*c;N[i+2]=m[6]*a+m[7]*b+m[8]*c;}
+    return this;}
+  append(o){const base=this.count;for(const [a,b] of [[this.P,o.P],[this.N,o.N],[this.M,o.M],[this.T,o.T]])for(let i=0;i<b.length;i++)a.push(b[i]);for(let i=0;i<o.I.length;i++)this.I.push(o.I[i]+base);return this;}
+  clone(){const p=new Part(this.mat);p.P=this.P.slice();p.N=this.N.slice();p.M=this.M.slice();p.T=this.T.slice();p.I=this.I.slice();return p;}
+}
+function grid(part,rows,cols,fn,closeCols=false){
+  const base=part.count;
+  for(let i=0;i<rows;i++)for(let j=0;j<cols;j++){const p=fn(i,j);part.v(p[0],p[1],p[2],p[3]||0,p[4]||0);}
+  for(let i=0;i<rows-1;i++)for(let j=0;j<(closeCols?cols:cols-1);j++){const j2=(j+1)%cols;
+    part.q(base+i*cols+j,base+i*cols+j2,base+(i+1)*cols+j2,base+(i+1)*cols+j);}
+  return base;
+}
+// revolve [[r,z],...] around local z axis
+function lathe(mat,prof,segs=48){const p=new Part(mat);
+  grid(p,prof.length,segs,(i,j)=>{const a=j/segs*Math.PI*2,r=prof[i][0];return [r*Math.cos(a),r*Math.sin(a),prof[i][1],j/segs,i/(prof.length-1)];},true);
+  return p.normals();}
+const sp=(v,e)=>Math.sign(v)*Math.pow(Math.abs(v),e);
+// superellipsoid "rounded box" centred at origin, half extents hx,hy,hz; e small = boxy
+function rbox(mat,hx,hy,hz,e=.3,nu=10,nv=20){
+const p=new Part(mat);
+  grid(p,nu+1,nv,(i,j)=>{const ph=-Math.PI/2+Math.PI*i/nu,th=-Math.PI+2*Math.PI*j/nv;
+    const cp=Math.cos(ph);return [hx*sp(cp,e)*sp(Math.cos(th),e),hy*sp(Math.sin(ph),e),hz*sp(cp,e)*sp(Math.sin(th),e)];},true);
+  return p.normals();}
+// cylinder between two points (with caps)
+function cyl(mat,p0,p1,r0,r1=r0,segs=20,caps=true){
+  const d=vsub(p1,p0),L=Math.hypot(...d),w=vnorm(d);
+  const prof=caps?[[0,0],[r0,0],[r0,0],[r1,L],[r1,L],[0,L]]:[[r0,0],[r1,L]];
+  const p=lathe(mat,prof,segs);const a=Math.abs(w[1])<.9?[0,1,0]:[1,0,0];const u=vnorm(vcross(a,w)),v=vcross(w,u);
+  return p.xf(M3.basis(u,v,w),p0);}
+// extrude closed 2D polygon (a,b) along local z from z0 to z1; smooth = smooth side normals
+function extrude(mat,poly,z0,z1,smooth=true){const p=new Part(mat),n=poly.length;
+  if(smooth){grid(p,2,n,(i,j)=>[poly[j][0],poly[j][1],i?z1:z0],true);}
+  else{for(let j=0;j<n;j++){const a=poly[j],b=poly[(j+1)%n],s=p.count;p.v(a[0],a[1],z0);p.v(b[0],b[1],z0);p.v(b[0],b[1],z1);p.v(a[0],a[1],z1);p.q(s,s+1,s+2,s+3);}}
+  for(const z of [z0,z1]){let cx=0,cy=0;for(const q of poly){cx+=q[0];cy+=q[1];}cx/=n;cy/=n;const c=p.v(cx,cy,z),s=p.count;for(const q of poly)p.v(q[0],q[1],z);for(let j=0;j<n;j++)p.t(c,s+j,s+(j+1)%n);}
+  return p.normals();}
+function mirrorZ(part){return part.clone().xf(M3.sc(1,1,-1));}
+
+// ---------- 2D shape helpers (decal outlines) ----------
+// rounded polygon: pts [[u,v],...], radius r (number or array)
+function pg(pts,r=0,seg=5){const out=[],n=pts.length;
+  for(let i=0;i<n;i++){const p=pts[i],a=pts[(i+n-1)%n],b=pts[(i+1)%n],rr=Array.isArray(r)?r[i]:r;
+    if(!rr){out.push(p);continue;}
+    const da=Math.hypot(a[0]-p[0],a[1]-p[1]),db=Math.hypot(b[0]-p[0],b[1]-p[1]),k=Math.min(rr,da*.45,db*.45);
+    const p0=[p[0]+(a[0]-p[0])/da*k,p[1]+(a[1]-p[1])/da*k],p1=[p[0]+(b[0]-p[0])/db*k,p[1]+(b[1]-p[1])/db*k];
+    for(let s=0;s<=seg;s++){const t=s/seg,u=1-t;out.push([u*u*p0[0]+2*u*t*p[0]+t*t*p1[0],u*u*p0[1]+2*u*t*p[1]+t*t*p1[1]]);}}
+  return out;}
+const rr=(cu,cv,w,h,r=.01,skew=0)=>pg([[cu-w/2,cv-h/2],[cu+w/2,cv-h/2],[cu+w/2+skew,cv+h/2],[cu-w/2+skew,cv+h/2]],r);
+const el=(cu,cv,rx,ry=rx,n=28)=>Array.from({length:n},(_,i)=>{const a=i/n*Math.PI*2;return [cu+rx*Math.cos(a),cv+ry*Math.sin(a)];});
+// signed distance to polygon (positive inside)
+function polySd(px,py,pts){let d=Infinity,s=1;const n=pts.length;
+  for(let i=0,j=n-1;i<n;j=i++){const ax=pts[j][0],ay=pts[j][1],bx=pts[i][0],by=pts[i][1];
+    const ex=bx-ax,ey=by-ay,wx=px-ax,wy=py-ay,t=clamp((wx*ex+wy*ey)/(ex*ex+ey*ey),0,1);
+    const dx=wx-ex*t,dy=wy-ey*t;d=Math.min(d,dx*dx+dy*dy);
+    const c1=py>=ay,c2=py<by,c3=ex*wy>ey*wx;if((c1&&c2&&c3)||(!c1&&!c2&&!c3))s=-s;}
+  return -s*Math.sqrt(d);}
+const band=(v,a,b)=>Math.min(v-a,b-v);
+const U=Math.max,X=Math.min;
+
+// distance helper for wheel-arch trims (positive within w of the arch edge)
+function archSd(x,y,api,w){let d=-1;
+  for(const a of api.arches){const r=Math.hypot(x-a.x,y-a.cy);d=Math.max(d,X(a.Ra+w-r,r-a.Ra+.004));}
+  return d;}
+// resample a polyline [[y,z],...] to n+1 points, evenly by arc length (a little extra density in tight bends)
+function resample(pts,n,bend=.05,wfn=null){
+  const cum=[0];
+  for(let i=1;i<pts.length;i++){let ds=Math.hypot(pts[i][0]-pts[i-1][0],pts[i][1]-pts[i-1][1]);let da=0;if(wfn)ds*=wfn(pts[i]);
+    if(i>1){const a1=Math.atan2(pts[i-1][0]-pts[i-2][0],pts[i-1][1]-pts[i-2][1]),a2=Math.atan2(pts[i][0]-pts[i-1][0],pts[i][1]-pts[i-1][1]);da=Math.abs(Math.atan2(Math.sin(a2-a1),Math.cos(a2-a1)));}
+    cum.push(cum[i-1]+ds+bend*da);}
+  const tot=cum[cum.length-1],out=[];let k=0;
+  for(let j=0;j<=n;j++){const sv=tot*j/n;while(k<pts.length-2&&cum[k+1]<sv)k++;const t=clamp((sv-cum[k])/((cum[k+1]-cum[k])||1),0,1);
+    const q=[];for(let c=0;c<pts[k].length;c++)q.push(pts[k][c]+(pts[k+1][c]-pts[k][c])*t);out.push(q);}
+  return out;}
+// ---------- body (lofted superellipse sections) ----------
+function buildBody(S){
+  const B=Object.assign({nU:3.4,nL:2.8,tuck:.9,tumble:.06,hc:.56,capF:.12,capR:.1,capTopK:.6,capBotK:.5,archGap:.04,archDrop:.03,flare:[0,0],riseBoost:[0,0],rise:null,dents:[]},S.body);
+  S.body=B;const L=B.L,W=S.wheels;
+  const cf=v=>typeof v==='number'?()=>v:curve(v);
+  // feature-line bodies: longitudinal curves (centreline, fender crown, widest line, sill, underside, scoop) define each section
+  const LN=B.lines?Object.fromEntries(Object.entries(B.lines).map(([k,v])=>[k,Array.isArray(v)&&Array.isArray(v[0])?curve(v):v])):null;
+  if(LN){B.top=B.top||B.lines.top;B.width=B.width||B.lines.wZ;B.clr=B.clr||B.lines.bot;}
+  const topF=curve(B.top),wF=curve(B.width),clrF=curve(B.clr),riseF=B.rise?curve(B.rise):()=>0,hcF=cf(B.hc),nUF=cf(B.nU);
+  const ax=[{x:W.xF,R:W.rF,f:B.flare[0],rb:B.riseBoost[0],tw:W.twF,z:W.zF},{x:W.xR,R:W.rR,f:B.flare[1],rb:B.riseBoost[1],tw:W.twR,z:W.zR}];
+  const arches=ax.map(a=>({x:a.x,cy:a.R-B.archDrop,Ra:a.R+B.archGap+B.archDrop,zWell:a.z-a.tw/2-.025}));
+  const capD=x=>{if(x<B.capF){const t=B.capF-x;return B.capF-Math.sqrt(Math.max(0,B.capF*B.capF-t*t));}
+    if(x>L-B.capR){const t=x-(L-B.capR);return B.capR-Math.sqrt(Math.max(0,B.capR*B.capR-t*t));}return 0;};
+  function secL(x){const d=capD(x);return {x,top:LN.top(x)-d*B.capTopK,bot:LN.bot(x)+d*B.capBotK,w:LN.wZ(x)-d,hc:LN.wY(x),nU:4,d,rise:0};}
+  // control points of a feature-line section, as [z,y] from top centre to bottom centre (+ scoop depth per point)
+  function ctrlL(s){const x=s.x,d=s.d;
+    const top=LN.top(x),cY=LN.crownY(x),cZ=LN.crownZ(x),wY=LN.wY(x),wZ=LN.wZ(x),sY=LN.sillY(x),bot=LN.bot(x);
+    const sc=LN.scoop?Math.max(0,LN.scoop(x)):0,sIn=LN.sillIn==null?.05:LN.sillIn,val=LN.valley==null?.3:LN.valley;
+    const sm=LN.scoopMid==null?.5:LN.scoopMid,sw=LN.scoopW==null?.42:LN.scoopW,roll=LN.roll==null?.4:LN.roll;
+    const P=[[0,top,0],[cZ*.5,top+(cY-top)*val,0],[cZ,cY,0],[lerp(cZ,wZ,.8),lerp(cY,wY,roll),0],[wZ,wY,0]];
+    for(const f of [.2,.4,.6,.8]){const pr=Math.max(0,1-Math.pow((f-sm)/sw,2));P.push([wZ-sIn*f*f-sc*pr,lerp(wY,sY,f),sc*pr]);}
+    P.push([wZ-sIn,sY,0],[wZ-sIn-.035,bot+.012,0],[0,bot,0]);
+    if(d>0){const n=P.length;for(let i=0;i<n;i++){P[i][0]=Math.max(0,P[i][0]-d);
+      if(i<=3)P[i][1]-=d*B.capTopK*[1,1,1,.7][i];else if(i>=n-3)P[i][1]+=d*B.capBotK*[.5,.9,1][i-(n-3)];}}
+    return P;}
+  function denseL(s){const P=ctrlL(s);let out;
+    if(LN.style==='facet'){
+      const rad=LN.fillet||[.3,.2,.035,.05,.03,.12,.12,.12,.12,.03,.02,.2];
+      const loop=P.map(p=>[p[0],p[1]]),n=P.length;for(let i=n-2;i>=1;i--)loop.push([-P[i][0],P[i][1]]);
+      const rr=loop.map((_,i)=>rad[i<n?i:2*n-2-i]);
+      const pl=pg(loop,rr,10);
+      // keep the right half (z>=0), from top centre to bottom centre
+      out=[];let started=false;for(const q of pl){if(q[0]>=-1e-9){out.push([q[1],Math.max(0,q[0])]);}}
+      // pg starts at the top-centre fillet; reorder so the half runs top -> bottom
+      let k0=0,best=1e9;out.forEach((q,i)=>{if(q[1]<best-1e-6&&q[0]>(P[0][1]+P[n-1][1])/2){best=q[1];k0=i;}});
+      out=out.slice(k0).concat(out.slice(0,k0));
+      out=out.filter((q,i)=>i===0||Math.hypot(q[0]-out[i-1][0],q[1]-out[i-1][1])>1e-6);
+    }else{
+      const Q=[[-P[1][0],P[1][1]],...P.map(p=>[p[0],p[1]]),[-P[P.length-2][0],P[P.length-2][1]]];out=[];
+      const seg=16;
+      for(let i=1;i<Q.length-2;i++){const p0=Q[i-1],p1=Q[i],p2=Q[i+1],p3=Q[i+2];
+        const dt=(a,b)=>Math.max(1e-4,Math.pow(Math.hypot(b[0]-a[0],b[1]-a[1]),.5));
+        const t0=0,t1=t0+dt(p0,p1),t2=t1+dt(p1,p2),t3=t2+dt(p2,p3);
+        for(let k=(i===1?0:1);k<=seg;k++){const t=t1+(t2-t1)*k/seg;
+          const L1=(a,b,ta,tb)=>[(tb-t)/(tb-ta)*a[0]+(t-ta)/(tb-ta)*b[0],(tb-t)/(tb-ta)*a[1]+(t-ta)/(tb-ta)*b[1]];
+          const A1=L1(p0,p1,t0,t1),A2=L1(p1,p2,t1,t2),A3=L1(p2,p3,t2,t3),B1=L1(A1,A2,t0,t2),B2=L1(A2,A3,t1,t3),C=L1(B1,B2,t1,t2);
+          out.push([C[1],Math.max(0,C[0])]);}}
+    }
+    // scoop depth for masks, per output point (by height within the side band)
+    const wY=P[4][1],sY=P[P.length-3][1],sc=LN.scoop?Math.max(0,LN.scoop(s.x)):0,sm=LN.scoopMid==null?.5:LN.scoopMid,sw=LN.scoopW==null?.42:LN.scoopW;
+    return out.map(q=>{let e=0;if(sc>0&&q[0]<wY&&q[0]>sY&&q[1]>P[4][0]*.5){const f=(wY-q[0])/(wY-sY);e=sc*Math.max(0,1-Math.pow((f-sm)/sw,2));}return [q[0],q[1],e];});}
+  function sec(x){
+    if(LN)return secL(x);
+    let top=topF(x),w=wF(x),clr=clrF(x),bot=clr,rise=riseF(x);
+    for(const a of ax){const Ra=a.R+B.archGap+B.archDrop,f=(x-a.x)/(Ra*1.8);if(Math.abs(f)<1){const b=(1-f*f)*(1-f*f);w+=a.f*b;rise+=a.rb*b;}}
+    let d=0;
+    if(x<B.capF){const t=B.capF-x;d=B.capF-Math.sqrt(Math.max(0,B.capF*B.capF-t*t));}
+    else if(x>L-B.capR){const t=x-(L-B.capR);d=B.capR-Math.sqrt(Math.max(0,B.capR*B.capR-t*t));}
+    w-=d;top-=d*B.capTopK;bot=Math.max(bot,clr+d*B.capBotK);
+    const hc=clamp(clr+(top-clr)*hcF(x),bot+.025,top-.03);
+    rise*=1-clamp(d/Math.max(B.capF,.01),0,1);
+    return {x,top,bot,hc,w,rise,d,nU:nUF(x)};
+  }
+  // stations
+  const xs=new Set();
+  for(let x=0;x<=L+1e-9;x+=.028)xs.add(+x.toFixed(4));
+  for(let k=0;k<=18;k++){const a=k/18*Math.PI/2;xs.add(B.capF*(1-Math.sin(a)));xs.add(L-B.capR*(1-Math.sin(a)));}
+  for(const dn of B.dents){const x0=Math.min(...dn.poly.map(p=>p[0]))-.03,x1=Math.max(...dn.poly.map(p=>p[0]))+.03;for(let x=x0;x<=x1;x+=.008)xs.add(+x.toFixed(4));}
+  for(const [x0,x1] of (B.denseX||[]))for(let x=x0;x<=x1;x+=.006)xs.add(+x.toFixed(4));
+  const XS=[...xs].filter(x=>x>=0&&x<=L).sort((a,b)=>a-b);
+  const HR=54,R=2*HR;
+  const bump=r=>smoothstep(.45,.82,r)*(1-smoothstep(.97,1.07,r));
+  function denseHalf(s){const pts=[],NU=160,NL=100,nU=s.nU;
+    for(let j=0;j<=NU;j++){const b=j/NU*Math.PI/2,t=Math.pow(Math.cos(b),2/nU);let y=s.hc+(s.top-s.hc)*t;const z=s.w*Math.pow(Math.sin(b),2/nU)*(1-B.tumble*t);
+      if(s.rise)y+=s.rise*bump(z/s.w)*t;pts.push([y,z]);}
+    for(let j=1;j<=NL;j++){const b=j/NL*Math.PI/2,u=Math.pow(Math.sin(b),2/B.nL);pts.push([s.hc-(s.hc-s.bot)*u,s.w*Math.pow(Math.cos(b),2/B.nL)*(B.tuck+(1-B.tuck)*(1-u*u))]);}
+    return pts;}
+  function ringHalf(s){
+    if(LN)return resample(denseL(s),HR,LN.bend==null?.06:LN.bend);
+
+    // extra ring density around nearby side intakes so their edges stay smooth
+    const near=B.dents.filter(dn=>{const xs=dn.poly.map(p=>p[0]);return s.x>Math.min(...xs)-.12&&s.x<Math.max(...xs)+.12;});
+    const wfn=near.length?(q=>{let w=1;for(const dn of near){const xs=dn.poly.map(p=>p[0]),x0=Math.min(...xs),x1=Math.max(...xs);
+      const wx=smoothstep(x0-.12,x0-.02,s.x)*(1-smoothstep(x1+.02,x1+.12,s.x)),sd=polySd(s.x,q[0],dn.poly);w+=2.6*wx*Math.exp(-sd*sd/(.06*.06));}return w;}):null;
+
+    const rh=resample(denseHalf(s),HR,.05,wfn);
+    if(B.dents.length){const nz=rh.map((q,j)=>{const a=rh[Math.max(0,j-1)],b=rh[Math.min(HR,j+1)],ty=b[0]-a[0],tz=b[1]-a[1],l=Math.hypot(ty,tz)||1;return -ty/l;});
+      for(let j=1;j<HR;j++){const sf=smoothstep(.3,.65,nz[j]);if(sf<=0)continue;
+        for(const dn of B.dents){const sd=polySd(s.x,rh[j][0],dn.poly);if(sd<=-dn.soft)continue;
+          const f=smoothstep(-dn.soft,dn.soft*.5,sd),rp=dn.ramp?Math.pow(smoothstep(dn.ramp[0],dn.ramp[1],s.x),.8):1;
+          rh[j][1]-=dn.depth*f*rp*sf;}}}
+    return rh;}
+  const secs=XS.map(sec),rings=secs.map(ringHalf);
+  // --- geometric queries on the actual (uncut) rings ---
+  function ringAt(x){if(x<0||x>L)return null;let lo=0,hi=XS.length-1;while(hi-lo>1){const m=(lo+hi)>>1;if(XS[m]>x)hi=m;else lo=m;}
+    const f=XS[hi]===XS[lo]?0:(x-XS[lo])/(XS[hi]-XS[lo]),A=rings[lo],Bq=rings[hi];const o=new Array(HR+1);
+    for(let j=0;j<=HR;j++)o[j]=[A[j][0]+(Bq[j][0]-A[j][0])*f,A[j][1]+(Bq[j][1]-A[j][1])*f];return o;}
+  function inRing(rh,y,z){const az=Math.abs(z);let c=0;
+    for(let j=1;j<rh.length;j++){const a=rh[j-1],b=rh[j];if((a[0]>y)!==(b[0]>y)){const zi=a[1]+(b[1]-a[1])*(y-a[0])/(b[0]-a[0]);if(zi>az)c++;}}
+    return (c&1)===1;}
+  const inArch=(x,y,z)=>{for(const a of arches){if(Math.abs(z)>a.zWell&&(x-a.x)*(x-a.x)+(y-a.cy)*(y-a.cy)<a.Ra*a.Ra)return true;}return false;};
+  const inside=(x,y,z)=>{const rh=ringAt(x);return rh?inRing(rh,y,z)&&!inArch(x,y,z):false;};
+  function hwAt(x,y){const rh=ringAt(clamp(x,0,L));let m=-1;for(let j=1;j<rh.length;j++){const a=rh[j-1],b=rh[j];if((a[0]-y)*(b[0]-y)<=0&&a[0]!==b[0]){m=Math.max(m,a[1]+(b[1]-a[1])*(y-a[0])/(b[0]-a[0]));}}return m;}
+  function topY(x,z){const rh=ringAt(clamp(x,0,L)),az=Math.abs(z);let m=-1;for(let j=1;j<rh.length;j++){const a=rh[j-1],b=rh[j];if((a[1]-az)*(b[1]-az)<=0&&a[1]!==b[1]){m=Math.max(m,a[0]+(b[0]-a[0])*(az-a[1])/(b[1]-a[1]));}}return m;}
+  function ray(o,d,maxT=2.5,guess=-1){const st=.01;
+    if(inside(o[0],o[1],o[2]))return null;
+    // warm start near the neighbouring vertex's hit (must still be outside the body)
+    let t=0;if(guess>0){const g=Math.max(0,guess-.07);if(!inside(o[0]+d[0]*g,o[1]+d[1]*g,o[2]+d[2]*g))t=g;}
+    while(t<maxT){t+=st;const x=o[0]+d[0]*t,y=o[1]+d[1]*t,z=o[2]+d[2]*t;
+      if(inside(x,y,z)){let a=t-st,b=t;for(let k=0;k<11;k++){const m=(a+b)/2;if(inside(o[0]+d[0]*m,o[1]+d[1]*m,o[2]+d[2]*m))b=m;else a=m;}
+        return [o[0]+d[0]*b,o[1]+d[1]*b,o[2]+d[2]*b];}}
+    return null;}
+
+  const pt=(i,k)=>{let j=k,sg=1;if(k>HR){j=R-k;sg=-1;}const q=rings[i][j];return [XS[i],q[0],sg*q[1]];};
+  const body=new Part('body');
+  grid(body,XS.length,R,pt,true);
+  body.normals().orientOut([L/2,.55,0]);
+  for(const [i,nx] of [[0,-1],[XS.length-1,1]]){const cp=new Part('body'),s=secs[i];
+    const c=cp.v(XS[i],(s.top+s.bot)/2,0);for(let k=0;k<R;k++){const p=pt(i,k);cp.v(p[0],p[1],p[2]);}
+    for(let k=0;k<R;k++)cp.t(c,1+k,1+(k+1)%R);cp.normals();
+    for(let q=0;q<cp.N.length;q+=3){cp.N[q]=nx;cp.N[q+1]=0;cp.N[q+2]=0;}
+    body.append(cp);}
+  const maxZ=x=>{const rh=ringAt(clamp(x,0,L));let m=0;for(const q of rh)m=Math.max(m,q[1]);return m;};
+  const api={L,sec,hw:(s,y)=>hwAt(s.x,y),hwAt,inside,ray,topY,topF,wF,B,W,maxZ,arches,LN,beltY:LN?(x=>LN.crownY(x)-.012):null};
+  const nRing=XS.length*R;
+  for(let i=0;i<body.count;i++){const p=[body.P[i*3],body.P[i*3+1],body.P[i*3+2]],n=[body.N[i*3],body.N[i*3+1],body.N[i*3+2]];
+    let extra=0;if(LN&&i<nRing){const k=i%R,j=k>HR?R-k:k;extra=rings[Math.floor(i/R)][j][2]||0;}
+    let m=S.mask?S.mask(p,n,api,extra):[-1,-1,-1];
+    let under=(-n[1]-.72)*.3;
+
+    body.M[i*3]=m[0];body.M[i*3+1]=U(m[1],under);body.M[i*3+2]=m[2];}
+  // wheel-well tubs, visible through the arch cut-outs (the cut itself is done per pixel in the shader)
+  const liner=new Part('liner');
+  for(const a of arches)for(const sg of [1,-1]){
+    const ok=t=>{const x=a.x+a.Ra*Math.cos(t),y=a.cy+a.Ra*Math.sin(t);return y>sec(x).bot+.002;};
+    let a0=0;while(a0>-Math.PI/2&&ok(a0-.005))a0-=.005;let a1=Math.PI;while(a1<1.5*Math.PI&&ok(a1+.005))a1+=.005;
+    const N=110,C=5,arc=[];
+    for(let i=0;i<=N;i++){const t=a0+(a1-a0)*i/N,x=a.x+a.Ra*Math.cos(t),y=a.cy+a.Ra*Math.sin(t);let ze=hwAt(x,y);if(!(ze>a.zWell+.01))ze=a.zWell+.01;arc.push([x,y,ze+.007]);}
+    grid(liner,N+1,C,(i,j)=>{const q=arc[i];return [q[0],q[1],sg*lerp(a.zWell,q[2],j/(C-1))];});
+    const c=liner.v(a.x,a.cy,sg*a.zWell),s0=liner.count;for(const q of arc)liner.v(q[0],q[1],sg*a.zWell);
+    for(let i=0;i<N;i++)liner.t(c,s0+i,s0+i+1);liner.t(c,s0+N,s0);}
+  liner.normals();
+  return {body,api,liner};
+}
+
+// ---------- greenhouse ----------
+function buildCabin(S,api){
+  const C=Object.assign({gFrac:.94,inset:.03,tumble:.13,n:4.5,pillar:.065,pillarR:null,header:.05,belt:.025,bw:.075,bx:null,
+    mats:{roof:'paint',a:'paint',c:'paint',b:'trim'},rear:true,chrome:false,corner:.6},S.cabin);S.cabin=C;
+  const B=api.B,pts=C.pts.map(p=>p.slice()),x0=pts[0][0],x1=pts[pts.length-1][0];
+  const baseY=api.beltY||(x=>{const s=api.sec(x),tB=Math.pow(1-Math.pow(C.gFrac,s.nU),1/s.nU);return s.hc+(s.top-s.hc)*tB;});
+  pts[0][1]=baseY(x0);pts[pts.length-1][1]=baseY(x1);
+  const roofF=curve(pts);
+  const xs=new Set();for(let x=x0;x<=x1;x+=.022)xs.add(x);for(let k=1;k<10;k++){xs.add(x0+k*.0015);xs.add(x1-k*.0015);}xs.add(x1);
+  for(const v of [C.wsTop,C.rwTop,C.bx])if(v!=null)for(let k=-3;k<=3;k++)xs.add(v+k*.004);
+  const XS=[...xs].filter(x=>x>=x0&&x<=x1).sort((a,b)=>a-b);
+  const NG=46,RC=2*NG+1,pR=C.pillarR||C.pillar;
+
+  const mid=C.bx!=null?C.bx:(C.wsTop+C.rwTop)/2;
+  const p=new Part('cabin');const info=[],WB=[];
+  for(const x of XS){const base=baseY(x),h=Math.max(roofF(x)-base,.0004);
+    const wb=Math.max(api.hwAt(x,base)-C.inset,.05),wt=wb-C.tumble*clamp(h/.42,0,1);WB.push(wb);
+    // dense quarter (side base -> top centre) with girth, then resample evenly
+    const dq=[];const ND=160;let g=0,gs=0;const thc=C.corner*Math.PI/2;
+    for(let j=0;j<=ND;j++){const th=j/ND*Math.PI/2,cx=Math.pow(Math.cos(th),2/C.n),cy=Math.pow(Math.sin(th),2/C.n);
+      const q=[base+h*cy,cx*(wb+(wt-wb)*cy)];if(j){g+=Math.hypot(q[0]-dq[j-1][0],q[1]-dq[j-1][1]);}if(th<=thc)gs=g;dq.push([q[0],q[1],g]);}
+    // resample with extra density around the pillar edge (g~gs) and the belt line (g~0), where the window masks change
+    const cw=[0];for(let j=1;j<dq.length;j++){const ds=Math.hypot(dq[j][0]-dq[j-1][0],dq[j][1]-dq[j-1][1]),gm=(dq[j][2]+dq[j-1][2])/2;
+      cw.push(cw[j-1]+ds*(1+3.5*Math.exp(-Math.pow((gm-gs)/.07,2))+2*Math.exp(-Math.pow(gm/.05,2))));}
+    const rq=[];{let k=0;const tw=cw[cw.length-1];for(let j=0;j<=NG;j++){const sv=tw*j/NG;while(k<dq.length-2&&cw[k+1]<sv)k++;const t=clamp((sv-cw[k])/((cw[k+1]-cw[k])||1),0,1);
+      rq.push([lerp(dq[k][0],dq[k+1][0],t),lerp(dq[k][1],dq[k+1][1],t),lerp(dq[k][2],dq[k+1][2],t)]);}}
+    rq[NG][1]=0;
+
+    const ring=[];for(let j=0;j<RC;j++){const k=j<=NG?j:2*NG-j,sg=j<NG?-1:1;ring.push([x,rq[k][0],sg*rq[k][1],rq[k][2]]);}
+    for(let j=0;j<RC;j++){const g=ring[j][3];info.push([x,g,g-gs,gs,ring[j]]);}
+  }
+  grid(p,XS.length,RC,(i,j)=>info[i*RC+j][4]);
+  p.normals().orientOut([(x0+x1)/2,baseY((x0+x1)/2)-.3,0]);
+  for(let i=0;i<p.count;i++){const [x,g,u,gs,q]=info[i];
+    const xC=C.cx[0]+(C.cx[1]-C.cx[0])*clamp(g/gs,0,1);
+    let sdSide=X(-u-C.pillar/2,g-C.belt,xC-x,x-(x0+.03));
+    if(C.winTop)sdSide=X(sdSide,C.winTop-q[1]);
+
+    if(C.bx!=null)sdSide=X(sdSide,Math.abs(x-C.bx)-C.bw/2);
+    if(C.sideFn)sdSide=C.sideFn(x,g,u,sdSide);
+    const sdWs=X(u-C.pillar/2,(C.wsTop-C.header)-x,g-.004);
+    const sdRw=C.rear?X(u-pR/2,x-(C.rwTop+C.header*.6),g-.025):-1;
+    const sdRg=C.mats.roof==='glass'?X(u-C.pillar/2-.05,x-(C.wsTop+.07),(C.rwTop-.07)-x):-1;
+    const glass=U(sdWs,sdSide,sdRw,sdRg);
+    const roofP=X(u-C.pillar/2,x-(C.wsTop-C.header),(C.rwTop+C.header*.6)-x);
+    const sdA=X(-roofP,mid-x),sdCc=X(-roofP,x-mid),sdB=C.bx!=null?X(C.bw/2-Math.abs(x-C.bx),-u):-1;
+    const M=C.mats,gasket=.011-Math.abs(glass),belt=X(C.belt-g,-u,x-(x0+.05));
+    let trim=U(M.a==='trim'?sdA:-1,M.c==='trim'?sdCc:-1,M.b==='trim'?sdB:-1,M.roof==='trim'||M.roof==='glass'?roofP:-1);
+    let acc=-1;
+    if(C.chrome)acc=U(gasket,belt);else trim=U(trim,gasket,belt);
+    if(C.accentFn)acc=U(acc,C.accentFn(q[0],q[1],q[2],u));
+    p.M[i*3]=glass;p.M[i*3+1]=trim;p.M[i*3+2]=acc;}
+  const wbAt=x=>{if(x<=XS[0])return WB[0];if(x>=XS[XS.length-1])return WB[WB.length-1];let i=1;while(XS[i]<x)i++;return lerp(WB[i-1],WB[i],(x-XS[i-1])/(XS[i]-XS[i-1]));};
+  // inner surface of the greenhouse at height y (for placing mirrors, visors, checking head room)
+  const innerAt=(x,y)=>{const base=baseY(x),h=Math.max(roofF(x)-base,1e-4),cy=clamp((y-base)/h,0,1),wb=wbAt(x),wt=wb-C.tumble*clamp(h/.42,0,1);
+    const cx=Math.pow(Math.max(0,1-Math.pow(cy,C.n)),1/C.n);return cx*(wb+(wt-wb)*cy);};
+
+  return {cabin:p,roofF,baseY,x0,x1,wbAt,innerAt,C};
+}
+
+// ---------- wheels ----------
+function buildWheel(S,front){
+  const W=S.wheels,R=front?W.rF:W.rR,rim=front?W.rimF:W.rimR,tw=front?W.twF:W.twR,h=tw/2;
+  const st=Object.assign({style:'spoke',n:5,w0:.045,w1:.05,conc:.035,dish:0,cap:'rim'},W.rimStyle);
+  const parts=[];
+  // tyre
+  const sr=Math.min(.04,tw*.17),prof=[];
+  const sw=(sgn)=>{const o=[];for(let k=0;k<=8;k++){const f=k/8,r=lerp(rim+.004,R-sr,f);o.push([r,sgn*h*(.86+.12*Math.sin(Math.PI*Math.min(1,f*1.15)))]);}return o;};
+  const zs=h*.96-sr;
+  const inner=sw(-1);prof.push(...inner);
+  for(let k=1;k<=6;k++){const a=k/6*Math.PI/2;prof.push([R-sr+sr*Math.sin(a),-(zs+sr*Math.cos(a))]);}
+  for(let k=1;k<10;k++)prof.push([R,-zs+2*zs*k/10]);
+  for(let k=0;k<=5;k++){const a=(1-k/6)*Math.PI/2;prof.push([R-sr+sr*Math.sin(a),zs+sr*Math.cos(a)]);}
+  prof.push(...sw(1).reverse());
+  parts.push(lathe('tire',prof,64));
+  const fz=h*.8, conc=st.conc, dish=st.dish;
+  // lip + barrel + dark back
+  parts.push(lathe('rim',[[rim+.003,fz-.03],[rim+.013,fz-.012],[rim+.011,fz+.003],[rim-.002,fz+.006],[rim-.01,fz-.002],[rim-.01-dish*.3,fz-.004-dish*.5],[rim-.012-dish,fz-.008-dish*.6]],96));
+  parts.push(lathe('rimInner',[[rim-.012-dish,fz-.008-dish*.6],[rim-.016-dish,fz-.03-dish*.6],[rim-.02,-h*.75]],48));
+  parts.push(lathe('void',[[0,-h*.55],[rim-.018,-h*.55]],32));
+  const r0=.075,r1=rim-.009-dish,fzS=fz-dish*.6;
+  const zf=r=>fzS-.004-conc*Math.pow(1-clamp((r-r0)/(r1-r0),0,1),1.4);
+  // brake disc + caliper
+  const bz=zf(r0)-.05;
+  parts.push(lathe('disc',[[.09,bz],[rim*.8,bz],[rim*.8,bz-.026],[.09,bz-.026]],48));
+  parts.push(lathe('rimInner',[[0,bz+.012],[.085,bz+.012],[.09,bz]],24));
+  {const c=rbox('caliper',.034,.075,.026,.22),a=front?.75:.65;
+    c.xf(M3.rz(a),[Math.cos(a)*rim*.72,Math.sin(a)*rim*.72,bz+.028]);parts.push(c);}
+  // face
+  const face=new Part('rim');
+  function spoke(a0,twist,w0,w1,depth=.022,crown=.004){
+    const n=10,rows=[];
+    for(let i=0;i<=n;i++){const f=i/n,r=lerp(r0-.005,r1,f),a=a0+twist*f,w=lerp(w0,w1,f),z=zf(r);
+      const c=[Math.cos(a),Math.sin(a)],t=[-Math.sin(a),Math.cos(a)];
+      rows.push({l:[c[0]*r-t[0]*w/2,c[1]*r-t[1]*w/2],m:[c[0]*r,c[1]*r],rt:[c[0]*r+t[0]*w/2,c[1]*r+t[1]*w/2],z});}
+    grid(face,n+1,3,(i,j)=>{const q=rows[i],p=j===0?q.l:j===1?q.m:q.rt;return [p[0],p[1],q.z+(j===1?crown:0)];});
+    for(const k of ['l','rt'])grid(face,n+1,2,(i,j)=>{const q=rows[i];return [q[k][0],q[k][1],q.z-(j?depth:0)];});
+  }
+  function disc(prof){face.append(lathe('rim',prof,96));}
+  if(st.style==='spoke'||st.style==='classic'){for(let k=0;k<st.n;k++)spoke(k/st.n*Math.PI*2+(st.rot||0),st.twist||0,st.w0,st.w1);}
+  else if(st.style==='split'){const sH=st.sepH||.03,sR=st.sepR||.12;
+    for(let k=0;k<st.n;k++){const a=k/st.n*Math.PI*2;spoke(a-sH,-(sR-sH)+(st.twist||0),st.w0,st.w1);spoke(a+sH,(sR-sH)+(st.twist||0),st.w0,st.w1);}}
+  else if(st.style==='disc'||st.style==='steel'||st.style==='holes'){
+    const pr=[];for(let k=0;k<=10;k++){const r=lerp(r0-.01,r1+.004,k/10);pr.push([r,zf(r)+(st.style==='steel'?.012*Math.sin(Math.PI*k/10):0)]);}
+    disc(pr);
+    if(st.style==='disc'){for(let k=0;k<st.n;k++)spoke(k/st.n*Math.PI*2,st.twist||.7,st.w0||.018,st.w1||.03,.006,.002);}
+    else{const hp=new Part('void');for(let k=0;k<st.n;k++){const a=k/st.n*Math.PI*2+.3,r=lerp(r0,r1,st.holeR||.55);
+      const hl=lathe('void',[[0,0],[st.hole||.026,0]],20);hl.xf(M3.I(),[Math.cos(a)*r,Math.sin(a)*r,zf(r)+(st.style==='steel'?.012:0)+.0015]);hp.append(hl);}
+      parts.push(hp);}
+  }
+  face.normals();parts.push(face);
+  // hub cap + lug nuts
+  const hz=zf(r0);
+  if(st.cap==='chrome'){parts.push(lathe('chrome',[[0,hz+.05],[.06,hz+.042],[.1,hz+.025],[.115,hz+.004],[.118,hz-.01]],40));}
+  else{parts.push(lathe(st.capMat||'rim',[[0,hz+.016],[.03,hz+.015],[.055,hz+.009],[.07,hz-.002],[.078,hz-.012]],32));
+    for(let k=0;k<5;k++){const a=k/5*Math.PI*2+.6;parts.push(cyl('chrome',[Math.cos(a)*.052,Math.sin(a)*.052,hz+.004],[Math.cos(a)*.052,Math.sin(a)*.052,hz+.016],.009,.007,8));}}
+  return parts;
+}
+
+// ---------- decals projected onto the body ----------
+function makeDecal(api,shape0,mat,frame,layer=0){
+  // densify the outline so long edges follow curved panels instead of cutting through them
+  const shape=[];for(let i=0;i<shape0.length;i++){const a=shape0[i],b=shape0[(i+1)%shape0.length],n=Math.max(1,Math.ceil(Math.hypot(b[0]-a[0],b[1]-a[1])/.014));
+    for(let k=0;k<n;k++)shape.push([a[0]+(b[0]-a[0])*k/n,a[1]+(b[1]-a[1])*k/n]);}
+  const N=shape.length,K=6;let cu=0,cv=0;for(const s of shape){cu+=s[0];cv+=s[1];}cu/=N;cv/=N;
+  const pts=[[cu,cv]];for(let k=1;k<=K;k++)for(const s of shape)pts.push([cu+(s[0]-cu)*k/K,cv+(s[1]-cv)*k/K]);
+  const p=new Part(mat),off=.0022+layer*.0026;let miss=0,tg=-1;
+  for(const [u,v] of pts){let o=frame.o(u,v),h=api.ray(o,frame.d,frame.maxT,tg);
+    // edge fallback: slide the ray toward the body until it lands (wraps the decal onto the silhouette edge)
+    for(let k=1;!h&&k<=40;k++){const q=frame.shrink(u,v,k);o=frame.o(q[0],q[1]);h=api.ray(o,frame.d,frame.maxT);}
+    if(!h){miss++;p.v(o[0],o[1],o[2],u,v);continue;}
+    tg=Math.hypot(h[0]-o[0],h[1]-o[1],h[2]-o[2]);
+    p.v(h[0]-frame.d[0]*off,h[1]-frame.d[1]*off,h[2]-frame.d[2]*off,u,v);}
+  if(miss){console.warn('decal miss',mat,miss);return null;}
+  for(let j=0;j<N;j++)p.t(0,1+j,1+(j+1)%N);
+  for(let k=1;k<K;k++){const a=1+(k-1)*N,b=1+k*N;for(let j=0;j<N;j++){const j2=(j+1)%N;p.q(a+j,a+j2,b+j2,b+j);}}
+  return p.normals();
+}
+// projection frames
+const FR={
+  F:(L)=>({maxT:.75,d:[1,0,0],o:(u,v)=>[-.4,v,u],shrink:(u,v,k)=>[u*(1-.015*k),v]}),
+  R:(L)=>({maxT:.75,d:[-1,0,0],o:(u,v)=>[L+.4,v,u],shrink:(u,v,k)=>[u*(1-.015*k),v]}),
+  S:(L,sg=1)=>({maxT:1.1,d:[0,0,-sg],o:(u,v)=>[u,v,sg*1.4],shrink:(u,v,k)=>[u,v+(.55-v)*.02*k]}),
+  // tilted front/rear projections for lights that sit on sloping noses/decks:
+  // the outline is drawn as seen from the front at the plane x=xr; rays come down at `deg` degrees.
+  FT:(L,deg,xr)=>{const a=deg*Math.PI/180,d=[Math.cos(a),-Math.sin(a),0];return {maxT:1.1,d,o:(u,v)=>[xr-d[0]*.55,v-d[1]*.55,u],shrink:(u,v,k)=>[u*(1-.015*k),v]};},
+  RT:(L,deg,xr)=>{const a=deg*Math.PI/180,d=[-Math.cos(a),-Math.sin(a),0];return {maxT:1.1,d,o:(u,v)=>[xr-d[0]*.55,v-d[1]*.55,u],shrink:(u,v,k)=>[u*(1-.015*k),v]};},
+  T:(L)=>({maxT:2.5,d:[0,-1,0],
+o:(u,v)=>[u,2.6,v],shrink:(u,v,k)=>[u,v*(1-.015*k)]}),
+  // corner frame for wrap-around lights: yaw 0 = straight on (front/rear), 90 = from the side.
+  // u is measured along the horizontal axis perpendicular to the ray, from the front (x=0) or rear (x=L) centre.
+  Y:(L,yaw,rear=false,sg=1)=>{const a=yaw*Math.PI/180,s=Math.sin(a),c=Math.cos(a);
+    const d=rear?[-c,0,-sg*s]:[c,0,-sg*s],uA=[s,0,sg*c],C=rear?[L,0,0]:[0,0,0];
+    return {maxT:2.3,d,o:(u,v)=>[C[0]-d[0]*1.6+uA[0]*u,v,C[2]-d[2]*1.6+uA[2]*u],shrink:(u,v,k)=>[u*(1-.015*k),v]};}
+};
+
+// ---------- car assembly ----------
+function buildCar(S){
+  const t0=performance.now();
+  const parts=[];
+  // build the body; grow the fenders (flare + rise) until the arch cut-outs sit inside them and cover the tyres
+  let res,fl=(S.body.flare||[0,0]).slice(),rb=(S.body.riseBoost||[0,0]).slice();const W0=S.wheels;
+  for(let it=0;it<7;it++){S.body=Object.assign({},S.body,{flare:fl,riseBoost:rb});res=buildBody(S);let ok=true;if(S.body.lines)break;
+    res.api.arches.forEach((a,i)=>{const zt=i?W0.zR+W0.twR/2:W0.zF+W0.twF/2,yt=a.cy+a.Ra;
+      const def=Math.max(zt+.008-res.api.hwAt(a.x,yt+.02),zt+.002-res.api.hwAt(a.x,yt+.045));
+      if(def>.002){ok=false;fl[i]+=def*.75;rb[i]+=def*.9;}});
+    if(ok)break;}
+  const {body,api,liner}=res;parts.push(body);parts.push(liner);
+  const cab=buildCabin(S,api);parts.push(cab.cabin);api.cab=cab;
+  const W=S.wheels;
+  // wheels
+  for(const front of [true,false]){const wp=buildWheel(S,front),x=front?W.xF:W.xR,R=front?W.rF:W.rR,z=front?W.zF:W.zR,steer=front?(W.steer||0):0;
+    for(const sg of [1,-1]){const m=sg>0?M3.ry(steer):M3.mul(M3.ry(steer),M3.sc(1,1,-1));
+      for(const q of wp){const c=q.clone();c.xf(m,[x,R,sg*z]);parts.push(c);}}}
+  // decals + parts from spec
+  const kit=makeKit(api,S,parts);
+  if(S.extras)S.extras(kit,api);
+  let cut=null;if(S.interior&&typeof buildInterior==='function')cut=buildInterior(S,api,cab,kit,parts);
+  console.log(S.id,'built in',Math.round(performance.now()-t0),'ms');
+  return {parts,api,cut};
+
+}
+
+// helper kit given to each car's extras()
+function makeKit(api,S,parts){
+  const L=api.L;
+  const add=p=>{if(p)parts.push(p);return p;};
+  const sym=p=>{if(!p)return;parts.push(p);parts.push(mirrorZ(p));};
+  const k={
+    L,api,add,sym,
+    F:(shape,mat,layer=0,mirror=true,tilt=null)=>{const f=tilt?FR.FT(L,tilt[0],tilt[1]):FR.F(L);add(makeDecal(api,shape,mat,f,layer));if(mirror)add(makeDecal(api,shape.map(s=>[-s[0],s[1]]).reverse(),mat,f,layer));},
+    R:(shape,mat,layer=0,mirror=true,tilt=null)=>{const f=tilt?FR.RT(L,tilt[0],tilt[1]):FR.R(L);add(makeDecal(api,shape,mat,f,layer));if(mirror)add(makeDecal(api,shape.map(s=>[-s[0],s[1]]).reverse(),mat,f,layer));},
+    S:(shape,mat,layer=0,both=true)=>{add(makeDecal(api,shape,mat,FR.S(L,1),layer));if(both)add(makeDecal(api,shape,mat,FR.S(L,-1),layer));},
+    T:(shape,mat,layer=0,mirror=true)=>{add(makeDecal(api,shape,mat,FR.T(L),layer));if(mirror)add(makeDecal(api,shape.map(s=>[s[0],-s[1]]),mat,FR.T(L),layer));},
+    Yf:(yaw,shape,mat,layer=0)=>{add(makeDecal(api,shape,mat,FR.Y(L,yaw,false,1),layer));add(makeDecal(api,shape,mat,FR.Y(L,yaw,false,-1),layer));},
+    Yr:(yaw,shape,mat,layer=0)=>{add(makeDecal(api,shape,mat,FR.Y(L,yaw,true,1),layer));add(makeDecal(api,shape,mat,FR.Y(L,yaw,true,-1),layer));},
+    rbox:(mat,c,h,e=.3,rot=null)=>{const p=rbox(mat,h[0],h[1],h[2],e);p.xf(rot||M3.I(),c);return p;},
+    cyl:(mat,a,b,r0,r1,segs)=>cyl(mat,a,b,r0,r1,segs),
+    // point on body side surface at (x,y)
+    sideZ:(x,y)=>api.hwAt(x,y),
+    topY:(x,z=0)=>api.topY(x,z),
+    roofY:x=>api.cab.roofF(x),
+    // exhaust tip pointing rearward
+    exhaust:(z,y,r,len=.12,mat='chrome',shape='round')=>{const x=L-.02;
+      const tip=lathe(mat,[[r*.82,0],[r,0],[r,len],[r*1.04,len+.004],[r*.86,len+.006],[r*.82,len*.4]],28);
+      tip.xf(M3.basis([0,0,1],[0,1,0],[1,0,0]),[x-len*.55,y,z]);
+      const inner=lathe('void',[[0,len*.35],[r*.83,len*.35]],20);inner.xf(M3.basis([0,0,1],[0,1,0],[1,0,0]),[x-len*.55,y,z]);
+      add(tip);add(inner);add(cyl('rimInner',[L-.32,y+.005,z*.95],[x-len*.5,y,z],r*.75,r*.75,12));},
+    // airfoil wing spanning z, chord along x
+    wing:(mat,xLead,y,span,chord,thick,aoa=.12)=>{const pf=[];const n=16;
+      for(let i=0;i<=n;i++){const t=i/n,xx=t*chord,yy=thick*5*chord*(.2969*Math.sqrt(t)-.126*t-.3516*t*t+.2843*t*t*t-.1015*t*t*t*t);pf.push([xx,yy*1.0]);}
+      const loop=pf.concat(pf.slice(1,-1).reverse().map(p=>[p[0],-p[1]*.35]));
+      const rot=loop.map(([a,b])=>[a*Math.cos(aoa)+b*Math.sin(aoa),-a*Math.sin(aoa)+b*Math.cos(aoa)]);
+      const p=extrude(mat,rot,-span,span,true);p.xf(M3.I(),[xLead,y,0]);return add(p);},
+    mirrorPart:(x,y,matCap,matArm='trim',size=[.085,.06,.115])=>{
+      const yb=api.cab.baseY(x),z=Math.max(api.hwAt(x,yb-.04),api.hwAt(x,yb-.1))-.015,yc=yb+.02+size[1];
+      const cap=rbox(matCap,size[0],size[1],size[2],.38);cap.xf(M3.ry(-.1),[x+.03,yc,z+size[2]*.72]);
+      const gl=rbox('chrome',.01,size[1]*.8,size[2]*.84,.25);gl.xf(M3.ry(-.1),[x+.03+size[0]*.93,yc,z+size[2]*.72]);
+
+      const arm=rbox(matArm,.045,.016,.055,.3);arm.xf(M3.I(),[x+.02,yb+.02,z+.03]);
+      sym(cap);sym(gl);sym(arm);},
+    // diffuser strakes that hang from the rising rear floor
+    diffuser:(zs,len,drop,mat)=>{const x0=L-len,x1=L-.015,c=x=>api.sec(x).bot;
+      for(const z of zs){const p=new Part(mat),yt=i=>c(lerp(x0,x1,i/10))+.01,yb=i=>{const f=i/10;return c(lerp(x0,x1,f))-drop*f*f;};
+        for(const dz of [-.005,.005])grid(p,11,2,(i,j)=>[lerp(x0,x1,i/10),j?yb(i):yt(i),z+dz]);
+        grid(p,11,2,(i,j)=>[lerp(x0,x1,i/10),yb(i),z+(j?.005:-.005)]);
+        grid(p,2,2,(i,j)=>[x1,i?yb(10):yt(10),z+(j?.005:-.005)]);
+        add(p.normals());}},
+
+    // carbon side blade along the sill between the wheels
+    skirt:(x0,x1,mat='carbon',out=.02,h=.035)=>{if(!api.LN)return;const p=new Part(mat),N=60;
+      grid(p,N+1,6,(i,j)=>{const x=lerp(x0,x1,i/N),sY=api.LN.sillY(x),z0=api.hwAt(x,sY+.005),t=smoothstep(0,.08,i/N)*smoothstep(0,.08,1-i/N),o=out*t;
+        const pr=[[sY+.012,z0-.012],[sY+.002,z0+o*.55],[sY-.006,z0+o],[sY-h+.004,z0+o],[sY-h,z0+o*.6],[sY-h-.004,z0-.03]][j];return [x,pr[0],pr[1]];});
+      p.normals();sym(p);},
+    // door handle just below the window line
+    handle:(x,mat='trim',w=.12)=>{const y=api.cab.baseY(x)-.075;k.S(rr(x,y,w,.024,.008),mat);},
+    wipers:(n=2)=>{const x=api.cab.x0+.07,y=Math.max(api.cab.roofF(x-.035),api.cab.roofF(x+.035))+.014;
+      for(const zc of [-.32,.22]){const w=rbox('trim',.012,.008,.27,.25);w.xf(M3.ry(.06),[x,y,zc]);add(w);}},
+  };
+  return k;
+}
+
+// ---------- materials ----------
+const LIB={
+  glass:{c:'#07090c',m:0,r:.03,cc:.28},
+  glassDark:{c:'#030405',m:0,r:.03,cc:.25},
+  trim:{c:'#0d0e10',m:0,r:.42,cc:.25},
+  gloss:{c:'#050607',m:0,r:.08,cc:1},
+  matte:{c:'#141517',m:0,r:.75,cc:0},
+  chrome:{c:'#eef1f4',m:1,r:.04},
+  satin:{c:'#9aa0a6',m:1,r:.3},
+  rimInner:{c:'#26282b',m:.5,r:.55},
+  void:{c:'#010101',m:0,r:.95},
+  tire:{c:'#141518',m:0,r:.86,pat:4},
+  disc:{c:'#6d7075',m:1,r:.36},
+  chassis:{c:'#060607',m:0,r:.9},
+  liner:{c:'#0a0a0b',m:0,r:.85},
+  hl:{c:'#14171c',m:1,r:.1,cc:1},
+  hlChrome:{c:'#c9ced6',m:1,r:.08,cc:1},
+  drl:{c:'#ffffff',m:0,r:.2,e:[7.5,7.8,8.4]},
+  proj:{c:'#e8f0ff',m:0,r:.1,e:[3.5,3.9,4.6]},
+  warm:{c:'#fff2d8',m:0,r:.2,e:[2.6,2.3,1.8]},
+  tl:{c:'#2a0305',m:0,r:.05,cc:1},
+  tlGlow:{c:'#ff2616',m:0,r:.2,e:[7,.35,.18]},
+  tlDim:{c:'#a0100c',m:0,r:.1,cc:1,e:[.9,.03,.02]},
+  amber:{c:'#ff9a1a',m:0,r:.2,e:[5,2.1,.2]},
+  amberLens:{c:'#6a3404',m:0,r:.05,cc:1},
+  rev:{c:'#d8dde2',m:0,r:.05,cc:1},
+  grille:{c:'#1a1c1f',m:.3,r:.3,cc:.6,pat:1},
+  slats:{c:'#16181b',m:.2,r:.3,cc:.6,pat:2},
+  vent:{c:'#3d4147',m:.4,r:.35,cc:.4,pat:5},
+  carbon:{c:'#1c1f23',m:0,r:.22,cc:1,pat:3},
+  plate:{c:'#d8dbd4',m:0,r:.45,cc:.5,pat:6},
+  flashR:{c:'#ff1020',m:0,r:.1,flash:1},
+  flashB:{c:'#1a3cff',m:0,r:.1,flash:2},
+  cyan:{c:'#46ecff',m:0,r:.1,e:[.35,2.6,3.6]},
+  rubber:{c:'#0a0a0b',m:0,r:.8},
+};
+function mat(def){
+  const c=hexLin(def.c||'#808080');
+  return {alb:c,prm:[def.m||0,def.r==null?.4:def.r,def.cc||0,def.fl||0],emi:def.e||[0,0,0],pat:def.pat||0,flash:def.flash||0};
+}
+function resolveMats(S){
+  const lib=Object.assign({},LIB,S.mats||{});
+  const paint=Object.assign({c:S.paint,m:S.metallic?.4:0,r:S.metallic?.36:.42,cc:1,fl:S.metallic?1:0},S.paintMat||{});
+  lib.paint=paint;
+  const get=k=>mat(typeof k==='string'?(lib[k]||LIB.trim):k);
+  const trimK=S.trimMat||'trim';
+  return {
+    get,
+    body:[get('paint'),get(S.glassMat||'glass'),get(trimK),get(S.accentMat||'trim')],
+    cabin:[get('paint'),get(S.glassMat||'glass'),get(S.cabinTrimMat||trimK),get(S.cabinAccentMat||S.accentMat||'chrome')],
+  };
+}
+
+// ---------- shaders ----------
+const VS_CAR=`#version 300 es
+layout(location=0) in vec3 aP;layout(location=1) in vec3 aN;layout(location=2) in vec3 aM;layout(location=3) in vec2 aT;
+uniform mat4 uVP,uModel;out vec3 vW,vN,vO,vM;out vec2 vT;
+void main(){vec4 w=uModel*vec4(aP,1.);vW=w.xyz;vN=mat3(uModel)*aN;vO=aP;vM=aM;vT=aT;gl_Position=uVP*w;}`;
+const ENV=`
+vec3 envc(vec3 d,float r){
+  float y=d.y;
+  vec3 c=mix(vec3(.006,.0065,.0075),vec3(.05,.054,.06),smoothstep(-.3,.03,y));
+  c=mix(c,vec3(.12,.125,.14),smoothstep(.03,.9,y));
+  float s=.015+r*.55,k=1./(1.+r*6.);
+  if(y>.02){vec2 p=d.xz/y;
+    float b=(1.-smoothstep(.85-s*4.,.85+s*4.,abs(p.x)))*(1.-smoothstep(.32-s*3.,.32+s*3.,abs(p.y)));
+    c+=vec3(1.,.985,.96)*b*5.*k;
+    float b2=(1.-smoothstep(2.6-s*4.,2.6+s*4.,abs(p.x)))*(1.-smoothstep(.06+s*.5,.06+s*2.5,abs(abs(p.y)-1.25)));
+    c+=vec3(.92,.96,1.)*b2*3.5*k;}
+  float az=atan(d.z,d.x);
+  float side=smoothstep(.95+s,.95-s,abs(abs(az)-1.5708))*smoothstep(-.06-s,-.06+s,y)*smoothstep(.42+s,.42-s,y);
+  c+=vec3(.75,.8,.86)*side*1.5*k;
+  float hz=smoothstep(.022+s,.0+s*.3,abs(y-.1));c+=vec3(1.)*hz*1.1*k;
+  float fr=smoothstep(.5+s,.5-s,abs(az-2.6))*smoothstep(-.05-s,-.05+s,y)*smoothstep(.55+s,.55-s,y);
+  c+=vec3(.9,.92,.95)*fr*.45*k;
+  return c;}
+vec3 irr(vec3 n){float y=n.y;vec3 c=mix(vec3(.018,.019,.021),vec3(.16,.165,.18),smoothstep(-.7,.9,y));
+  c+=vec3(1.,.98,.95)*1.1*max(y,0.)*max(y,0.);c+=vec3(.5,.53,.58)*.45*abs(n.z)*(1.-abs(y));c+=vec3(.35)*.25*max(-n.x,0.);return c;}
+vec3 aces(vec3 x){return clamp((x*(2.51*x+.03))/(x*(2.43*x+.59)+.14),0.,1.);}
+`;
+const FS_CAR=`#version 300 es
+precision highp float;
+in vec3 vW,vN,vO,vM;in vec2 vT;
+uniform vec3 uCam;uniform vec3 uAlb[4];uniform vec4 uPrm[4];uniform vec3 uEmi[4];uniform float uPat[4];
+uniform vec4 uSP[14];uniform vec4 uSB[14];uniform vec2 uSZ[14];uniform int uSN;uniform float uSeamOn,uRefl,uExp;uniform float uIntOn,uInside,uGlassPass,uGlassA,uIntRough,uCutY;uniform vec3 uIntAlb,uShelfAlb;uniform vec4 uCut;uniform float uCutZ[8];
+uniform vec4 uArch[2];uniform vec2 uDP[12];uniform vec4 uDR[3];uniform int uDN;uniform float uArchTrim;
+float sdPoly(vec2 p,int o){vec2 v0=uDP[o];float d=dot(p-v0,p-v0),s=1.;
+  for(int i=0;i<4;i++){int j=(i+3)%4;vec2 vi=uDP[o+i],vj=uDP[o+j],e=vj-vi,w=p-vi,b=w-e*clamp(dot(w,e)/dot(e,e),0.,1.);d=min(d,dot(b,b));
+    bvec3 c=bvec3(p.y>=vi.y,p.y<vj.y,e.x*w.y>e.y*w.x);if(all(c)||all(not(c)))s*=-1.;}
+  return -s*sqrt(d);}
+out vec4 o;
+${ENV}
+float aa(float d){float w=max(fwidth(d),1e-5);return clamp(d/w+.5,0.,1.);}
+float hash(vec3 p){p=fract(p*.3183099+.1);p*=17.;return fract(p.x*p.y*p.z*(p.x+p.y+p.z));}
+void main(){
+  float cov=1.,lip=0.,xtr=-1.;
+  if(uSeamOn>.5){float cut=-1.;for(int i=0;i<2;i++){vec4 a=uArch[i];cut=max(cut,min(a.z-length(vO.xy-a.xy),abs(vO.z)-a.w));}
+    cov=clamp(.5-cut/max(fwidth(cut),1e-5),0.,1.);if(cov<.004)discard;
+    lip=(1.-smoothstep(0.,.016,-cut))*step(cut,0.);
+    if(uArchTrim>0.)xtr=uArchTrim+cut;
+    if(abs(vO.z)>.3)for(int k=0;k<3;k++){if(k>=uDN)break;vec4 r=uDR[k];float sd=sdPoly(vO.xy,k*4)-r.z;if(r.y>r.x)sd=min(sd,vO.x-mix(r.x,r.y,.3));xtr=max(xtr,sd);}}
+  vec3 N=normalize(vN);if(!gl_FrontFacing)N=-N;
+  vec3 V=normalize(uCam-vW);
+  float ndv=dot(N,V);if(ndv<.02)N=normalize(N+V*(.02-ndv));
+  // open the top of the body tub under the greenhouse (interior shows through the glass)
+  float shelf=0.;
+  if(uSeamOn>.5&&uCut.y>uCut.x&&vO.x>uCut.x&&vO.x<uCut.y&&vO.y>uCutY){
+    float tt=clamp((vO.x-uCut.x)/(uCut.y-uCut.x),0.,1.)*7.;int i0=int(min(floor(tt),6.));float iz=mix(uCutZ[i0],uCutZ[i0+1],tt-float(i0));
+    if(abs(vO.z)<iz){if(vO.x>uCut.z&&vO.x<uCut.w)discard;shelf=1.;}}
+  bool faceOut=gl_FrontFacing!=(uRefl>.5);
+  bool intr=(uIntOn>.5&&!faceOut)||shelf>.5;
+  float wg=aa(vM.x),wt=max(aa(vM.y),aa(xtr))*(1.-wg),wa=aa(vM.z)*(1.-wg-wt),wp=max(0.,1.-wg-wt-wa);
+  if(uGlassPass>-.5){if(uGlassPass<.5){if(wg>.5)discard;}else{if(wg<.02)discard;}}
+  vec4 W=vec4(wp,wg,wt,wa);
+  vec3 alb=uAlb[0]*W.x+uAlb[1]*W.y+uAlb[2]*W.z+uAlb[3]*W.w;
+  vec4 pr=uPrm[0]*W.x+uPrm[1]*W.y+uPrm[2]*W.z+uPrm[3]*W.w;
+  vec3 emi=uEmi[0]*W.x+uEmi[1]*W.y+uEmi[2]*W.z+uEmi[3]*W.w;
+  float mx=max(max(W.x,W.y),max(W.z,W.w));
+  float pat=W.x==mx?uPat[0]:W.y==mx?uPat[1]:W.z==mx?uPat[2]:uPat[3];
+  if(intr){vec3 ia=shelf>.5?uShelfAlb:uIntAlb;alb=mix(ia,alb,W.y);pr=mix(vec4(0.,uIntRough,.05,0.),pr,W.y);emi*=W.y;if(W.y<.5)pat=0.;}
+  float inside=(uInside>.5||intr)?1.:0.;
+  float metal=pr.x,rough=pr.y,coat=pr.z,flake=pr.w;
+  if(pat>.5&&pat<1.5){vec2 q=vT/.016;const vec2 s=vec2(1.,1.7320508);vec2 a=mod(q,s)-s*.5,b=mod(q-s*.5,s)-s*.5;vec2 g=dot(a,a)<dot(b,b)?a:b;
+    vec2 ag=abs(g);float d=max(dot(ag,s*.5),ag.x);float fw=fwidth(d);float hole=1.-smoothstep(.36-fw,.36+fw,d);
+    alb=mix(alb,vec3(.0015),hole);rough=mix(rough,.95,hole);coat*=1.-hole;metal*=1.-hole;}
+  else if(pat>1.5&&pat<2.5){float f=fract(vT.y/.03);float fw=fwidth(vT.y/.03);float bar=smoothstep(.1-fw,.1+fw,f)*(1.-smoothstep(.55-fw,.55+fw,f));
+    alb=mix(vec3(.0015),alb*1.4,bar);coat*=bar;rough=mix(.95,rough,bar);}
+  else if(pat>2.5&&pat<3.5){vec3 an=abs(N);vec2 uv=an.y>.6?vO.xz:(an.x>.6?vO.zy:vO.xy);vec2 c=floor(uv/.005);float t=mod(c.x+c.y,4.)<2.?1.:0.;
+    float t2=mod(c.x-c.y+400.,4.)<2.?1.:0.;alb*=mix(.55,1.35,mod(c.x,2.)<1.?t:t2);}
+  else if(pat>3.5&&pat<4.5){float v=vT.y;float gr=0.;for(int i=0;i<3;i++){float c=.445+float(i)*.055;gr=max(gr,1.-smoothstep(.004,.008,abs(v-c)));}
+    alb*=1.-.8*gr;float sw=smoothstep(.0,.05,abs(v-.5)-.12);alb*=mix(1.,1.25,sw);rough=mix(rough,.6,sw*.5);}
+  else if(pat>4.5&&pat<5.5){float f=fract(vT.x/.024);float fw=fwidth(vT.x/.024);float bar=smoothstep(.15-fw,.15+fw,f)*(1.-smoothstep(.6-fw,.6+fw,f));
+    alb=mix(vec3(.0015),alb*1.3,bar);coat*=bar;}
+  else if(pat>6.5&&pat<7.5){ // analog gauge, uv in [-1,1]
+    vec2 q=vT;float r=length(q),a=atan(q.x,q.y),t=(a+2.356)/4.712;float fw=fwidth(r)*1.5;
+    float ring=smoothstep(.86-fw,.86,r)*(1.-smoothstep(.93,.93+fw,r));
+    float tk=step(0.,t)*step(t,1.)*step(.66,r)*step(r,.82)*(1.-smoothstep(.0,.07,abs(fract(t*8.+.5)-.5)));
+    float tk2=step(0.,t)*step(t,1.)*step(.74,r)*step(r,.82)*(1.-smoothstep(.0,.12,abs(fract(t*40.+.5)-.5)));
+    float an=-2.356+.42*4.712;vec2 dn=vec2(sin(an),cos(an));float nd=abs(q.x*dn.y-q.y*dn.x),al=dot(q,dn);
+    float nee=(1.-smoothstep(.02,.02+fw,nd))*step(-.12,al)*step(al,.78);
+    float hub=1.-smoothstep(.08,.08+fw,r);float face=1.-smoothstep(.95,.95+fw,r);
+    alb=mix(vec3(.004),alb,ring);emi=emi*(ring*.35+tk+tk2*.6)*face+vec3(1.,.25,.08)*nee*4.+vec3(.02)*hub;rough=.25;coat=.6;}
+  else if(pat>7.5&&pat<8.5){ // digital screen, uv in [-1,1]
+    vec2 q=vT;float fw=fwidth(q.x)*1.5;
+    float bg=.015+.025*(1.-length(q*vec2(.6,1.)));
+    vec2 c1=q-vec2(-.55,.0);float r1=length(c1*vec2(1.,.55));float arc=smoothstep(.36-fw,.36,r1)*(1.-smoothstep(.42,.42+fw,r1))*step(c1.y,.25);
+    float bars=0.;for(int i=0;i<4;i++){float y=.55-float(i)*.32;bars+=step(abs(q.y-y),.05)*step(.12,q.x)*step(q.x,.12+.7*fract(float(i)*.37+.3));}
+    float frame=1.-step(abs(q.x),.96)*step(abs(q.y),.9);
+    alb=vec3(.003);emi=emi*(bg+arc*.9+bars*.55+frame*.06);rough=.08;coat=.5;}
+
+  else if(pat>8.5&&pat<9.5){ // quilted upholstery
+    vec3 an=abs(N);vec2 uv=an.y>.6?vO.xz:(an.x>.6?vO.zy:vO.xy);
+    vec2 g=vec2(uv.x+uv.y,uv.x-uv.y)/.05;vec2 f=abs(fract(g)-.5);float st=1.-smoothstep(.0,.06,min(f.x,f.y));
+    alb*=mix(1.,.45,st)*(.85+.3*min(f.x,f.y));}
+  else if(pat>9.5&&pat<10.5){ // tartan cloth
+    vec3 an=abs(N);vec2 uv=an.y>.6?vO.xz:(an.x>.6?vO.zy:vO.xy);vec2 c=fract(uv/.07);
+    float b1=step(.15,c.x)*step(c.x,.3)+step(.15,c.y)*step(c.y,.3);float b2=step(.55,c.x)*step(c.x,.6)+step(.55,c.y)*step(c.y,.6);
+    alb=mix(alb,vec3(.012),clamp(b1*.6,0.,1.));alb=mix(alb,vec3(.5,.5,.48),clamp(b2*.5,0.,1.));rough=.95;}
+  else if(pat>10.5&&pat<11.5){ // horizontal pleats
+    vec3 an=abs(N);float v=an.y>.6?vO.x:vO.y;float f=fract(v/.042);alb*=.7+.35*smoothstep(0.,.25,f)*(1.-smoothstep(.75,1.,f));}
+  else if(pat>11.5&&pat<12.5){ // wood grain
+    vec3 an=abs(N);vec2 uv=an.y>.6?vO.xz:(an.x>.6?vO.zy:vO.xy);float g=sin(uv.x*140.+sin(uv.y*22.)*4.+sin(uv.x*13.)*2.);alb*=.78+.22*g;}
+  if(uSeamOn>.5){vec3 p=vec3(vO.x,vO.y,abs(vO.z));float line=0.;
+    for(int i=0;i<14;i++){if(i>=uSN)break;vec4 b=uSB[i];vec2 zb=uSZ[i];
+      float inb=step(b.x,p.x)*step(p.x,b.y)*step(b.z,p.y)*step(p.y,b.w)*step(zb.x,p.z)*step(p.z,zb.y);
+      float d=abs(dot(uSP[i].xyz,p)-uSP[i].w);float fw=max(fwidth(d),1e-6);const float lw=.0011;
+      line=max(line,inb*clamp(.5-(d-lw)/fw,0.,1.)*clamp(2.*lw/fw,.4,1.));}
+
+    line*=W.x;alb*=1.-.92*line;coat*=1.-.85*line;rough=mix(rough,.7,line);}
+  float h=abs(vW.y);float ao=mix(.45,1.,smoothstep(.0,.55,h))*(1.-.45*lip);
+  float NV=max(dot(N,V),1e-3);vec3 R=reflect(-V,N);
+  vec3 F0=mix(vec3(.04),alb,metal);
+  vec3 Fr=F0+(max(vec3(1.-rough),F0)-F0)*pow(1.-NV,5.);
+  float kI=inside>.5?.62:1.,kS=inside>.5?.5:1.;
+
+  vec3 col=alb*(1.-metal)*irr(N)*kI*(1.-Fr*.6)*ao+envc(R,rough)*Fr*mix(.6,1.,ao)*kS;
+  if(flake>0.){float hh=hash(floor(vO*700.));col+=flake*step(.993,hh)*envc(R,.3)*alb*.35;}
+  float Fc=.04+.96*pow(1.-NV,5.);
+  col=col*(1.-coat*Fc)+coat*Fc*envc(R,.015)*mix(.7,1.,ao)*kS;
+  col+=emi;
+  if(uRefl>.5)col*=.5*exp(vW.y*2.6);
+  float al=cov;
+  if(uGlassPass>.5){float ag=mix(uGlassA,1.,Fc*.55);al=mix(1.,ag,W.y);col*=mix(1.,.45+.25*(1.-uGlassA),W.y);}
+
+  o=vec4(pow(aces(col*uExp),vec3(1./2.2)),al);
+
+}`;
+const VS_FLOOR=`#version 300 es
+layout(location=0) in vec2 aP;uniform mat4 uVP;out vec3 vW;
+void main(){vW=vec3(aP.x,0.,aP.y);gl_Position=uVP*vec4(vW,1.);}`;
+const FS_FLOOR=`#version 300 es
+precision highp float;in vec3 vW;uniform vec2 uCar;uniform vec4 uWh[4];uniform float uExp;out vec4 o;
+${ENV}
+float sdr(vec2 p,vec2 b,float r){vec2 q=abs(p)-b+r;return length(max(q,0.))+min(max(q.x,q.y),0.)-r;}
+void main(){
+  float r=length(vW.xz);
+  float d=sdr(vW.xz,uCar,.45);
+  float sh=.78*exp(-max(d,0.)*2.6)*(d<0.?1.:1.)+.15*smoothstep(.0,-.6,d);
+  float c=0.;for(int i=0;i<4;i++){vec2 q=(vW.xz-uWh[i].xy)/vec2(uWh[i].z*.55,uWh[i].w*.75);c=max(c,exp(-dot(q,q)*1.6));}
+  sh=clamp(sh+c*.6,0.,.96);
+  vec3 col=vec3(.022,.023,.026)*(.55+.9*exp(-r*r/22.));
+  col+=vec3(.03,.031,.034)*exp(-r*r/6.);
+  col*=1.-sh;
+  float a=mix(.84,1.,clamp(sh*1.4,0.,1.));
+  a*=1.-smoothstep(8.,15.,r);
+  o=vec4(pow(aces(col*uExp),vec3(1./2.2)),a);
+}`;
+const VS_BG=`#version 300 es
+layout(location=0) in vec2 aP;out vec2 vU;void main(){vU=aP*.5+.5;gl_Position=vec4(aP,0.,1.);}`;
+const FS_BG=`#version 300 es
+precision highp float;in vec2 vU;uniform vec2 uRes;out vec4 o;
+void main(){vec2 p=(vU-.5)*vec2(uRes.x/uRes.y,1.);
+  vec3 top=vec3(.092,.1,.112),bot=vec3(.048,.053,.06);
+  vec3 c=mix(bot,top,smoothstep(.0,1.,vU.y));
+  c*=1.-.45*smoothstep(.35,1.1,length(p));
+  o=vec4(c,1.);}`;
+
+// ---------- renderer ----------
+const R={};
+function initGL(canvas){
+  const gl=canvas.getContext('webgl2',{antialias:true,alpha:false,powerPreference:'high-performance'});
+  if(!gl)return null;R.gl=gl;
+  const sh=(t,s)=>{const o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);if(!gl.getShaderParameter(o,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(o));return o;};
+  const pg=(v,f)=>{const p=gl.createProgram();gl.attachShader(p,sh(gl.VERTEX_SHADER,v));gl.attachShader(p,sh(gl.FRAGMENT_SHADER,f));gl.linkProgram(p);
+    if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(p));
+    const u={},n=gl.getProgramParameter(p,gl.ACTIVE_UNIFORMS);for(let i=0;i<n;i++){const a=gl.getActiveUniform(p,i),nm=a.name.replace('[0]','');u[nm]=gl.getUniformLocation(p,a.name);}
+    return {p,u};};
+  R.car=pg(VS_CAR,FS_CAR);R.floor=pg(VS_FLOOR,FS_FLOOR);R.bg=pg(VS_BG,FS_BG);
+  const quad=(arr)=>{const vao=gl.createVertexArray();gl.bindVertexArray(vao);const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);
+    gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(arr),gl.STATIC_DRAW);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);return vao;};
+  R.bgVao=quad([-1,-1,3,-1,-1,3]);
+  const F=16;R.floorVao=quad([-F,-F,F,-F,F,F,-F,-F,F,F,-F,F]);
+  return gl;
+}
+function uploadCar(built,S){
+  const gl=R.gl;
+  if(R.groups)for(const g of R.groups){gl.deleteVertexArray(g.vao);for(const b of g.bufs)gl.deleteBuffer(b);}
+  const by={};
+  for(const p of built.parts){if(!p||!p.I.length)continue;(by[p.mat]=by[p.mat]||[]).push(p);}
+  const mats=resolveMats(S);R.mats=mats;
+  R.groups=Object.entries(by).map(([key,list])=>{
+    const m=new Part(key);for(const p of list)m.append(p);
+    const vao=gl.createVertexArray();gl.bindVertexArray(vao);const bufs=[];
+    [[m.P,3],[m.N,3],[m.M,3],[m.T,2]].forEach(([arr,n],i)=>{const b=gl.createBuffer();bufs.push(b);gl.bindBuffer(gl.ARRAY_BUFFER,b);
+      gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(arr),gl.STATIC_DRAW);gl.enableVertexAttribArray(i);gl.vertexAttribPointer(i,n,gl.FLOAT,false,0,0);});
+    const ib=gl.createBuffer();bufs.push(ib);gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER,ib);gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,new Uint32Array(m.I),gl.STATIC_DRAW);
+    gl.bindVertexArray(null);
+    const slots=key==='body'?mats.body:key==='cabin'?mats.cabin:[mats.get(key),mats.get(key),mats.get(key),mats.get(key)];
+    return {key,vao,bufs,count:m.I.length,slots,seams:key==='body'};
+  });
+  // draw order: body/cabin first, decals last
+  R.groups.sort((a,b)=>(a.key==='body'?0:1)-(b.key==='body'?0:1));
+  // seams
+  const sp=[],sb=[],sz=[];for(const s of (S.seams||[]).slice(0,14)){sp.push(...s.p);sb.push(...s.b);sz.push(...s.z);}
+  R.seams={n:(S.seams||[]).length,sp:new Float32Array(sp.length?sp:[0,0,0,0]),sb:new Float32Array(sb.length?sb:[0,0,0,0]),sz:new Float32Array(sz.length?sz:[0,0])};
+  const W=S.wheels,L=built.api.L;
+  const ar=[];for(const a of built.api.arches)ar.push(a.x,a.cy,a.Ra,a.zWell);
+  const dp=new Float32Array(24),dr=new Float32Array(12);let dn=0;
+  for(const d of (built.api.B.dents||[]))if(d.dark&&d.poly.length===4&&dn<3){d.poly.forEach((q,i)=>{dp[(dn*4+i)*2]=q[0];dp[(dn*4+i)*2+1]=q[1];});dr.set([d.ramp?d.ramp[0]:0,d.ramp?d.ramp[1]:0,d.dark,0],dn*4);dn++;}
+  R.dents={dp,dr,n:dn};R.archTrim=S.archTrim||0;
+  R.eye=built.cut?built.cut.eye:null;
+  {const ci=built.cut,In=S.interior||{};
+
+    R.int={on:!!S.interior,shell:hexLin(In.shell||'#1a1b1d'),shelf:hexLin(In.shelf||'#0d0e10'),tint:In.tint==null?.5:In.tint,
+      cut:new Float32Array(ci?[ci.x0,ci.x1,ci.cx0,ci.cx1]:[0,0,0,0]),cutZ:new Float32Array(ci?ci.zs:[0,0,0,0,0,0,0,0]),cutY:ci?ci.y:9};}
+  R.carInfo={arches:new Float32Array(ar),
+H:Math.max(...S.cabin.pts.map(p=>p[1])),L,
+hw:built.api.B.width.reduce((a,p)=>Math.max(a,p[1]),0),wh:[[W.xF,W.zF,W.rF,W.twF],[W.xF,-W.zF,W.rF,W.twF],[W.xR,W.zR,W.rR,W.twR],[W.xR,-W.zR,W.rR,W.twR]]};
+  let tris=0;for(const g of R.groups)tris+=g.count/3;R.tris=tris;
+}
+const NOREFL=new Set(['plate','grille','slats','vent','satin','hl','hlChrome','tl','amberLens','rev','void','disc','caliper','rimInner']);
+function flashE(kind,t){
+const ph=(t*1.7)%1;const on=kind===1?(ph<.1||(ph>.18&&ph<.28)):(ph>.5&&ph<.6)||(ph>.68&&ph<.78);
+  return kind===1?(on?[9,.4,.5]:[.25,.01,.01]):(on?[.5,1.6,10]:[.01,.02,.3]);}
+function setGroupUniforms(u,g,rf){const gl=R.gl,I=R.int;
+  gl.uniform1f(u.uIntOn,(g.key==='body'||g.key==='cabin')&&I.on?1:0);
+  gl.uniform1f(u.uInside,g.key[0]==='i'&&g.key!=='i'?1:0);}
+function setSlots(u,slots,t){const gl=R.gl;const A=[],P=[],E=[],T=[];
+  for(const s of slots){A.push(...s.alb);P.push(...s.prm);E.push(...(s.flash?flashE(s.flash,t):s.emi));T.push(s.pat);}
+  gl.uniform3fv(u.uAlb,A);gl.uniform4fv(u.uPrm,P);gl.uniform3fv(u.uEmi,E);gl.uniform1fv(u.uPat,T);}
+function drawScene(cam,t){
+  const gl=R.gl,c=gl.canvas;
+  gl.viewport(0,0,c.width,c.height);
+  gl.disable(gl.DEPTH_TEST);gl.disable(gl.CULL_FACE);gl.disable(gl.BLEND);
+  gl.useProgram(R.bg.p);gl.uniform2f(R.bg.u.uRes,c.width,c.height);gl.bindVertexArray(R.bgVao);gl.drawArrays(gl.TRIANGLES,0,3);
+  if(!R.groups)return;
+  const asp=c.width/c.height;
+  const P=m4persp(cam.fov,asp,cam.inside?.025:.08,80);
+P[8]=-(cam.offX||0);P[9]=-(cam.offY||0);const Vw=m4look(cam.eye,cam.target,[0,1,0]),VP=m4mul(P,Vw);
+  const L=R.carInfo.L;
+  const base=new Float32Array([1,0,0,0,0,1,0,0,0,0,1,0,-L/2,0,0,1]);
+  const refl=new Float32Array([1,0,0,0,0,-1,0,0,0,0,1,0,-L/2,0,0,1]);
+  const u=R.car.u;
+  gl.useProgram(R.car.p);gl.uniformMatrix4fv(u.uVP,false,VP);gl.uniform3fv(u.uCam,cam.eye);gl.uniform1f(u.uExp,cam.exp||1);
+  gl.uniform4fv(u.uSP,R.seams.sp);gl.uniform4fv(u.uSB,R.seams.sb);gl.uniform2fv(u.uSZ,R.seams.sz);gl.uniform1i(u.uSN,R.seams.n);gl.uniform4fv(u.uArch,R.carInfo.arches);gl.uniform2fv(u.uDP,R.dents.dp);gl.uniform4fv(u.uDR,R.dents.dr);gl.uniform1i(u.uDN,R.dents.n);gl.uniform1f(u.uArchTrim,R.archTrim);
+
+  gl.enable(gl.DEPTH_TEST);gl.depthFunc(gl.LEQUAL);
+  const I=R.int;gl.uniform3fv(u.uIntAlb,I.shell);gl.uniform3fv(u.uShelfAlb,I.shelf);gl.uniform1f(u.uIntRough,.8);gl.uniform1f(u.uGlassA,I.tint);
+  gl.uniform4fv(u.uCut,I.cut);gl.uniform1fv(u.uCutZ,I.cutZ);gl.uniform1f(u.uCutY,I.cutY);
+  const drawG=(g,gp)=>{gl.uniform1f(u.uGlassPass,gp);setGroupUniforms(u,g);setSlots(u,g.slots,t);gl.uniform1f(u.uSeamOn,g.seams?1:0);gl.bindVertexArray(g.vao);gl.drawElements(gl.TRIANGLES,g.count,gl.UNSIGNED_INT,0);};
+  const pass=(M,rf)=>{gl.uniformMatrix4fv(u.uModel,false,M);gl.uniform1f(u.uRefl,rf);
+    gl.enable(gl.SAMPLE_ALPHA_TO_COVERAGE);
+    for(const g of R.groups){if(g.key==='cabin')continue;if(rf&&(NOREFL.has(g.key)||g.key[0]==='i'))continue;drawG(g,-1);}
+    const cab=R.groups.find(g=>g.key==='cabin');
+    if(cab){drawG(cab,0);gl.disable(gl.SAMPLE_ALPHA_TO_COVERAGE);gl.enable(gl.BLEND);gl.blendFunc(gl.ONE,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);
+      drawG(cab,1);gl.disable(gl.BLEND);gl.depthMask(true);}
+    gl.disable(gl.SAMPLE_ALPHA_TO_COVERAGE);};
+  gl.clear(gl.DEPTH_BUFFER_BIT);if(!cam.inside)pass(refl,1);
+  gl.clear(gl.DEPTH_BUFFER_BIT);
+  gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);
+  gl.useProgram(R.floor.p);gl.uniformMatrix4fv(R.floor.u.uVP,false,VP);gl.uniform1f(R.floor.u.uExp,cam.exp||1);
+  gl.uniform2f(R.floor.u.uCar,L/2+.05,R.carInfo.hw+.04);
+  const wh=[];for(const w of R.carInfo.wh)wh.push(w[0]-L/2,w[1],w[2],w[3]);gl.uniform4fv(R.floor.u.uWh,wh);
+  gl.bindVertexArray(R.floorVao);gl.drawArrays(gl.TRIANGLES,0,6);
+  gl.disable(gl.BLEND);gl.depthMask(true);
+  gl.useProgram(R.car.p);pass(base,0);
+}
+
+// ---------- car designs ----------
+// x: 0 at front bumper -> L at rear. y up. z lateral (+z = driver/left side).
+const seamX=(x,y0,y1,slant=0,zMin=.45,zMax=1.3)=>{const n=vnorm([1,slant,0]),ym=(y0+y1)/2;return {p:[n[0],n[1],0,n[0]*x+n[1]*ym],b:[x-.5,x+.5,y0,y1],z:[zMin,zMax]};};
+const seamTop=(x,zMax,yMin=.5,x0=x-.06,x1=x+.06)=>({p:[1,0,0,x],b:[x0,x1,yMin,3],z:[0,zMax]});
+const seamZ=(z,x0,x1,yMin=.5)=>({p:[0,0,1,z],b:[x0,x1,yMin,3],z:[z-.06,z+.06]});
+const seamY=(y,x0,x1,zMax)=>({p:[0,1,0,y],b:[x0,x1,y-.05,y+.05],z:[0,zMax]});
+const sideN=n=>(Math.abs(n[2])-.55)*.25;
+const upN=(n,t=.45)=>(n[1]-t)*.25;
+
+const CARS=[];
+
+/* ============ KESTREL 1.6 — starter hot hatch ============ */
+CARS.push({
+  id:'kestrel',name:'Kestrel 1.6',short:'Kestrel',group:'Garage',tag:'Starter · Free',paint:'#d5dbe2',metallic:true,
+  blurb:'Your starter hatch. Light, honest, slow. Redesigned as a boxy late-80s three-door hot hatch.',
+  cues:'VW Golf GTI Mk2 · Peugeot 205 GTI · Honda Civic EF',
+  notes:['Upright two-box shape, flat glass and a near-vertical tailgate, so the chase cam gets a big readable rear end.','Black bumpers, rubbing strips and a slatted grille between square headlamps.','14-inch silver "pepper-pot" wheels on skinny tyres sell how slow it is.'],
+  stats:[['Accel',5.2,11],['Top',50,81],['Grip',9,14],['Brake',9,13]],
+  body:{L:3.98,
+    top:[[0,.74],[.05,.785],[.16,.805],[.6,.835],[1.05,.865],[1.22,.875],[2.4,.9],[3.5,.92],[3.8,.93],[3.93,.92],[3.98,.89]],
+    width:[[0,.78],[.12,.815],[.4,.83],[1.5,.835],[3.3,.835],[3.8,.825],[3.98,.80]],
+    clr:[[0,.27],[.25,.2],[.8,.15],[3.3,.15],[3.75,.22],[3.98,.30]],
+    nU:4.4,nL:3.2,tuck:.92,tumble:.05,hc:.56,capF:.07,capR:.07,capTopK:.4,capBotK:.5,archGap:.035,archDrop:.02},
+  wheels:{xF:.80,xR:3.27,rF:.295,rR:.295,rimF:.178,rimR:.178,twF:.185,twR:.185,zF:.70,zR:.70,steer:.22,
+    rimStyle:{style:'holes',n:6,conc:.012,hole:.028,holeR:.6}},
+  cabin:{pts:[[1.15,0],[1.42,1.06],[1.62,1.235],[1.8,1.335],[2.1,1.385],[2.5,1.39],[2.9,1.37],[3.18,1.335],[3.48,1.19],[3.74,1.0],[3.82,0]],
+    wsTop:1.8,rwTop:3.18,bx:2.5,bw:.075,cx:[3.36,3.1],inset:.03,tumble:.1,n:5,gFrac:.93,pillar:.05,pillarR:.16,
+    mats:{roof:'paint',a:'paint',c:'paint',b:'trim'}},
+  mats:{rim:{c:'#c4c9cf',m:1,r:.22,cc:.6},caliper:{c:'#3b3d41',m:.4,r:.55}},
+  mask:(p,n,api)=>{const [x,y]=p;
+    const bumpF=X(.505-y,.36-x),bumpR=X(.5-y,x-3.66);
+    const rub=X(band(y,.47,.51),sideN(n),x-.3,3.7-x);
+    return [-1,U(bumpF,bumpR,rub),-1];},
+  archTrim:.035,
+  seams:[seamX(1.2,.26,.83,-.05),seamX(2.5,.26,.83,.08),seamTop(.16,.7,.6),seamZ(.69,.16,1.1,.6),seamY(.51,3.84,4,.78),seamZ(.765,3.85,4,.5)],
+  extras(k){
+    k.F(rr(0,.665,.62,.1,.01),'slats',0,false);
+    k.F(rr(.53,.665,.32,.12,.012),'hlChrome');
+    k.F(rr(.475,.665,.16,.082,.012),'warm',1);
+    k.F(el(.64,.665,.04),'warm',1);
+    k.F(rr(.64,.47,.12,.036,.008),'amberLens');
+    k.F(rr(0,.42,.48,.11,.008),'plate',0,false);
+    k.R(rr(.6,.70,.3,.16,.012),'tl');
+    k.R(rr(.6,.738,.27,.06,.008),'tlGlow',1);
+    k.R(rr(.6,.676,.27,.032,.006),'amberLens',1);
+    k.R(rr(.6,.642,.27,.024,.005),'rev',1);
+    k.R(rr(0,.585,.48,.11,.008),'plate',0,false);
+    k.handle(2.36,'trim',.11);
+    k.mirrorPart(1.44,.90,'trim');
+    k.wipers();
+    k.exhaust(-.42,.26,.024,.1);
+  }
+});
+
+/* ============ VANTA GT — sport sedan ============ */
+CARS.push({
+  id:'vanta',name:'Vanta GT',short:'Vanta GT',group:'Garage',tag:'Shop · $2,500',paint:'#2f6fd6',metallic:true,
+  blurb:'A sport sedan with real brakes. Redesigned as a modern four-door super-saloon.',
+  cues:'BMW M3 (F80) · Audi RS4 · Alfa Romeo Giulia Quadrifoglio',
+  notes:['Long hood, short deck and a fast C-pillar, so four doors still read as sporty.','Carbon roof and lip spoiler, wide hex lower grille, angular LED headlights with a hooked running light.','Quad exhausts in a black diffuser and slim tail lights for the chase cam.'],
+  stats:[['Accel',6.4,11],['Top',57,81],['Grip',10,14],['Brake',10,13]],
+  body:{L:4.72,
+    top:[[0,.62],[.07,.71],[.25,.755],[.8,.8],[1.4,.845],[1.6,.86],[2.5,.89],[3.6,.92],[4.05,.96],[4.35,.985],[4.62,.995],[4.7,.975],[4.72,.93]],
+    width:[[0,.8],[.15,.88],[.5,.91],[1.2,.92],[2.4,.915],[3.4,.925],[3.9,.93],[4.4,.905],[4.72,.84]],
+    clr:[[0,.26],[.3,.16],[.86,.13],[3.7,.13],[4.4,.2],[4.72,.3]],
+    nU:[[0,3.8],[.5,4.6],[.86,5.2],[1.5,4.3],[2.4,3.8],[3.71,4],[4.72,3.8]],nL:2.8,tuck:.9,tumble:.05,hc:[[0,.6],[.86,.74],[1.7,.6],[3,.6],[3.71,.7],[4.72,.6]],capF:.11,capR:.1,capTopK:.5,capBotK:.5,archGap:.04,archDrop:.03,flare:[.012,.02]},
+  wheels:{xF:.86,xR:3.71,rF:.332,rR:.332,rimF:.2413,rimR:.2413,twF:.245,twR:.265,zF:.79,zR:.785,steer:.22,
+    rimStyle:{style:'split',n:5,w0:.026,w1:.03,sepH:.035,sepR:.13,conc:.04}},
+  cabin:{pts:[[1.6,0],[1.9,1.05],[2.2,1.25],[2.45,1.36],[2.8,1.415],[3.2,1.42],[3.55,1.39],[3.8,1.3],[4.05,1.12],[4.28,0]],
+    wsTop:2.45,rwTop:3.58,bx:2.95,bw:.075,cx:[3.95,3.62],inset:.03,tumble:.13,n:4.2,pillar:.05,
+    mats:{roof:'trim',a:'trim',c:'paint',b:'trim'}},
+  cabinTrimMat:'carbon',
+  mats:{rim:{c:'#3a3d42',m:1,r:.28,cc:.8},caliper:{c:'#c41a1a',m:0,r:.35,cc:1}},
+  mask:(p,n,api)=>{const [x,y]=p;
+    return [-1,U(X(.235-y,x-.4,4.35-x),X(.37-y,x-4.3),X(.33-y,.45-x)),-1];},
+  seams:[seamX(1.64,.25,.9,-.1),seamX(2.93,.25,.9,0),seamX(3.86,.4,.92,.25),seamTop(.2,.62,.62),seamZ(.62,.2,1.58,.62),seamTop(4.17,.72,.8),seamZ(.71,4.17,4.72,.8)],
+  extras(k){const L=k.L;
+    k.F(pg([[-.42,.33],[.42,.33],[.47,.4],[.39,.47],[-.39,.47],[-.47,.4]],.02),'grille',0,false);
+    k.F(pg([[.56,.33],[.78,.34],[.8,.45],[.6,.46]],.015),'grille');
+    k.F(rr(0,.585,.46,.06,.02),'grille',0,false);
+    k.F(pg([[.33,.58],[.79,.605],[.84,.69],[.36,.64]],[.012,.01,.02,.012]),'hl');
+    k.F(pg([[.37,.627],[.8,.652],[.818,.674],[.38,.646]],.004),'drl',1);
+    k.F(pg([[.74,.6],[.79,.605],[.815,.668],[.8,.664]],.003),'drl',1);
+    k.F(el(.47,.612,.03,.022),'proj',1);k.F(el(.59,.618,.028,.021),'proj',1);
+    k.S(pg([[1.25,.6],[1.42,.6],[1.44,.65],[1.27,.65]],.01),'vent');
+    k.R(pg([[.4,.8],[.86,.8],[.88,.88],[.42,.885]],.012),'tl');
+    k.R(pg([[.44,.842],[.84,.836],[.85,.851],[.45,.857]],.004),'tlGlow',1);
+    k.R(rr(.835,.818,.022,.05,.006),'tlGlow',1);
+    k.R(rr(0,.6,.5,.11,.008),'plate',0,false);
+    for(const z of [-.55,-.43,.43,.55])k.exhaust(z,.3,.04,.12);
+    k.diffuser([-.3,-.1,.1,.3],.5,.05,'trim');
+    {const y=k.topY(4.6);k.add(extrude('carbon',[[0,0],[.13,0],[.145,.035],[.02,.012]],-.64,.64,false).xf(M3.I(),[4.55,y-.008,0]));}
+    k.handle(2.6);k.handle(3.55);
+    k.mirrorPart(1.8,.95,'paint');
+    k.wipers();
+  }
+});
+
+/* ============ BRUISER 5.7 — modern muscle ============ */
+CARS.push({
+  id:'bruiser',name:'Bruiser 5.7',short:'Bruiser',group:'Garage',tag:'Shop · $6,000',paint:'#e0a020',metallic:false,
+  blurb:'V8 torque, a bit of a handful. Redesigned as a slab-sided modern muscle coupe.',
+  cues:'Dodge Challenger SRT · Chevrolet Camaro SS · Ford Mustang GT',
+  notes:['Long flat hood, chopped roof and a blunt nose, all in proportion to a big V8 up front.','Twin black stripes, a hood scoop and a full-width mesh grille with headlights set into it.','A full-width tail light bar, ducktail and quad exhaust tips fill the screen in chase view.'
+],
+  stats:[['Accel',8,11],['Top',63,81],['Grip',9,14],['Brake',9.5,13]],
+  body:{L:5.02,
+    top:[[0,.74],[.05,.86],[.2,.905],[.9,.93],[1.6,.95],[1.95,.97],[3,.995],[3.9,1.02],[4.4,1.045],[4.88,1.06],[4.97,1.07],[5,1.03],[5.02,.98]],
+    width:[[0,.9],[.1,.93],[.5,.955],[1.3,.96],[2.4,.95],[3.5,.965],[3.95,.97],[4.6,.955],[5.02,.91]],
+    clr:[[0,.26],[.35,.16],[.97,.14],[3.9,.14],[4.6,.22],[5.02,.34]],
+    nU:[[0,5],[.97,5.8],[1.8,5],[3.93,5.2],[5.02,5]],nL:3.2,tuck:.92,tumble:.06,hc:.6,capF:.08,capR:.08,capTopK:.5,capBotK:.5,archGap:.045,archDrop:.03,flare:[0,.015]},
+  wheels:{xF:.97,xR:3.93,rF:.355,rR:.355,rimF:.254,rimR:.254,twF:.255,twR:.285,zF:.815,zR:.81,steer:.22,
+    rimStyle:{style:'split',n:5,w0:.03,w1:.034,sepH:.03,sepR:.11,conc:.045}},
+  cabin:{pts:[[1.95,0],[2.25,1.07],[2.55,1.26],[2.85,1.355],[3.1,1.38],[3.45,1.37],[3.75,1.3],[4,1.17],[4.3,0]],
+    wsTop:2.82,rwTop:3.5,bx:null,cx:[3.75,3.45],inset:.045,tumble:.15,n:4.2,pillar:.06,
+    mats:{roof:'paint',a:'paint',c:'paint',b:'paint'},
+    accentFn:(x,y,z,u)=>X(band(Math.abs(z),.07,.25),u-.03)},
+  accentMat:'matte',cabinAccentMat:'matte',
+  mats:{rim:{c:'#141518',m:.6,r:.22,cc:1},caliper:{c:'#c41a1a',m:0,r:.35,cc:1}},
+  mask:(p,n,api)=>{const [x,y,z]=p;
+    const stripe=X(band(Math.abs(z),.07,.25),upN(n,.3),x-.03);
+    return [-1,U(X(.22-y,x-.4,4.6-x),X(.38-y,x-4.6),X(.34-y,.3-x)),stripe];},
+  seams:[seamX(2.02,.24,.98,-.1),seamX(3.52,.3,.98,.12),seamTop(.12,.8,.75),seamZ(.72,.12,1.95,.75),seamTop(4.28,.8,.9),seamZ(.78,4.28,5,.9)],
+  extras(k){const L=k.L;
+    k.F(rr(0,.585,1.5,.2,.025),'grille',0,false);
+    k.F(rr(.64,.62,.2,.1,.02),'hl',1);
+    k.F(rr(.64,.656,.18,.016,.006),'drl',2);
+    k.F(el(.595,.612,.028),'proj',2);k.F(el(.685,.612,.028),'proj',2);
+    k.F(rr(0,.385,1.02,.1,.025),'grille',0,false);
+    k.F(rr(.8,.47,.05,.045,.01),'amber');
+    k.add(k.rbox('trim',[.06,.3,0],[.08,.012,.8],.25));
+    {const y=k.topY(.95);k.add(k.rbox('paint',[.98,y-.004,0],[.3,.032,.2],.45));k.add(k.rbox('void',[.72,y+.012,0],[.012,.014,.15],.3));}
+    k.R(rr(0,.89,1.62,.11,.02),'tl',0,false);
+    k.R(rr(.3,.895,.34,.05,.008),'tlGlow',1);k.R(rr(.66,.895,.28,.05,.008),'tlGlow',1);
+    k.R(rr(0,.893,.18,.026,.006),'satin',1,false);
+    k.R(rr(0,.62,.5,.11,.008),'plate',0,false);
+    for(const z of [-.7,-.57,.57,.7])k.exhaust(z,.33,.048,.12);
+    k.handle(3.15,'trim',.13);
+    k.mirrorPart(2.18,1.04,'paint');
+    k.wipers();
+  }
+});
+
+/* ============ HALCYON R — mid-engine supercar ============ */
+CARS.push({
+  id:'halcyon',name:'Halcyon R',short:'Halcyon R',group:'Garage',tag:'Shop · $15,000',paint:'#f1f1ee',metallic:false,
+  blurb:'Mid-engine supercar. Everything is sharper. Redesigned with a cab-forward black canopy and scooped doors.',
+  cues:'McLaren 720S · Ferrari 296 GTB · Honda NSX',
+  notes:['Cab-forward teardrop canopy, low nose between raised front fenders, and wide rear haunches over staggered tyres.','Each door is carved into a smooth scoop that feeds a black intake in front of the rear wheel.','Slim headlights in the fender tips, C-shaped tail lights, high centre exhausts and a finned diffuser.'],
+  stats:[['Accel',9.5,11],['Top',72,81],['Grip',12,14],['Brake',12,13]],
+  paintMat:{r:.3},
+  body:{L:4.56,capF:.3,capR:.2,capTopK:.1,capBotK:.06,archGap:.025,archDrop:.02,denseX:[[3.1,3.34]],
+    lines:{
+      top:[[0,.43],[.15,.51],[.5,.585],[1,.675],[1.3,.735],[1.5,.785],[2.4,.87],[3.2,.94],[3.9,.965],[4.35,.985],[4.56,.95]],
+      crownY:[[0,.44],[.3,.6],[.7,.715],[1.06,.77],[1.5,.78],[2.2,.82],[2.9,.87],[3.4,.93],[3.8,.958],[4.3,.975],[4.56,.945]],
+      crownZ:[[0,.6],[.4,.73],[1.06,.82],[1.6,.79],[2.4,.75],[3,.79],[3.71,.85],[4.3,.84],[4.56,.78]],
+      wY:[[0,.36],[.3,.52],[1.06,.67],[1.75,.56],[2.6,.55],[3.71,.7],[4.3,.71],[4.56,.66]],
+      wZ:[[0,.84],[.25,.93],[.7,.968],[1.06,.978],[1.5,.962],[2.2,.925],[2.8,.945],[3.3,.985],[3.71,.995],[4.2,.975],[4.56,.92]],
+      sillY:[[0,.22],[.6,.2],[1.5,.2],[3.3,.2],[4,.25],[4.56,.35]],
+      bot:[[0,.17],[.35,.11],[1.06,.1],[3.7,.1],[4.2,.18],[4.56,.32]],
+      scoop:[[2.4,0],[2.65,.02],[2.95,.06],[3.17,.085],[3.25,.065],[3.31,0]],
+      sillIn:.05,valley:.3,roll:.4,style:'smooth'}},
+  wheels:{xF:1.06,xR:3.71,rF:.335,rR:.35,rimF:.2413,rimR:.254,twF:.245,twR:.305,zF:.835,zR:.825,steer:.2,
+    rimStyle:{style:'spoke',n:10,w0:.018,w1:.024,conc:.045}},
+  cabin:{pts:[[1.45,0],[1.75,.93],[2,1.06],[2.3,1.15],[2.6,1.18],[2.9,1.165],[3.2,1.11],[3.55,1.03],[3.95,0]],
+    wsTop:2.28,rwTop:2.92,bx:null,cx:[2.95,2.7],inset:.015,tumble:.2,n:4.2,pillar:.06,
+    mats:{roof:'trim',a:'trim',c:'trim',b:'trim'}},
+  cabinTrimMat:'gloss',accentMat:'gloss',
+  mats:{rim:{c:'#2b2e33',m:1,r:.25,cc:.8},caliper:{c:'#ff6a13',m:0,r:.35,cc:1}},
+  mask:(p,n,api,e)=>{const [x,y]=p,LN=api.LN;
+    const vent=X((-n[0]-.25)*.3,x-3.05,3.34-x,y-(LN.sillY(x)+.03),(LN.wY(x)-.025)-y);
+    return [-1,U(X(LN.sillY(x)-y,x-.3,4.3-x),X(.3-y,.4-x),X(.46-y,x-4.25)),vent];},
+  seams:[seamX(1.53,.28,.74,-.25,.5),seamTop(.2,.55,.5),seamZ(.55,.2,1.4,.55)],
+  extras(k){const L=k.L;
+    const hT=[28,.12];
+    k.F(pg([[.5,.475],[.84,.505],[.87,.548],[.56,.522]],[.012,.03,.02,.012]),'hl',0,true,hT);
+    k.F(pg([[.54,.502],[.84,.522],[.85,.532],[.55,.512]],.004),'drl',1,true,hT);
+    k.F(el(.66,.512,.016),'proj',1,true,hT);k.F(el(.75,.518,.015),'proj',1,true,hT);
+    k.F(pg([[.36,.22],[.68,.24],[.66,.4],[.42,.42]],[.03,.04,.03,.03]),'grille');
+    k.F(rr(0,.27,.5,.09,.035),'grille',0,false);
+    k.F(rr(0,.215,1.0,.016,.008),'gloss',0,false);
+    k.T(pg([[.42,.2],[.7,.22],[.7,.38],[.42,.36]],.03),'vent');
+    k.R(pg([[.26,.86],[.8,.86],[.82,.84],[.82,.73],[.8,.73],[.8,.845],[.26,.845]],.004),'tl');
+    k.R(rr(.53,.854,.54,.008,.003),'tlGlow',1);k.R(rr(.81,.79,.008,.11,.003),'tlGlow',1);
+    k.R(rr(0,.6,1.36,.26,.05),'grille',0,false);
+    k.R(rr(0,.4,.46,.1,.008),'plate',0,false);
+    for(const z of [-.12,.12])k.exhaust(z,.6,.05,.1);
+    {const y=k.topY(4.42);k.add(extrude('gloss',[[0,0],[.14,0],[.16,.035],[.03,.014]],-.8,.8,false).xf(M3.I(),[4.38,y-.012,0]));}
+    k.skirt(1.5,3.25);
+    k.diffuser([-.6,-.3,0,.3,.6],.75,.07,'carbon');
+    k.mirrorPart(1.74,.79,'trim','trim',[.075,.045,.095]);
+    k.wipers();
+  }
+});
+
+/* ============ COPPERHEAD — Stage 1 boss, classic fastback restomod ============ */
+CARS.push({
+  id:'copperhead',name:'Copperhead',short:'Copperhead',group:'Bosses',boss:true,tag:'Stage 1 boss · $4,000',paint:'#c9652e',metallic:true,
+  blurb:'Grippier than any muscle car should be. Redesigned as a late-60s fastback restomod.',
+  cues:'1969 Ford Mustang Mach 1 · 1970 Dodge Charger · Plymouth Road Runner',
+  notes:['Shark nose, long hood and a fastback roof with a Coke-bottle kick over the rear wheels.','Satin-black hood with a scoop and pins, black side stripe, louvred rear glass.','Chrome bumpers, round lamps in a deep grille and a black Kamm-tail panel with a centre fuel cap.'],
+  stats:[['Accel',7.6,11],['Top',61,81],['Grip',11,14],['Brake',10.5,13]],
+  body:{L:4.78,
+    top:[[0,.7],[.04,.8],[.12,.82],[.6,.835],[1.2,.86],[1.85,.89],[2.6,.91],[3.3,.94],[3.75,.98],[4.4,1],[4.7,1.035],[4.76,1.03],[4.78,.98]],
+    width:[[0,.88],[.12,.92],[.6,.94],[1.1,.945],[1.9,.925],[2.6,.915],[3.3,.945],[3.75,.955],[4.3,.94],[4.78,.89]],
+    clr:[[0,.24],[.35,.14],[.95,.12],[3.7,.12],[4.4,.2],[4.78,.3]],
+    nU:[[0,3.4],[.95,4.8],[1.8,3.6],[3,3.4],[3.7,3.8],[4.78,3.4]],nL:2.6,tuck:.88,tumble:.06,hc:[[0,.6],[.95,.72],[1.8,.6],[3,.6],[3.7,.68],[4.78,.6]],capF:.07,
+capR:.09,capTopK:.5,capBotK:.6,archGap:.03,archDrop:.02,flare:[.02,.035]},
+  wheels:{xF:.95,xR:3.7,rF:.34,rR:.345,rimF:.2286,rimR:.2286,twF:.265,twR:.305,zF:.8,zR:.795,steer:.22,
+    rimStyle:{style:'classic',n:5,w0:.055,w1:.07,conc:.02,dish:.035}},
+  cabin:{pts:[[1.86,0],[2.15,1],[2.4,1.17],[2.65,1.26],[2.9,1.3],[3.15,1.3],[3.4,1.27],[3.8,1.18],[4.2,1.08],[4.55,0]],
+    wsTop:2.62,rwTop:3.32,bx:null,cx:[3.45,3.22],inset:.04,tumble:.17,n:3.8,pillar:.06,chrome:true,
+    mats:{roof:'paint',a:'paint',c:'paint',b:'paint'}},
+  accentMat:'matte',cabinAccentMat:'chrome',
+  mats:{rim:{c:'#e3e6ea',m:1,r:.1,cc:.5},caliper:{c:'#1a1a1c',m:.2,r:.4}},
+  mask:(p,n,api)=>{const [x,y,z]=p;
+    const hood=X(upN(n,.5),x-.13,1.84-x);
+    const stripe=X(band(y,.775,.80),sideN(n),x-.35,3.35-x);
+    const scoop=X(polySd(x,y,[[2.97,.56],[3.27,.58],[3.29,.71],[3.06,.7]]),sideN(n));
+    return [-1,U(scoop,X(.24-y,x-.4,4.4-x),X(.4-y,.3-x),X(.33-y,x-4.6)),U(hood,stripe)];},
+  seams:[seamX(1.92,.24,.9,-.12),seamX(3.08,.26,.88,.15),seamTop(4.42,.75,.9),seamZ(.72,4.42,4.75,.9)],
+  extras(k){const L=k.L;
+    k.F(rr(0,.555,1.56,.2,.03),'grille',0,false);
+    k.F(el(.64,.56,.085),'hlChrome',1);k.F(el(.64,.56,.062),'warm',2);
+    k.F(el(.3,.56,.038),'hlChrome',1);k.F(el(.3,.56,.028),'warm',2);
+    k.F(rr(0,.42,1.74,.045,.02),'chrome',0,false);
+    {const y=k.topY(1.05);k.add(k.rbox('matte',[1.08,y-.004,0],[.3,.032,.22],.45));k.add(k.rbox('void',[.82,y+.012,0],[.012,.014,.17],.3));}
+    k.T(el(.26,.5,.016),'chrome');
+    k.R(rr(0,.77,1.66,.27,.03),'gloss',0,false);
+    k.R(rr(.55,.78,.44,.15,.02),'tl',1);k.R(rr(.55,.81,.4,.035,.01),'tlGlow',2);k.R(rr(.55,.755,.4,.035,.01),'tlGlow',2);
+    k.R(el(0,.77,.052),'chrome',1,false);
+    k.R(rr(0,.56,1.74,.05,.02),'chrome',0,false);
+    k.R(rr(0,.47,.46,.1,.008),'plate',0,false);
+    for(const z of [-.52,.52])k.exhaust(z,.29,.044,.1);
+    // louvres over the rear glass
+    for(let i=0;i<9;i++){const x=3.56+i*.088,y=k.roofY(x),s=(k.roofY(x+.01)-k.roofY(x-.01))/.02;
+      k.add(k.rbox('matte',[x,y+.016,0],[.034,.005,.47],.25,M3.rz(Math.atan(s))));}
+    for(const z of [-.47,.47])k.add(k.rbox('matte',[3.91,k.roofY(3.91)+.016,z],[.39,.006,.015],.25,M3.rz(Math.atan((k.roofY(4.3)-k.roofY(3.52))/.78))));
+    k.mirrorPart(2.25,.96,'chrome','chrome',[.075,.05,.07]);
+    k.handle(2.82,'chrome',.1);
+    k.wipers();
+  }
+});
+
+/* ============ NIGHT MARSHAL — Stage 2 boss, unmarked interceptor ============ */
+CARS.push({
+  id:'marshal',name:'Night Marshal',short:'Marshal',group:'Bosses',boss:true,tag:'Stage 2 boss · $9,000',paint:'#1f2633',metallic:true,
+  blurb:'Stops like it hit a wall. Redesigned as an unmarked highway-patrol interceptor.',
+  cues:'Dodge Charger Pursuit · Ford Crown Victoria P71 · Chevrolet Caprice PPV',
+  notes:['Big slab-sided sedan with a high beltline and small, dark windows.','Steel push bar, A-pillar spotlight and hidden red/blue strobes in the grille, windshield and rear glass.','Black steel wheels with chrome caps, and a blank plate.'],
+  stats:[['Accel',8.6,11],['Top',66,81],['Grip',11.5,14],['Brake',11.5,13]],
+  body:{L:5.1,
+    top:[[0,.7],[.05,.84],[.2,.89],[.9,.925],[1.6,.955],[1.9,.975],[3,1],[4,1.04],[4.35,1.07],[4.95,1.085],[5.06,1.07],[5.1,1.02]],
+    width:[[0,.88],[.12,.93],[.5,.95],[1.5,.955],[3.5,.955],[4.3,.95],[5.1,.9]],
+    clr:[[0,.3],[.35,.19],[1,.16],[4,.16],[4.7,.24],[5.1,.36]],
+    nU:4.4,nL:3,tuck:.92,tumble:.06,hc:.6,capF:.1,capR:.09,capTopK:.5,capBotK:.5,archGap:.045,archDrop:.03,flare:[.005,.01]},
+  wheels:{xF:1,xR:4.04,rF:.345,rR:.345,rimF:.2286,rimR:.2286,twF:.245,twR:.245,zF:.8,zR:.8,steer:.22,
+    rimStyle:{style:'steel',n:8,conc:.03,hole:.022,holeR:.66,cap:'chrome'}},
+  cabin:{pts:[[1.9,0],[2.2,1.1],[2.5,1.3],[2.75,1.43],[3.1,1.47],[3.6,1.475],[3.95,1.44],[4.15,1.35],[4.35,1.2],[4.55,0]],
+    wsTop:2.72,rwTop:3.98,bx:3.18,bw:.09,cx:[4.15,3.92],inset:.03,tumble:.17,n:4.6,pillar:.055,
+    mats:{roof:'paint',a:'paint',c:'paint',b:'trim'}},
+  glassMat:'glassDark',
+  mats:{rim:{c:'#15161a',m:.3,r:.45,cc:.4},caliper:{c:'#4a4c50',m:.4,r:.5}},
+  mask:(p,n,api)=>{const [x,y]=p;
+    return [-1,U(X(.27-y,x-.4,4.7-x),X(.46-y,.34-x),X(.42-y,x-4.8)),-1];},
+  seams:[seamX(1.97,.26,1,-.08),seamX(3.16,.26,1,0),seamX(4.18,.42,1.02,.3),seamTop(.18,.7,.8),seamZ(.68,.18,1.9,.8),seamTop(4.55,.75,.95),seamZ(.74,4.55,5.1,.95)],
+  extras(k){const L=k.L;
+    k.F(rr(0,.7,.9,.13,.02),'grille',0,false);
+    k.F(rr(.25,.705,.1,.024,.006),'flashR',1,false);k.F(rr(-.25,.705,.1,.024,.006),'flashB',1,false);
+    k.F(pg([[.47,.66],[.85,.68],[.86,.76],[.5,.74]],.015),'hl');
+    k.F(pg([[.5,.732],[.84,.744],[.846,.757],[.51,.746]],.004),'drl',1);
+    k.F(el(.62,.7,.03),'proj',1);k.F(el(.73,.705,.028),'proj',1);
+    k.F(rr(0,.47,1.2,.13,.02),'grille',0,false);
+    k.F(el(.66,.46,.032),'drl',1);
+    // push bar
+    const pb=(a,b,r=.024)=>k.add(k.cyl('rubber',a,b,r,r,14));
+    for(const z of [-.36,.36]){pb([-.13,.3,z],[-.13,.82,z]);pb([-.13,.42,z],[.08,.42,z],.018);pb([-.13,.66,z],[.06,.66,z],.018);
+      k.add(k.rbox('rubber',[-.16,.58,z],[.02,.17,.03],.3));}
+    pb([-.13,.8,-.36],[-.13,.8,.36]);pb([-.13,.52,-.36],[-.13,.52,.36]);
+    k.add(k.rbox('flashR',[-.16,.8,.16],[.012,.014,.08],.3));k.add(k.rbox('flashB',[-.16,.8,-.16],[.012,.014,.08],.3));
+    // A-pillar spotlight (driver side)
+    k.add(k.cyl('trim',[2.06,1.0,.92],[2.06,1.04,.9],.012,.012,8));
+    k.add(k.cyl('trim',[2.12,1.07,.9],[1.98,1.07,.9],.06,.064,20));
+    k.add(k.cyl('warm',[1.975,1.07,.9],[1.97,1.07,.9],.054,.054,20));
+    // hidden light bars on the glass
+    for(const [x,sg] of [[2.6,1],[4.1,-1]]){const y=k.roofY(x),s=(k.roofY(x+.01)-k.roofY(x-.01))/.02,r=M3.rz(Math.atan(s));
+      k.add(k.rbox('flashR',[x,y+.004,.27],[.03,.01,.2],.3,r));k.add(k.rbox('flashB',[x,y+.004,-.27],[.03,.01,.2],.3,r));}
+    for(const [x,z] of [[3.45,0],[3.7,.2],[3.7,-.2]])k.add(k.cyl('trim',[x,k.roofY(x)+.002,z],[x+.01,k.roofY(x)+.09,z],.004,.003,6));
+    k.R(rr(0,.92,1.66,.07,.015),'tl',0,false);
+    k.R(rr(.56,.92,.5,.028,.006),'tlGlow',1);
+    k.R(rr(.19,.92,.12,.026,.006),'flashR',1,false);k.R(rr(-.19,.92,.12,.026,.006),'flashB',1,false);
+    k.R(rr(0,.64,.5,.11,.008),'plate',0,false);
+    for(const z of [-.62,.62])k.exhaust(z,.36,.04,.1);
+    k.handle(2.65);k.handle(3.75);
+    k.mirrorPart(2.13,1.03,'trim');
+    k.wipers();
+  }
+});
+
+/* ============ BLUE STATIC — Stage 3 boss, electric hypercar ============ */
+CARS.push({
+  id:'static',name:'Blue Static',short:'Blue Static',group:'Bosses',boss:true,tag:'Stage 3 boss · $18,000',paint:'#1fa3ff',metallic:true,
+  blurb:'Twitchy and very fast. Redesigned as an all-electric hypercar: no grille, no exhaust, all light.',
+  cues:'Rimac Nevera · Lotus Evija · Pininfarina Battista',
+  notes:['Smooth teardrop body, glass canopy and pronounced fender pods front and rear.','A long gloss-black air channel runs down each flank into the rear haunch.','Full-width light blades front and rear, turbine-style wheels and a huge diffuser where the exhausts would be.'],
+  stats:[['Accel',10.2,11],['Top',75,81],['Grip',13,14],['Brake',12,13]],
+  body:{L:4.76,capF:.34,capR:.24,capTopK:.1,capBotK:.06,archGap:.025,archDrop:.02,denseX:[[3.15,3.36]],
+    lines:{
+      top:[[0,.43],[.15,.51],[.5,.59],[1,.68],[1.3,.73],[1.5,.775],[2.4,.86],[3.2,.92],[3.9,.94],[4.5,.96],[4.7,.955],[4.76,.91]],
+      crownY:[[0,.45],[.35,.64],[.7,.745],[1,.79],[1.5,.775],[2.2,.79],[2.9,.84],[3.4,.9],[3.8,.94],[4.4,.962],[4.76,.93]],
+      crownZ:[[0,.6],[.4,.74],[1,.82],[1.6,.78],[2.4,.73],[3,.77],[3.76,.84],[4.4,.83],[4.76,.76]],
+      wY:[[0,.36],[.3,.53],[1,.705],[1.7,.56],[2.6,.55],[3.3,.62],[3.76,.7],[4.4,.7],[4.76,.66]],
+      wZ:[[0,.82],[.25,.925],[.7,.98],[1,.995],[1.6,.958],[2.3,.93],[2.9,.95],[3.4,.99],[3.76,1],[4.3,.98],[4.76,.91]],
+      sillY:[[0,.22],[.6,.2],[3.4,.2],[4.1,.25],[4.76,.34]],
+      bot:[[0,.16],[.35,.105],[1,.1],[3.75,.1],[4.25,.17],[4.76,.29]],
+      scoop:[[1.6,0],[1.95,.022],[2.6,.038],[3.1,.048],[3.27,.03],[3.34,0]],scoopMid:.6,scoopW:.32,
+      sillIn:.055,valley:.3,roll:.42,style:'smooth'}},
+  wheels:{xF:1,xR:3.76,rF:.345,rR:.355,rimF:.254,rimR:.2667,twF:.275,twR:.315,zF:.84,zR:.835,steer:.2,
+    rimStyle:{style:'spoke',n:14,w0:.012,w1:.02,twist:.5,conc:.045}},
+  cabin:{pts:[[1.5,0],[1.85,.93],[2.1,1.06],[2.4,1.15],[2.7,1.175],[3,1.15],[3.3,1.08],[3.65,1],[4,0]],
+    wsTop:2.35,rwTop:2.95,bx:null,cx:[3,2.8],inset:.015,tumble:.22,n:3.8,pillar:.06,
+    mats:{roof:'glass',a:'trim',c:'trim',b:'trim'}},
+  cabinTrimMat:'gloss',accentMat:'gloss',
+  mats:{rim:{c:'#5d656e',m:1,r:.22,cc:.8},caliper:{c:'#1fa3ff',m:0,r:.3,cc:1}},
+  mask:(p,n,api,e)=>{const [x,y]=p,LN=api.LN;
+    return [-1,U(X(LN.sillY(x)-y,x-.3,4.3-x),X(.3-y,.45-x),X(.44-y,x-4.2)),(e-.014)*.6];},
+  seams:[seamX(1.55,.3,.76,-.3,.5)],
+  extras(k){const L=k.L;
+    k.F(rr(0,.474,1.52,.011,.005),'cyan',0,false);
+    k.F(pg([[.6,.486],[.84,.494],[.86,.512],[.62,.505]],.005),'hl',0,true,[26,.12]);
+    k.F(el(.68,.497,.011),'proj',1,true,[26,.12]);k.F(el(.76,.5,.011),'proj',1,true,[26,.12]);
+    k.F(pg([[.46,.23],[.72,.25],[.7,.36],[.5,.38]],[.03,.04,.03,.03]),'grille');
+    k.F(rr(0,.25,.56,.05,.025),'grille',0,false);
+    k.R(rr(0,.86,1.74,.012,.005),'tlGlow',0,false);
+    k.R(rr(0,.55,1.36,.24,.05),'vent',0,false);
+    k.R(rr(0,.73,.46,.1,.008),'plate',0,false);
+    k.S(rr(2.38,.205,1.62,.008,.004),'cyan');
+    k.skirt(1.45,3.3);
+    k.diffuser([-.7,-.42,-.14,.14,.42,.7],.8,.075,'carbon');
+    k.mirrorPart(1.8,.82,'trim','trim',[.055,.028,.065]);
+    k.wipers();
+  }
+});
+
+/* ============ LAST EXIT — Stage 4 boss, V12 hypercar ============ */
+CARS.push({
+  id:'lastexit',name:'Last Exit',short:'Last Exit',group:'Bosses',boss:true,tag:'Stage 4 boss · $30,000',paint:'#b0122a',metallic:true,
+  blurb:'The fastest thing on the interstate. Redesigned as a razor-edged V12 wedge.',
+  cues:'Lamborghini Aventador SVJ · Koenigsegg Jesko · Ferrari SF90',
+  notes:['Sharp wedge profile with flat, faceted panels and crisp creases instead of soft curves.','A huge angular intake is carved into each flank behind the door; roof snorkel, carbon everywhere.','Y-shaped lights front and rear, swan-neck rear wing and twin high exhausts.'],
+  stats:[['Accel',11,11],['Top',81,81],['Grip',14,14],['Brake',13,13]],
+  body:{L:4.84,capF:.24,capR:.16,capTopK:.08,capBotK:.05,archGap:.03,archDrop:.03,denseX:[[3.15,3.38]],
+    lines:{
+      top:[[0,.38],[.1,.45],[.5,.55],[1,.64],[1.3,.7],[1.5,.755],[2.4,.84],[3.2,.925],[3.9,.962],[4.5,.965],[4.75,.96],[4.84,.92]],
+      crownY:[[0,.4],[.3,.56],[.7,.68],[1.07,.77],[1.5,.755],[2.2,.79],[2.9,.86],[3.4,.93],[3.85,.965],[4.5,.97],[4.84,.93]],
+      crownZ:[[0,.62],[.4,.78],[1.07,.87],[1.6,.8],[2.4,.76],[3,.8],[3.8,.87],[4.4,.86],[4.84,.8]],
+      wY:[[0,.3],[.3,.49],[1.07,.715],[1.7,.56],[2.6,.54],[3.3,.62],[3.8,.73],[4.4,.72],[4.84,.66]],
+      wZ:[[0,.86],[.25,.965],[.7,1.012],[1.07,1.022],[1.6,.99],[2.3,.955],[2.9,.985],[3.4,1.035],[3.8,1.045],[4.4,1.02],[4.84,.96]],
+      sillY:[[0,.18],[.5,.17],[3.4,.17],[4.2,.24],[4.84,.33]],
+      bot:[[0,.14],[.35,.1],[1.07,.09],[3.8,.09],[4.3,.17],[4.84,.3]],
+      scoop:[[2.3,0],[2.55,.03],[2.9,.09],[3.17,.11],[3.29,.08],[3.36,0]],
+      sillIn:.045,valley:.25,roll:.35,style:'facet',fillet:[.5,.25,.03,.05,.025,.1,.1,.1,.1,.025,.02,.3]}},
+  wheels:{xF:1.07,xR:3.8,rF:.34,rR:.365,rimF:.254,rimR:.2667,twF:.265,twR:.355,zF:.87,zR:.855,steer:.2,
+    rimStyle:{style:'split',n:6,w0:.024,w1:.03,sepH:.025,sepR:.09,twist:.28,conc:.05}},
+  cabin:{pts:[[1.5,0],[1.8,.87],[2.1,1],[2.4,1.075],[2.7,1.1],[3,1.085],[3.3,1.03],[3.65,.98],[4.05,0]],
+    wsTop:2.4,rwTop:2.95,bx:null,cx:[3,2.75],inset:.015,tumble:.24,n:6,pillar:.06,
+    mats:{roof:'trim',a:'trim',c:'paint',b:'trim'}},
+  trimMat:'carbon',accentMat:'gloss',
+  mats:{rim:{c:'#0e0f11',m:.6,r:.18,cc:1},caliper:{c:'#f5c400',m:0,r:.3,cc:1}},
+  mask:(p,n,api,e)=>{const [x,y]=p,LN=api.LN;
+    const vent=X((-n[0]-.25)*.3,x-3.05,3.38-x,y-(LN.sillY(x)+.03),(LN.wY(x)-.025)-y);
+    return [-1,U(X(LN.sillY(x)+.01-y,x-.3,4.35-x),X(.3-y,.45-x),X(.44-y,x-4.3)),U(vent,X((e-.045)*.5,x-2.75))];},
+  seams:[seamX(1.56,.3,.72,-.35,.5)],
+  extras(k){const L=k.L;
+    const hT=[30,.14];
+    k.F(pg([[.5,.47],[.86,.43],[.9,.47],[.56,.525]],.008),'hl',0,true,hT);
+    k.F(pg([[.54,.497],[.86,.452],[.868,.46],[.55,.506]],.002),'drl',1,true,hT);
+    k.F(pg([[.73,.475],[.79,.43],[.8,.437],[.742,.483]],.002),'drl',1,true,hT);
+    k.F(pg([[.38,.2],[.76,.22],[.74,.34],[.62,.38],[.44,.33]],.01),'grille');
+    k.F(pg([[-.3,.19],[.3,.19],[.25,.28],[-.25,.28]],.01),'grille',0,false);
+    k.F(rr(0,.185,1.1,.014,.004),'gloss',0,false);
+    k.T(pg([[.5,.15],[.74,.16],[.77,.3],[.53,.29]],.02),'vent');
+    {const x=2.78,y=Math.max(k.roofY(x-.17),k.roofY(x+.23));k.add(k.rbox('carbon',[x+.03,y+.036,0],[.2,.04,.12],.4));k.add(k.rbox('void',[x-.16,y+.045,0],[.01,.02,.09],.3));}
+    {const yd=k.topY(4.45),yw=1.08;k.wing('carbon',4.34,yw,.92,.32,.1,.08);
+      for(const z of [-.92,.92])k.add(k.rbox('carbon',[4.49,yw-.005,z],[.17,.055,.006],.2));
+      for(const z of [-.42,.42])k.add(k.rbox('carbon',[4.45,(yd+yw)/2,z],[.035,(yw-yd)/2+.01,.008],.2));}
+    k.R(pg([[.44,.72],[.93,.8],[.93,.88],[.44,.85]],.01),'tl');
+    k.R(pg([[.47,.82],[.91,.835],[.91,.849],[.47,.835]],.003),'tlGlow',1);
+    k.R(pg([[.7,.823],[.78,.735],[.795,.745],[.72,.832]],.003),'tlGlow',1);
+    k.R(pg([[-.62,.42],[.62,.42],[.72,.68],[-.72,.68]],.02),'grille',0,false);
+    for(const z of [-.09,.09])k.exhaust(z,.6,.05,.1);
+    k.skirt(1.5,3.35);
+    k.diffuser([-.75,-.45,-.15,.15,.45,.75],.85,.08,'carbon');
+    k.mirrorPart(1.78,.78,'carbon','carbon',[.07,.04,.09]);
+    k.wipers();
+  }
+});
+
+/* ============ TRAFFIC — compact SUV ============ */
+CARS.push({
+  id:'suv',name:'Traffic SUV',short:'SUV',group:'Traffic',tag:'Traffic · Middle lanes',paint:'#2d4a36',metallic:true,
+  blurb:'The most common thing you will weave around. A tall, chunky compact crossover.',
+  cues:'Toyota RAV4 · Honda CR-V · Mazda CX-5',
+  notes:['Tall body, upright tailgate and black plastic cladding round the arches and sills.','Roof rails, a big trapezoid grille and a silver skid plate.','Wide rear lights and a tall tailgate make it easy to read from behind.'],
+  body:{L:4.62,
+    top:[[0,.8],[.05,.93],[.25,.98],[.9,1.02],[1.35,1.06],[1.5,1.08],[3,1.11],[4,1.14],[4.45,1.15],[4.58,1.12],[4.62,1.07]],
+    width:[[0,.84],[.15,.9],[.5,.925],[2.3,.93],[4.2,.925],[4.62,.86]],
+    clr:[[0,.36],[.35,.24],[.92,.21],[3.62,.21],[4.3,.3],[4.62,.4]],
+    nU:3.8,nL:3,tuck:.92,tumble:.04,hc:[[0,.6],[.92,.68],[2.3,.6],[3.62,.68],[4.62,.6]],capF:.12,capR:.1,capTopK:.5,capBotK:.5,archGap:.05,archDrop:.04},
+  wheels:{xF:.92,xR:3.62,rF:.36,rR:.36,rimF:.2286,rimR:.2286,twF:.225,twR:.225,zF:.8,zR:.8,steer:.2,
+    rimStyle:{style:'spoke',n:5,w0:.04,w1:.05,conc:.03}},
+  cabin:{pts:[[1.5,0],[1.85,1.32],[2.15,1.54],[2.4,1.64],[2.9,1.68],[3.6,1.675],[4.1,1.64],[4.35,1.54],[4.5,1.28],[4.58,0]],
+    wsTop:2.38,rwTop:4.12,bx:2.88,bw:.08,cx:[4.05,3.96],inset:.03,tumble:.1,n:5,pillar:.055,pillarR:.15,
+    mats:{roof:'paint',a:'trim',c:'paint',b:'trim'}},
+  mats:{rim:{c:'#b9bec4',m:1,r:.25,cc:.6},caliper:{c:'#3b3d41',m:.4,r:.55}},
+  mask:(p,n,api)=>{const [x,y]=p;
+    return [-1,U(X(.43-y,x-.2,4.4-x),X(.55-y,.3-x),X(.58-y,x-4.38)),-1];},
+  archTrim:.065,
+
+  seams:[seamX(1.55,.45,1.1,-.12),seamX(2.86,.45,1.1,0),seamX(3.85,.45,1.12,.12),seamTop(.2,.72,.85),seamZ(.7,.2,1.5,.85)],
+  extras(k){const L=k.L;
+    k.F(pg([[-.36,.6],[.36,.6],[.42,.8],[-.42,.8]],.03),'grille',0,false);
+    k.F(pg([[.45,.8],[.84,.82],[.86,.9],[.5,.88]],.015),'hl');
+    k.F(pg([[.5,.865],[.84,.875],[.85,.888],[.51,.878]],.004),'drl',1);
+    k.F(el(.62,.84,.028),'proj',1);k.F(el(.72,.845,.026),'proj',1);
+    k.F(rr(0,.48,.7,.06,.02),'satin',0,false);
+    k.F(rr(.7,.62,.1,.05,.015),'grille');
+    k.R(pg([[.5,.9],[.88,.93],[.88,1.02],[.55,1],[.5,.96]],.015),'tl');
+    k.R(rr(.7,.975,.32,.024,.006),'tlGlow',1);
+    k.R(rr(0,.8,.5,.11,.008),'plate',0,false);
+    k.R(rr(0,.5,.7,.06,.02),'satin',0,false);
+    k.exhaust(-.5,.4,.035,.08);
+    for(const z of [-.5,.5]){const x0=2.55,x1=4.15;k.add(k.rbox('trim',[(x0+x1)/2,k.roofY((x0+x1)/2)+.012,z],[(x1-x0)/2,.011,.016],.3));
+      for(const x of [x0+.05,x1-.05])k.add(k.rbox('trim',[x,k.roofY(x)+.016,z],[.04,.02,.02],.3));}
+
+    k.handle(2.6,'trim',.13);k.handle(3.6,'trim',.13);
+    k.mirrorPart(1.8,1.05,'paint','trim',[.09,.065,.12]);
+    k.wipers();
+  }
+});
+
+/* ============ TRAFFIC — delivery van ============ */
+CARS.push({
+  id:'van',name:'Traffic Van',short:'Van',group:'Traffic',tag:'Traffic · Slow lanes',paint:'#eef0f2',metallic:false,
+  blurb:'A tall delivery van. Slow, wide and in the way.',
+  cues:'Ford Transit · Mercedes Sprinter · Ram ProMaster',
+  notes:['Short hood, steep windshield and a tall, flat-sided cargo box.','Black bumpers, rubbing strips and plastic hubcaps on steel wheels.','Vertical tail lights on the rear corners and a sliding-door seam on the side.'],
+  body:{L:5.4,
+    top:[[0,.86],[.06,.98],[.35,1.04],[.7,1.08],[.95,1.1],[5.25,1.14],[5.36,1.13],[5.4,1.1]],
+    width:[[0,.9],[.2,.97],[.6,1],[5,1],[5.4,.98]],
+    clr:[[0,.34],[.3,.24],[.95,.2],[4.25,.2],[4.9,.26],[5.4,.34]],
+    nU:5,nL:4,tuck:.95,tumble:.02,hc:.62,capF:.1,capR:.05,capTopK:.5,capBotK:.5,archGap:.05,archDrop:.03},
+  wheels:{xF:.95,xR:4.25,rF:.36,rR:.36,rimF:.2032,rimR:.2032,twF:.215,twR:.215,zF:.86,zR:.86,steer:.2,
+    rimStyle:{style:'steel',n:6,conc:.02,hole:.022,holeR:.62}},
+  cabin:{pts:[[.95,0],[1.25,1.5],[1.55,1.92],[1.8,2.2],[2.1,2.34],[2.6,2.39],[5,2.4],[5.28,2.38],[5.37,2.15],[5.4,0]],
+    wsTop:1.95,rwTop:5.3,rear:false,bx:null,cx:[2.1,2.02],winTop:1.75,inset:.012,gFrac:.98,tumble:.04,n:6,pillar:.05,
+    mats:{roof:'paint',a:'paint',c:'paint',b:'paint'}},
+
+  mats:{rim:{c:'#9ea4aa',m:.6,r:.35,cc:.4},caliper:{c:'#3b3d41',m:.4,r:.55}},
+  mask:(p,n,api)=>{const [x,y]=p;
+    return [-1,U(X(.5-y,.4-x),X(.48-y,x-5.25),X(band(y,.55,.62),sideN(n),x-.3,5.2-x),X(.27-y,x-.3,5.1-x)),-1];},
+  seams:[seamX(1.0,.3,1.1,-.1),seamX(2.15,.3,1.1,0),seamX(2.25,.3,1.1,0),seamX(3.6,.3,1.12,0)],
+  extras(k){const L=k.L;
+    k.F(rr(0,.74,1.0,.2,.03),'grille',0,false);
+    k.F(pg([[.52,.72],[.9,.74],[.9,.93],[.58,.92]],.02),'hl');
+    k.F(rr(.74,.9,.3,.022,.006),'drl',1);
+    k.F(el(.66,.82,.04),'proj',1);
+    k.F(rr(.8,.6,.12,.04,.01),'amberLens');
+    k.F(rr(0,.42,.5,.11,.008),'plate',0,false);
+    k.R(rr(.88,.92,.1,.34,.015),'tl');
+    k.R(rr(.88,1.0,.08,.12,.01),'tlGlow',1);k.R(rr(.88,.86,.08,.05,.01),'amberLens',1);k.R(rr(.88,.8,.08,.04,.01),'rev',1);
+    k.R(rr(0,.62,.5,.11,.008),'plate',0,false);
+    k.exhaust(-.6,.3,.03,.08);
+    k.handle(1.85);k.handle(3.4,'trim',.18);
+    k.mirrorPart(1.25,1.08,'trim','trim',[.08,.14,.13]);
+    k.wipers();
+  }
+});
+
+// ---------- interiors ----------
+Object.assign(LIB,{
+  iCarpet:{c:'#111113',r:.95},
+  iDash:{c:'#1a1b1e',r:.62,cc:.1},
+  iSoft:{c:'#242528',r:.75},
+  iSeat:{c:'#1b1b1d',r:.5,cc:.15},
+  iInsert:{c:'#222224',r:.92},
+  iTrim:{c:'#9aa0a6',m:1,r:.3},
+  iCarbon:{c:'#1c1f23',r:.22,cc:1,pat:3},
+  iRim:{c:'#141416',r:.6,cc:.1},
+  iSpoke:{c:'#2a2c30',m:.6,r:.35},
+  iChrome:{c:'#e8ebee',m:1,r:.06},
+  iGauge:{c:'#0a0a0a',e:[2.2,2.1,1.9],pat:7},
+  iScreen:{c:'#05070a',e:[.9,1.6,2.4],pat:8},
+  iVent:{c:'#2a2d31',m:.4,r:.35,cc:.4,pat:2},
+  iDoor:{c:'#1e1f22',r:.72},
+  iBlack:{c:'#0a0a0b',r:.45,cc:.3},
+  iAccent:{c:'#c0392b',r:.4,cc:.3},
+  iGlow:{c:'#46ecff',e:[.25,1.9,2.6]},
+  iHead:{c:'#2a2a2c',r:.95},
+  iBelt:{c:'#c0392b',r:.8},
+  iWood:{c:'#5a3218',r:.28,cc:.8,pat:12},
+});
+
+// flat panel facing n; uv in [-1,1] (unit) or metres
+function panel(mat,c,n,up,w,h,metres=false){const nn=vnorm(n),u=vnorm(vcross(up,nn)),v=vcross(nn,u),p=new Part(mat);
+  grid(p,3,3,(i,j)=>{const a=j-1,b=i-1;return [c[0]+u[0]*a*w/2+v[0]*b*h/2,c[1]+u[1]*a*w/2+v[1]*b*h/2,c[2]+u[2]*a*w/2+v[2]*b*h/2,metres?a*w/2:a,metres?b*h/2:b];});
+  return p.normals();}
+// tube swept along a polyline [[x,y,z]...]
+function sweep(mat,path,r,closed=true,segs=12){const p=new Part(mat),n=path.length;
+  const P=closed?path.concat([path[0]]):path,m=P.length;
+  const T=P.map((q,i)=>{const a=P[Math.max(0,i-1)],b=P[Math.min(m-1,i+1)];let t=vsub(b,a);if(closed&&(i===0||i===m-1))t=vsub(path[1],path[n-1]);return vnorm(t);});
+  const N=[vnorm(vcross(T[0],Math.abs(T[0][1])<.9?[0,1,0]:[1,0,0]))];
+  for(let i=1;i<m;i++){const q=vsub(N[i-1],vmul(T[i],vdot(N[i-1],T[i])));N.push(vnorm(q));}
+  grid(p,m,segs,(i,j)=>{const a=j/segs*Math.PI*2,B=vcross(T[i],N[i]);return vadd(P[i],vadd(vmul(N[i],Math.cos(a)*r),vmul(B,Math.sin(a)*r)));},true);
+  if(!closed)for(const i of [0,m-1]){const c=p.v(...P[i]),s=p.count;for(let j=0;j<segs;j++){const a=j/segs*Math.PI*2,B=vcross(T[i],N[i]);p.v(...vadd(P[i],vadd(vmul(N[i],Math.cos(a)*r),vmul(B,Math.sin(a)*r))));}
+    for(let j=0;j<segs;j++)p.t(c,s+j,s+(j+1)%segs);}
+  return p.normals();}
+
+function buildInterior(S,api,cab,kit,parts){
+  const I=Object.assign({dz:.37,dd:.55,reach:.5,tilt:22,seatW:.5,recline:15,shifter:'auto',cluster:'screen',screen:null,tunnel:true,
+    wheel:{style:'sport'},seat:'sport',rear:null,dashMat:'iDash',trimMat:'iTrim',consoleMat:'iDash',doorMat:'iDoor',seatMat:'iSeat',insertMat:'iInsert'},S.interior);
+  const add=p=>{if(p)parts.push(p);return p;},both=p=>{if(!p)return;parts.push(p);parts.push(mirrorZ(p));};
+  const firstPart=parts.length;
+  const box=(mat,c,h,e=.3,rot=null)=>{const p=rbox(mat,h[0],h[1],h[2],e);p.xf(rot||M3.I(),c);return add(p);};
+  const C=cab.C,x0=cab.x0,roof=cab.roofF,belt=x=>cab.baseY(x);
+  const fl=I.floor,cu=I.cush,hx=I.hx,dz=I.dz;
+  const inner=(x,y)=>Math.max(.3,api.hwAt(x,y)-.05);
+  const izMin=(xa,xb,y)=>{let m=9;for(let k=0;k<=8;k++)m=Math.min(m,inner(lerp(xa,xb,k/8),y));return m;};
+  const eye=I.eye||[hx-.01,cu+.6];
+
+
+  // ---- steering wheel geometry ----
+  const th=I.tilt*Math.PI/180,wN=[Math.cos(th),Math.sin(th),0],wU=[-Math.sin(th),Math.cos(th),0],wL=[0,0,1];
+  const wc=[hx-I.reach,I.wheelY||cu+.33,dz],Wst=Object.assign({style:'sport',r:.185,t:.017},I.wheel);
+  // ---- dashboard ----
+  const xF=x0+I.dd,xT=x0+I.dd*.45;
+  // the dash top rises under the windshield toward the driver, ending in a brow just above the wheel
+  const dTop=Math.min(I.dashTop||wc[1]+.11,roof(x0+I.dd*.8)-.05);
+  const yB=Math.min(roof(x0+I.dd*.35)-.035,dTop-.015);
+  const zD=izMin(x0+.05,xF,dTop-.12);
+  const prof=pg([[x0-.06,belt(x0)-.04],[x0+I.dd*.35,yB],[x0+I.dd*.8,dTop],[xF,dTop-.05],[xF-.012,fl+.4],[x0+I.dd*.55,fl+.31],[x0-.06,fl+.28]],[.02,.08,.05,.025,.04,.05,.02],6);
+  add(extrude(I.dashMat,prof,-zD,zD,true));
+  box(I.trimMat,[xF-.004,dTop-.13,0],[.012,.016,zD-.06],.25);
+  // vents
+  for(const z of [zD-.13,-(zD-.13),.075,-.075])add(panel('iVent',[xF+.006,dTop-.09,z],[1,.05,0],[0,1,0],.1,.045,true));
+  // instrument binnacle + cluster
+  const cY=Math.min(dTop-.035,Math.max(dTop-.06,wc[1]+.1)),cX=xF-.015;
+  box(I.dashMat,[cX-.04,dTop+.006,dz],[.07,.022,.17],.35);
+
+  const cN=vnorm(vsub([eye[0],eye[1],dz],[cX,cY,dz]));
+  if(I.cluster==='dials2'||I.cluster==='dials5'){
+    const big=I.cluster==='dials5'?.1:.115;
+    for(const o of [-.07,.07])add(panel('iGauge',[cX+.028,cY,dz+o],cN,[0,1,0],big,big));
+    if(I.cluster==='dials5')for(const o of [-.155,0,.155]){if(o===0)continue;add(panel('iGauge',[cX+.03,cY-.01,dz+o],cN,[0,1,0],.055,.055));}
+    if(I.bezel)for(const o of [-.07,.07])add(sweep('iChrome',Array.from({length:28},(_,i)=>{const a=i/28*Math.PI*2,u=vnorm(vcross([0,1,0],cN)),v=vcross(cN,u),r=big*.5;
+      return vadd([cX+.032,cY,dz+o],vadd(vmul(u,Math.cos(a)*r),vmul(v,Math.sin(a)*r)));}),.005,true,8));
+  }else if(I.cluster!=='none')add(panel('iScreen',[cX+.028,cY,dz],cN,[0,1,0],.27,.1));
+
+  // centre screen
+  if(I.screen==='land')add(panel('iScreen',[xF+.012,dTop-.02,0],[1,.25,0],[0,1,0],.25,.14));
+  else if(I.screen==='port'){box('iBlack',[x0+I.dd*.82,dTop+.11,0],[.012,.15,.11],.2,M3.rz(.2));add(panel('iScreen',[x0+I.dd*.82+.014,dTop+.11,0],[1,.2,0],[0,1,0],.2,.28));}
+  else if(I.screen==='tablet'){box('iBlack',[xF-.02,dTop+.09,0],[.012,.1,.16],.2,M3.rz(.25));add(panel('iScreen',[xF-.006,dTop+.093,0],[1,.25,0],[0,1,0],.3,.18));}
+  else if(I.screen==='wide'){const zc=dz*.45;box('iBlack',[xF-.03,dTop+.07,zc],[.012,.075,.42],.2,M3.rz(.3));add(panel('iScreen',[xF-.016,dTop+.074,zc],[1,.3,0],[0,1,0],.82,.13));}
+
+  const toW=(a,b,c=0)=>vadd(wc,vadd(vmul(wL,a),vadd(vmul(wU,b),vmul(wN,c))));
+  const Rw=Wst.r;let path;
+  if(Wst.style==='yoke'){path=[[-.17,.07],[-.185,.0],[-.17,-.065],[-.1,-.095],[0,-.1],[.1,-.095],[.17,-.065],[.185,0],[.17,.07]].map(([a,b])=>toW(a,b));add(sweep('iRim',path,.022,false,14));
+    add(sweep('iRim',[toW(-.17,.07),toW(-.12,.075),toW(-.06,.04),toW(.06,.04),toW(.12,.075),toW(.17,.07)],.012,false,10));}
+  else{const fb=Wst.style==='flat'||Wst.style==='race';path=[];for(let i=0;i<48;i++){const a=i/48*Math.PI*2;let x=Rw*Math.sin(a),y=Rw*Math.cos(a);if(fb&&y<-Rw*.78)y=-Rw*.78+(y+Rw*.78)*.12;path.push(toW(x,y));}
+    add(sweep(Wst.style==='classic'?'iWood':'iRim',path,Wst.t,true,12));}
+  const spokeMat=Wst.style==='classic'?'iChrome':'iSpoke';
+  const spokes=Wst.style==='basic'?[[-1,-.25],[1,-.25],[0,-1]]:Wst.style==='yoke'?[[-1,0],[1,0]]:[[-1,0],[1,0],[0,-1]];
+  for(const [sx,sy] of spokes){const L0=.055,L1=(Wst.style==='yoke'?.17:Rw)-.01,dir=vnorm([sx,sy,0]);const ang=Math.atan2(dir[1],dir[0]);
+    const cm=(L0+L1)/2,p=rbox(spokeMat,(L1-L0)/2,Wst.style==='classic'?.006:.013,Wst.style==='classic'?.004:.02,.3);
+    p.xf(M3.rz(ang),[dir[0]*cm,dir[1]*cm,-.02]);p.xf(M3.basis(wL,wU,wN),wc);add(p);}
+  add(cyl(Wst.style==='classic'?'iChrome':'iRim',toW(0,0,-.05),toW(0,0,.012),.06,.055,24));
+  if(Wst.style==='race'||Wst.style==='flat'){const p=rbox(I.markMat||'iAccent',.012,.008,.02,.3);p.xf(M3.basis(wL,wU,wN),toW(0,Rw,.0));add(p);}
+  if(I.paddles)for(const s of [-1,1]){const p=rbox('iCarbon',.035,.05,.004,.3);p.xf(M3.basis(wL,wU,wN),toW(s*.12,.05,-.05));add(p);}
+  // column
+  add(cyl('iBlack',toW(0,0,-.05),vadd(wc,vmul(wN,-.32)),.035,.045,16));
+
+  // ---- seats ----
+  function seat(x,z,style,w=I.seatW,c=cu,mat=I.seatMat,ins=I.insertMat){
+    const hw=w/2,b=I.recline*Math.PI/180,Rb=M3.rz(-b),Rc=M3.rz(-.07);
+    const bk=(dx,dy)=>[x+dx*Math.cos(b)+dy*Math.sin(b),c+dy*Math.cos(b)-dx*Math.sin(b)];
+    box(mat,[x-.21,c-.065,z],[.25,.06,hw*.88],.35,Rc);
+    box(ins,[x-.22,c-.003,z],[.2,.012,hw*.5],.3,Rc);
+    const tall=style==='bucket'||style==='race';
+    const bh=tall?.36:.3,q=bk(.02,bh+.02);box(mat,[q[0],q[1],z],[.065,bh,hw*.88],.35,Rb);
+    const qi=bk(-.045,bh*.92);box(ins,[qi[0],qi[1],z],[.012,bh*.78,hw*.48],.3,Rb);
+    if(style!=='basic'&&style!=='bench'){const bol=style==='classic'?.03:.05;
+      for(const s of [-1,1]){box(mat,[x-.2,c-.02,z+s*(hw-.05)],[.23,.03+bol*.4,.05],.4,Rc);
+        const qb=bk(-.01,bh*.75);box(mat,[qb[0],qb[1],z+s*(hw-.04)],[.08,bh*.7,.055],.4,Rb);}}
+    if(tall){const qh=bk(.02,bh*2+.13);box(mat,[qh[0],qh[1],z],[.06,.12,hw*.62],.4,Rb);
+      for(const s of [-1,1]){const qs=bk(-.04,bh*2+.04);box('iBlack',[qs[0],qs[1],z+s*.07],[.015,.035,.022],.3,Rb);}
+      if(I.harness)for(const s of [-1,1]){const a=bk(-.075,bh*2+.02),bb=bk(-.11,.25);const p=cyl(I.harness,[a[0],a[1],z+s*.07],[bb[0],bb[1],z+s*.05],.022,.022,4);add(p);}}
+    else{const qh=bk(.04,bh*2+.11);box(mat,[qh[0],qh[1],z],[.055,.085,hw*.55],.4,Rb);
+      for(const s of [-1,1]){const a=bk(.04,bh*2+.01),bb=bk(.04,bh*2+.07);add(cyl('iChrome',[a[0],a[1],z+s*.07],[bb[0],bb[1],z+s*.07],.006,.006,6));}}
+  }
+  for(const s of [1,-1])seat(hx,s*dz,I.seat);
+  if(I.rear){const R0=I.rear,zw=izMin(R0.hx-.4,R0.hx+.1,R0.cush+.2)-.03;
+    if(R0.style==='buckets'){for(const s of [1,-1])seat(R0.hx,s*Math.min(dz,zw-.24),'sport',.46,R0.cush);}
+    else{const b=(R0.recline||22)*Math.PI/180,Rb=M3.rz(-b),Rc=M3.rz(-.06),mat=R0.mat||I.seatMat,c=R0.cush;
+      box(mat,[R0.hx-.22,c-.065,0],[.24,.065,zw],.3,Rc);
+      for(const s of [1,-1])box(R0.ins||I.insertMat,[R0.hx-.23,c-.002,s*zw*.5],[.19,.012,zw*.36],.3,Rc);
+      const bh=R0.back||.3,q=[R0.hx+.02+Math.sin(b)*bh,c+Math.cos(b)*bh+.02];box(mat,[q[0],q[1],0],[.06,bh,zw],.3,Rb);
+      for(const s of [1,-1]){const qh=[R0.hx+.04+Math.sin(b)*(bh*2+.08),c+Math.cos(b)*(bh*2+.08)];if(R0.heads!==false)box(mat,[qh[0],qh[1],s*zw*.5],[.05,.07,.12],.4,Rb);}}}
+
+  // ---- floor, tunnel, console, shifter ----
+  const xe=I.floorEnd||(I.rear?I.rear.hx+.15:hx+.35);
+  {const p=new Part('iCarpet');grid(p,24,2,(i,j)=>{const x=lerp(x0+.02,xe,i/23),z=inner(x,fl+.12);return [x,fl,j?z:-z];});add(p.normals());}
+  if(I.tunnel)box('iCarpet',[(xF+xe)/2,fl+.07,0],[(xe-xF)/2+.1,.085,.12],.3);
+  const cTop=I.consoleTop||cu+.08,cxa=xF-.03,cxb=hx+.02;
+  if(I.console!==false){
+    if(I.floating){box(I.consoleMat,[(cxa+cxb)/2,cTop-.03,0],[(cxb-cxa)/2,.025,.085],.3);box(I.consoleMat,[cxa+.08,(fl+cTop)/2,0],[.04,(cTop-fl)/2,.06],.3);}
+    else{box(I.consoleMat,[(cxa+cxb)/2,(fl+cTop)/2,0],[(cxb-cxa)/2,(cTop-fl)/2,.105],.25);box(I.trimMat,[(cxa+cxb)/2,cTop+.002,.09],[(cxb-cxa)/2-.03,.004,.008],.3);box(I.trimMat,[(cxa+cxb)/2,cTop+.002,-.09],[(cxb-cxa)/2-.03,.004,.008],.3);}
+    box(I.seatMat,[hx-.05,cTop+.03,0],[.13,.03,.085],.4);
+    const sx=hx-.4;
+    if(I.shifter==='ball'||I.shifter==='pistol'){box('iBlack',[sx,cTop+.012,0],[.05,.015,.05],.6);add(cyl('iChrome',[sx,cTop,0],[sx+.03,cTop+.15,0],.008,.007,8));
+      if(I.shifter==='ball'){const k=rbox(I.knobMat||'iBlack',.027,.027,.027,1);k.xf(M3.I(),[sx+.03,cTop+.165,0]);add(k);}
+      else box(I.knobMat||'iBlack',[sx+.04,cTop+.17,0],[.035,.045,.022],.45,M3.rz(-.5));}
+    else if(I.shifter==='auto'){box('iBlack',[sx,cTop+.01,0],[.06,.012,.035],.4);box(I.knobMat||'iBlack',[sx+.01,cTop+.06,0],[.035,.045,.02],.45,M3.rz(-.2));}
+    else if(I.shifter==='buttons'){add(panel('iScreen',[sx,cTop+.002,0],[0,1,0],[1,0,0],.12,.05));}
+    else if(I.shifter==='column'){add(cyl('iBlack',toW(.12,0,-.08),toW(.2,-.04,-.1),.008,.007,6));}
+    for(const s of [-1,1])add(panel('iBlack',[sx+.17,cTop+.003,s*.045],[0,1,0],[1,0,0],.06,.06));
+  }
+  // ---- door cards ----
+  const dxa=xF-.06,dxb=I.doorEnd||(C.bx!=null?C.bx-.02:hx+.35),dya=fl+.07,dyb=belt((dxa+dxb)/2)-.035;
+  const zd=izMin(dxa,dxb,(dya+dyb)/2)+.02;
+  both(rbox(I.doorMat,(dxb-dxa)/2,(dyb-dya)/2,.02,.25).xf(M3.I(),[(dxa+dxb)/2,(dya+dyb)/2,zd-.02]));
+  both(rbox(I.seatMat,.2,.022,.04,.4).xf(M3.I(),[hx-.3,cu+.2,zd-.06]));
+  both(rbox(I.trimMat,.05,.01,.012,.3).xf(M3.I(),[dxa+.18,dyb-.09,zd-.045]));
+  if(I.glow)both(rbox('iGlow',(dxb-dxa)/2-.05,.004,.004,.3).xf(M3.I(),[(dxa+dxb)/2,dyb-.025,zd-.042]));
+  if(I.rear&&C.bx!=null){const rxa=C.bx+.02,rxb=I.rear.hx+.15;const rz=izMin(rxa,rxb,(dya+dyb)/2)+.02;
+    both(rbox(I.doorMat,(rxb-rxa)/2,(dyb-dya)/2,.02,.25).xf(M3.I(),[(rxa+rxb)/2,(dya+dyb)/2,rz-.02]));}
+  if(I.glow)box('iGlow',[xF-.002,dTop-.15,0],[.003,.004,zD-.08],.3);
+  // ---- mirror, visors ----
+  {const xm=C.wsTop-.1,ym=roof(xm)-.075;box('iBlack',[xm,ym,0],[.015,.034,.11],.35);add(panel('iChrome',[xm+.016,ym,0],[1,0,0],[0,1,0],.2,.055));
+    add(cyl('iBlack',[xm,ym+.03,0],[xm-.02,roof(xm-.02)-.01,0],.006,.006,6));
+    for(const s of [1,-1]){const xv=C.wsTop-.07,yv=roof(xv)-.03,zv=s*Math.min(.35,cab.innerAt(xv,yv)-.2);if(zv*s>.1)box('iHead',[xv,yv,zv],[.1,.008,.16],.3,M3.rz(.1));}}
+  if(I.extras)I.extras({box,add,both,panel,sweep,cyl:(m,a,b,r0,r1,s)=>add(cyl(m,a,b,r0,r1,s)),x0,xF,dTop,fl,cu,hx,dz,zD,roof,belt,inner,izMin,toW,wc,cTop,C});
+  // ---- keep every interior vertex inside the car: squeeze toward the centre line, then down, where it would poke out ----
+  {const inCab=(x,y,z)=>x>cab.x0&&x<cab.x1&&y>cab.baseY(x)-.02&&y<cab.roofF(x)-.004&&Math.abs(z)<cab.innerAt(x,y);
+    const inEnv=(x,y,z)=>api.inside(x,y,z)||inCab(x,y,z);
+    const m=.009,ok=(x,y,z)=>inEnv(x,y,z+(z>=0?m:-m))&&inEnv(x,y+m,z)&&inEnv(x,y-m*.5,z+(z>=0?m:-m));
+    for(let k=firstPart;k<parts.length;k++){const p=parts[k];let moved=false;
+      for(let i=0;i<p.P.length;i+=3){const x=p.P[i];let y=p.P[i+1],z=p.P[i+2];if(ok(x,y,z))continue;
+        if(ok(x,y,0)){let lo=0,hi=1;for(let it=0;it<14;it++){const s=(lo+hi)/2;if(ok(x,y,z*s))lo=s;else hi=s;}p.P[i+2]=z*lo;moved=true;continue;}
+        let dy=0;while(dy<.3&&!ok(x,y-dy,0))dy+=.01;
+        let lo=0,hi=1;for(let it=0;it<12;it++){const s=(lo+hi)/2;if(ok(x,y-dy,z*s))lo=s;else hi=s;}
+        p.P[i+1]=y-dy;p.P[i+2]=z*lo;moved=true;}
+      if(moved)p.normals();}}
+  // ---- cut region for the shader: open the body under the greenhouse between the dash and the end of the cabin ----
+
+  const zs=[];for(let k=0;k<8;k++){const x=lerp(cab.x0,cab.x1,k/7);zs.push(Math.max(0,cab.wbAt(x)-.012));}
+  return {x0:cab.x0,x1:cab.x1,cx0:cab.x0+.03,cx1:I.endX||(I.rear?I.rear.hx+.12:hx+.3),zs,y:fl+.03,eye:[eye[0],eye[1],dz]};
+}
+
+// ---------- per-car interior designs ----------
+const bulkhead=(mat)=>(k)=>{const x=k.hx+.3;const zw=k.izMin(x-.05,x+.05,k.cu+.2)-.01,yt=k.belt(x)-.01;k.box(mat,[x,(k.fl+yt)/2,0],[.015,(yt-k.fl)/2,zw],.15);};
+const INTERIORS={
+  kestrel:{hx:2.25,floor:.25,cush:.52,dd:.5,tilt:24,wheel:{style:'sport',r:.19,t:.018},seat:'sport',seatMat:'iSeatK',insertMat:'iTartan',
+    cluster:'dials2',shifter:'ball',trimMat:'iSoft',doorMat:'iDoorK',rear:{hx:3.05,cush:.5,back:.29},shell:'#2b2c2f',shelf:'#141517',tint:.45,
+    mats:{iSeatK:{c:'#1c1c1e',r:.9},iTartan:{c:'#7d1418',r:.95,pat:10},iDoorK:{c:'#2b2c2f',r:.85},iGauge:{c:'#0a0a0a',e:[1.6,1.9,2.2],pat:7}},
+    note:'Interior: boxy 80s dash with two round dials, a thin-rimmed three-spoke wheel, red tartan sport seats and a ball-top gear knob.'},
+  vanta:{hx:2.82,floor:.22,cush:.47,dd:.6,wheel:{style:'flat',r:.18,t:.019},markMat:'iBlueM',paddles:true,seat:'sport',insertMat:'iNavyQ',
+    cluster:'screen',screen:'tablet',shifter:'auto',trimMat:'iCarbon',rear:{hx:3.62,cush:.48,back:.3},shell:'#1b1c1f',shelf:'#0e0f11',tint:.5,
+    mats:{iNavyQ:{c:'#1a2a4a',r:.85,pat:9},iBlueM:{c:'#2f6fd6',r:.4,cc:.4},iScreen:{c:'#05070a',e:[.8,1.4,2.6],pat:8}},
+    note:'Interior: black leather sport seats with quilted navy centres, carbon trim, a digital cluster, a floating centre screen and a flat-bottomed wheel with paddles.'},
+  bruiser:{hx:3.17,floor:.22,cush:.46,dd:.62,wheelY:.86,wheel:{style:'flat',r:.19,t:.02},markMat:'iYellow',seat:'bucket',insertMat:'iPleatB',
+    cluster:'dials2',bezel:true,shifter:'pistol',rear:{hx:3.95,cush:.4,style:'buckets'},doorEnd:3.5,shell:'#1a1a1c',shelf:'#0e0e10',tint:.5,
+    mats:{iPleatB:{c:'#2c2a24',r:.7,pat:11},iYellow:{c:'#e0a020',r:.4,cc:.4},iGauge:{c:'#0a0a0a',e:[2.6,1.3,.25],pat:7}},
+    note:'Interior: tall bucket seats with pleated centres, chrome-ringed orange gauges, a flat-bottomed wheel with a yellow centre mark and a pistol-grip 6-speed shifter.'},
+  halcyon:{hx:2.62,floor:.17,cush:.33,dd:.55,wheel:{style:'race',r:.17,t:.019},markMat:'iOrange',paddles:true,seat:'race',seatMat:'iCarbon',insertMat:'iAlcQ',
+    cluster:'screen',screen:'port',shifter:'buttons',floating:true,tunnel:false,consoleMat:'iCarbon',trimMat:'iCarbon',shell:'#18181a',shelf:'#0a0a0b',tint:.45,
+    mats:{iAlcQ:{c:'#232325',r:.95,pat:9},iOrange:{c:'#ff6a13',r:.4,cc:.4},iScreen:{c:'#05070a',e:[1.6,1.1,.5],pat:8}},
+    extras:bulkhead('iCarbon'),
+    note:'Interior: carbon race buckets with quilted Alcantara, a floating carbon console, a portrait centre screen and a flat-bottomed wheel with an orange 12 o’clock mark.'},
+  copperhead:{hx:2.98,floor:.2,cush:.44,dd:.5,wheel:{style:'classic',r:.195,t:.014},seat:'classic',seatMat:'iTan',insertMat:'iTanP',
+    cluster:'dials5',bezel:true,shifter:'ball',knobMat:'iWood',trimMat:'iTrim',rear:{hx:3.75,cush:.42,back:.27,mat:'iTan',ins:'iTanP'},doorMat:'iTanD',doorEnd:3.33,
+    shell:'#2a1d14',shelf:'#120d0a',tint:.45,
+    mats:{iTan:{c:'#8a5530',r:.5,cc:.2},iTanP:{c:'#7a4a28',r:.55,cc:.15,pat:11},iTanD:{c:'#5a3a22',r:.6},iGauge:{c:'#0a0a0a',e:[2.4,2.0,1.5],pat:7}},
+    note:'Interior: cognac leather with pleated seats, a wood-rimmed wheel on chrome spokes, five chrome-ringed round gauges and a wood-topped 4-speed shifter.'},
+  marshal:{hx:3.05,floor:.26,cush:.54,dd:.6,wheel:{style:'basic',r:.19,t:.018},seat:'basic',seatMat:'iCloth',insertMat:'iClothI',
+    cluster:'dials2',shifter:'auto',rear:{hx:3.85,cush:.5,back:.3,mat:'iPlastic',ins:'iPlastic',heads:false},shell:'#2a2b2e',shelf:'#111214',tint:.7,
+    mats:{iCloth:{c:'#2c2d30',r:.92},iClothI:{c:'#232427',r:.95},iPlastic:{c:'#141416',r:.4,cc:.3},iMesh:{c:'#2c2e31',m:.6,r:.4,pat:1},iLaptop:{c:'#05070a',e:[.5,1.2,2.2],pat:8},iRadio:{c:'#05070a',e:[.3,1.8,.6],pat:8},iGauge:{c:'#0a0a0a',e:[1.9,1.9,1.9],pat:7}},
+    extras(k){
+      // laptop on a pole mount, radio stack, prisoner partition
+      k.cyl('iBlack',[k.xF+.12,k.cTop,0],[k.xF+.12,k.dTop+.04,0],.012,.012,8);
+      k.box('iBlack',[k.xF+.16,k.dTop+.05,-.04],[.12,.01,.15],.2,M3.ry(-.35));
+      const sc=[k.xF+.27,k.dTop+.16,-.08];k.box('iBlack',sc,[.012,.1,.15],.2,M3.mul(M3.ry(-.35),M3.rz(.35)));
+      k.add(panel('iLaptop',vadd(sc,[.012,.004,.004]),[Math.cos(.35)*Math.cos(.35),Math.sin(.35),Math.sin(.35)*.9],[0,1,0],.27,.17));
+      k.box('iBlack',[k.xF+.05,k.cTop+.05,0],[.09,.05,.09],.2);k.add(panel('iRadio',[k.xF+.142,k.cTop+.06,0],[1,0,0],[0,1,0],.15,.05));
+      const xp=k.hx+.34,zw=k.izMin(xp-.05,xp+.05,k.cu+.3)-.01,y0=k.cu+.02,y1=k.roof(xp)-.07;
+      k.box('iPlastic',[xp,(k.fl+y0)/2,0],[.015,(y0-k.fl)/2,zw],.15);
+      k.add(panel('iMesh',[xp,(y0+y1)/2,0],[1,0,0],[0,1,0],zw*2,y1-y0,true));
+      k.box('iPlastic',[xp,y1,0],[.02,.015,zw],.2);},
+    note:'Interior: hard-wearing cloth seats, a laptop on a pole mount and a radio stack, and a mesh partition in front of the hard plastic rear bench.'},
+  static:{hx:2.72,floor:.17,cush:.33,dd:.55,wheel:{style:'yoke'},seat:'bucket',seatMat:'iWhite',insertMat:'iWhiteQ',
+    cluster:'none',screen:'wide',shifter:'buttons',floating:true,tunnel:false,consoleMat:'iWhite',trimMat:'iChrome',doorMat:'iWhiteD',glow:true,
+    shell:'#8e8f8c',shelf:'#151618',tint:.42,
+    mats:{iWhite:{c:'#d9d6cf',r:.5,cc:.2},iWhiteQ:{c:'#c9c6bf',r:.6,pat:9},iWhiteD:{c:'#b8b6b0',r:.6},iDash:{c:'#d0cdc6',r:.6},iScreen:{c:'#05070a',e:[.35,1.9,2.6],pat:8}},
+    extras:bulkhead('iWhiteD'),
+    note:'Interior: light grey leather buckets, a steering yoke, one long floating screen, glass roof and cyan ambient light lines.'},
+  lastexit:{hx:2.72,floor:.16,cush:.3,dd:.55,wheel:{style:'race',r:.17,t:.02},markMat:'iYellow',paddles:true,seat:'race',seatMat:'iCarbon',insertMat:'iRedQ',harness:'iBelt',
+    cluster:'screen',screen:'land',shifter:'buttons',floating:true,tunnel:false,consoleMat:'iCarbon',trimMat:'iCarbon',shell:'#141416',shelf:'#0a0a0b',tint:.5,
+    mats:{iRedQ:{c:'#6a0d14',r:.85,pat:9},iYellow:{c:'#f5c400',r:.4,cc:.4},iScreen:{c:'#05070a',e:[2.2,.5,.3],pat:8}},
+    extras(k){bulkhead('iCarbon')(k);k.box('iAccent',[k.xF+.08,k.cTop+.01,0],[.02,.012,.025],.4);},
+    note:'Interior: carbon race buckets with red quilted Alcantara and red 4-point harnesses, a floating carbon console with a red start-button cover, and paddle shifters.'},
+  suv:{hx:2.68,floor:.38,cush:.7,dd:.62,tilt:24,wheel:{style:'sport',r:.19,t:.019},seat:'comfort',seatMat:'iClothG',insertMat:'iClothGI',
+    cluster:'screen',screen:'tablet',shifter:'auto',rear:{hx:3.55,cush:.72,back:.31},shell:'#3a3c40',shelf:'#1a1b1d',tint:.5,
+    mats:{iClothG:{c:'#3c3e42',r:.9},iClothGI:{c:'#2e3034',r:.95},iDash:{c:'#202124',r:.65}},
+    note:'Interior: grey cloth seats front and rear, a tablet-style touchscreen on the dash, a digital cluster and a cargo cover behind the rear seats.'},
+  van:{hx:2.0,floor:.5,cush:.92,dd:.55,reach:.42,tilt:42,wheelY:1.22,wheel:{style:'basic',r:.2,t:.02},seat:'basic',seatMat:'iVinyl',insertMat:'iVinyl',dz:.42,
+    cluster:'dials2',screen:'land',shifter:'auto',tunnel:false,doorEnd:2.3,endX:2.38,shell:'#3a3b3e',shelf:'#1a1b1d',tint:.5,
+    mats:{iVinyl:{c:'#3a3c40',r:.6,cc:.15},iDash:{c:'#2a2b2e',r:.7}},
+    extras(k){const x=2.4,zw=k.izMin(x-.05,x+.05,1.3)-.01,yt=k.roof(x)-.03;k.box('iPlastic2',[x,(k.fl+yt)/2,0],[.015,(yt-k.fl)/2,zw],.1);},
+    note:'Interior: tough grey vinyl seats, a big flat dash with simple dials, an upright steering wheel and a steel bulkhead behind the cab.'},
+};
+LIB.iPlastic2={c:'#4a4c50',m:.5,r:.5};
+for(const c of CARS){const I=INTERIORS[c.id];if(!I)continue;c.interior=I;c.mats=Object.assign({},c.mats||{},I.mats||{});if(I.note&&!c.notes.includes(I.note))c.notes=c.notes.concat([I.note]);}
+
+// ---------- app / UI ----------
+const canvas=document.getElementById('gl');
+const cam={theta:.62,phi:.16,dist:7,fov:30*Math.PI/180,target:[0,.55,0],eye:[0,0,0],exp:1.05,zoom:1};
+const goal={theta:.62,phi:.16,zoom:1};
+let current=null,lastInput=-1e9,autoSpin=true,needFit=true;const CACHE={};
+
+const gl=initGL(canvas);
+const $=s=>document.querySelector(s);
+if(!gl){$('#fallback').hidden=false;}
+
+function resize(){const dpr=Math.min(window.devicePixelRatio||1,2);const w=canvas.clientWidth,h=canvas.clientHeight;
+  if(canvas.width!==Math.round(w*dpr)||canvas.height!==Math.round(h*dpr)){canvas.width=Math.round(w*dpr);canvas.height=Math.round(h*dpr);}}
+function fitDist(){if(!R.carInfo)return 7;const L=R.carInfo.L,W=R.carInfo.hw*2,r=Math.hypot(L/2,W/2,Math.max(.55,R.carInfo.H*.5))*(canvas.clientWidth<canvas.clientHeight?.93:1.02);
+
+  const asp=canvas.clientWidth/Math.max(1,canvas.clientHeight);const vf=cam.fov,hf=2*Math.atan(Math.tan(vf/2)*asp);
+  return r/Math.sin(Math.min(vf,hf)/2);}
+
+const VIEWS={
+  '3/4':{theta:.62,phi:.15,zoom:1},
+  chase:{theta:Math.PI,phi:.2,zoom:.92},
+  side:{theta:Math.PI/2,phi:.03,zoom:1.24},
+  front:{theta:0,phi:.06,zoom:.9},
+  rear:{theta:Math.PI-.62,phi:.13,zoom:1},
+  inside:{inside:true},
+};
+const look={yaw:0,pitch:-.1,gy:0,gp:-.1,fov:1.15};
+function setView(v,instant=false){const V=VIEWS[v];
+  cam.inside=!!V.inside;
+  document.querySelectorAll('#views button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.v===v));
+  if(cam.inside){look.yaw=look.gy=.1;look.pitch=look.gp=-.24;look.fov=canvas.clientWidth<canvas.clientHeight?1.55:1.05;autoSpin=false;lastInput=performance.now();return;}
+
+  goal.theta=V.theta;goal.phi=V.phi;goal.zoom=V.zoom;
+  // take the short way round
+  while(goal.theta-cam.theta>Math.PI)goal.theta-=Math.PI*2;while(cam.theta-goal.theta>Math.PI)goal.theta+=Math.PI*2;
+  if(instant){cam.theta=goal.theta;cam.phi=goal.phi;cam.zoom=goal.zoom;}
+  autoSpin=false;lastInput=performance.now();
+  document.querySelectorAll('#views button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.v===v));}
+
+function select(id,instant){
+  const S=CARS.find(c=>c.id===id);if(!S)return;
+  if(!instant&&!CACHE[id]){$('#cName').textContent=S.name;canvas.style.opacity=.55;requestAnimationFrame(()=>setTimeout(()=>{select(id,true);canvas.style.opacity=1;},16));return;}
+  current=S;
+
+  const built=CACHE[id]||(CACHE[id]=buildCar(Object.assign({},S,{body:Object.assign({},S.body),cabin:Object.assign({},S.cabin)})));
+  uploadCar(built,S);
+  $('#cName').textContent=S.name;$('#cTag').textContent=S.tag;$('#cTag').className='tag'+(S.boss?' boss':'');$('#cBlurb').textContent=S.blurb;
+  $('#cCues').textContent=S.cues;$('#cNotes').innerHTML=S.notes.map(n=>'<li>'+n+'</li>').join('');
+  $('#cStats').innerHTML=S.stats?S.stats.map(([k,v,m])=>`<div class="st"><span>${k}</span><i style="--v:${clamp(v/m,0,1)}"></i><b>${v}</b></div>`).join(''):'';
+  document.querySelectorAll('.chip').forEach(b=>b.setAttribute('aria-pressed',b.dataset.id===id));
+  const chip=document.querySelector(`.chip[data-id="${id}"]`);if(chip&&!instant)chip.scrollIntoView({inline:'center',block:'nearest',behavior:'smooth'});
+  try{localStorage.setItem('rr-garage-car',id);}catch(e){}
+  if(location.hash.slice(1)!==id)history.replaceState(null,'','#'+id);
+}
+
+// chips
+(function(){const strip=$('#strip');let grp=null;
+  for(const c of CARS){if(c.group!==grp){grp=c.group;const h=document.createElement('span');h.className='grp';h.textContent=grp;strip.appendChild(h);}
+    const b=document.createElement('button');b.className='chip';b.dataset.id=c.id;b.innerHTML=`<i style="background:${c.paint}"></i>${c.short||c.name}`;
+    b.onclick=()=>select(c.id);strip.appendChild(b);}
+  document.querySelectorAll('#views button').forEach(b=>b.onclick=()=>setView(b.dataset.v));
+  $('#notesBtn').onclick=()=>{const p=$('#panel');const open=p.classList.toggle('open');$('#notesBtn').setAttribute('aria-expanded',open);};
+})();
+
+// orbit controls
+const ptrs=new Map();let pinch0=0,zoom0=1;
+canvas.addEventListener('pointerdown',e=>{canvas.setPointerCapture(e.pointerId);ptrs.set(e.pointerId,[e.clientX,e.clientY]);autoSpin=false;lastInput=performance.now();
+  if(ptrs.size===2){const [a,b]=[...ptrs.values()];pinch0=Math.hypot(a[0]-b[0],a[1]-b[1]);zoom0=cam.inside?look.fov:goal.zoom;}
+  if(!cam.inside)document.querySelectorAll('#views button').forEach(b=>b.setAttribute('aria-pressed','false'));});
+canvas.addEventListener('pointermove',e=>{if(!ptrs.has(e.pointerId))return;const p=ptrs.get(e.pointerId);const dx=e.clientX-p[0],dy=e.clientY-p[1];ptrs.set(e.pointerId,[e.clientX,e.clientY]);lastInput=performance.now();
+  if(cam.inside){if(ptrs.size===1){look.gy=clamp(look.gy+dx*.005,-2.4,2.4);look.gp=clamp(look.gp+dy*.004,-1,.7);}
+    else if(ptrs.size===2){const [a,b]=[...ptrs.values()];const d=Math.hypot(a[0]-b[0],a[1]-b[1]);if(pinch0>0)look.fov=clamp(zoom0*pinch0/d,.6,1.5);}return;}
+  if(ptrs.size===1){goal.theta-=dx*.008;goal.phi=clamp(goal.phi+dy*.006,-.02,1.25);}
+  else if(ptrs.size===2){const [a,b]=[...ptrs.values()];const d=Math.hypot(a[0]-b[0],a[1]-b[1]);if(pinch0>0)goal.zoom=clamp(zoom0*pinch0/d,.45,1.8);}});
+const up=e=>{ptrs.delete(e.pointerId);pinch0=0;};
+canvas.addEventListener('pointerup',up);canvas.addEventListener('pointercancel',up);
+canvas.addEventListener('wheel',e=>{e.preventDefault();if(cam.inside)look.fov=clamp(look.fov*Math.exp(e.deltaY*.001),.6,1.5);else goal.zoom=clamp(goal.zoom*Math.exp(e.deltaY*.001),.45,1.8);lastInput=performance.now();},{passive:false});
+
+let tPrev=performance.now();
+function frame(now){
+  const dt=Math.min(.05,(now-tPrev)/1000);tPrev=now;
+  resize();
+  if(cam.inside&&R.eye){const k2=1-Math.exp(-dt*10);look.yaw+=(look.gy-look.yaw)*k2;look.pitch+=(look.gp-look.pitch)*k2;
+    const L=R.carInfo.L,e=R.eye;cam.eye=[e[0]-L/2,e[1],e[2]];const cp=Math.cos(look.pitch);
+    cam.target=[cam.eye[0]-Math.cos(look.yaw)*cp,cam.eye[1]+Math.sin(look.pitch),cam.eye[2]+Math.sin(look.yaw)*cp];cam.fov=look.fov;cam.offX=cam.offY=0;cam.exp=1.45;
+    if(gl)drawScene(cam,now/1000);requestAnimationFrame(frame);return;}
+  cam.fov=30*Math.PI/180;cam.exp=1.05;
+
+  if(autoSpin||now-lastInput>9000){autoSpin=true;goal.theta+=dt*.16;}
+
+  const k=1-Math.exp(-dt*7);cam.theta+=(goal.theta-cam.theta)*k;cam.phi+=(goal.phi-cam.phi)*k;cam.zoom+=(goal.zoom-cam.zoom)*k;
+  cam.offX=window.innerWidth>=900?-.24:0;cam.offY=window.innerWidth>=900?0:-.04;
+  const d=fitDist()*cam.zoom*(window.innerWidth>=900?1.12:1);const ty=.52;cam.target=window.__tgt||[0,ty,0];
+
+  cam.eye=[-Math.cos(cam.theta)*Math.cos(cam.phi)*d,ty+Math.sin(cam.phi)*d,Math.sin(cam.theta)*Math.cos(cam.phi)*d];
+  if(gl)drawScene(cam,now/1000);
+  requestAnimationFrame(frame);
+}
+if(gl){
+  let start='kestrel';try{start=localStorage.getItem('rr-garage-car')||start;}catch(e){}
+  const h=location.hash.slice(1);if(CARS.some(c=>c.id===h))start=h;if(!CARS.some(c=>c.id===start))start=CARS[0].id;
+  select(start,true);setView('3/4',true);autoSpin=true;
+  window.addEventListener('hashchange',()=>{const h=location.hash.slice(1);if(h&&h!==current.id&&CARS.some(c=>c.id===h))select(h);});
+  requestAnimationFrame(frame);
+}
+// test hooks
+window.__show=(id,v)=>{select(id,true);setView(v||'3/4',true);autoSpin=false;lastInput=performance.now()+1e9;};
+window.__look=(y,p,f)=>{look.yaw=look.gy=y;look.pitch=look.gp=p;if(f)look.fov=f;};
+
+window.__orbit=(th,ph,z)=>{cam.theta=goal.theta=th;cam.phi=goal.phi=ph;cam.zoom=goal.zoom=z||1;autoSpin=false;lastInput=performance.now()+1e9;};
+
+</script>
+</body>
+</html>

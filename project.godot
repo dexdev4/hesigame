@@ -1,0 +1,46 @@
+; Engine configuration file.
+; Open this folder in Godot 4.3 or newer.
+
+config_version=5
+
+[application]
+
+config/name="Redline Rush"
+config/description="Roguelike traffic-weaving racer on an endless four-lane highway."
+run/main_scene="res://scenes/main.tscn"
+config/features=PackedStringArray("4.3", "Mobile")
+config/icon="res://icon.svg"
+
+[autoload]
+
+Data="*res://scripts/data.gd"
+Save="*res://scripts/save.gd"
+
+[shader_globals]
+
+env_studio={
+"type": "float",
+"value": 0.0
+}
+
+[display]
+
+window/size/viewport_width=720
+window/size/viewport_height=1280
+window/size/window_width_override=432
+window/size/window_height_override=768
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+window/handheld/orientation=1
+
+[input_devices]
+
+pointing/emulate_touch_from_mouse=true
+
+[rendering]
+
+renderer/rendering_method="mobile"
+textures/vram_compression/import_etc2_astc=true
+anti_aliasing/quality/msaa_3d=1
+anti_aliasing/quality/screen_space_aa=1
+lights_and_shadows/directional_shadow/soft_shadow_filter_quality=2

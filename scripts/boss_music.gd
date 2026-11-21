@@ -49,9 +49,11 @@ var _rng := RandomNumberGenerator.new()  # (its own: picking a song must not mov
 
 func _ready() -> void:
 	_rng.randomize()
+	EngineAudio.ensure_buses()
 	for i in 2:
 		var p := AudioStreamPlayer.new()
 		p.volume_db = -60.0
+		p.bus = "Music"
 		add_child(p)
 		_players.append(p)
 	_pick_next()

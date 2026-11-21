@@ -2100,9 +2100,6 @@ var _halo: MeshInstance3D
 var _halo_mat: StandardMaterial3D
 var _msg: Label3D
 var _msg_until := 0
-var _hands: Array[MeshInstance3D] = []
-var _arms: Array = []
-var _shoulders: Array = []
 var _shadow_mi: MeshInstance3D
 
 
@@ -3943,33 +3940,6 @@ func _build_interior() -> void:
 	var spoke_mat: Material = mat(Color("#8a9098"), 0.0, 0.34, 0.9) if cab.get("spoke_metal", false) else mats.dash
 	CabinParts.wheel(_steer_node, cab, mats.leather, spoke_mat, mats.chrome, mats.vent, mats.stitch)
 
-	# the driver: gloved hands on the rim at a quarter to three, arms that follow the wheel
-	var glove := mat(Color("#2b2d31"), 0.0, 0.5)
-	var sleeve := mat(Color("#2a2f38"), 0.0, 0.85)
-	for sd in [-1.0, 1.0]:
-		var hand := MeshInstance3D.new()
-		hand.mesh = CabinParts.hand_mesh(sd)
-		hand.material_override = glove
-		hand.position = Vector3(sd * 0.168, 0.01, -0.045)
-		hand.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		_steer_node.add_child(hand)
-		_hands.append(hand)
-		var arm := []
-		for k in 2:
-			var seg := MeshInstance3D.new()
-			var cyl := CylinderMesh.new()
-			cyl.top_radius = 0.022 if k == 0 else 0.027
-			cyl.bottom_radius = 0.025 if k == 0 else 0.03
-			cyl.height = 1.0
-			cyl.radial_segments = 10
-			seg.mesh = cyl
-			seg.material_override = sleeve
-			seg.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-			_body.add_child(seg)
-			arm.append(seg)
-		_arms.append(arm)
-	_shoulders = [Vector3(ex - 0.19, eye.y - 0.27, ez + 0.12), Vector3(ex + 0.19, eye.y - 0.27, ez + 0.12)]
-	_update_arms()
 
 	# gear lever on an H-pattern gate
 	_lever = Node3D.new()
@@ -4191,13 +4161,12 @@ func set_gauges(speed_frac: float, rpm_frac: float) -> void:
 func set_steer(angle: float) -> void:
 	if _steer_node:
 		_steer_node.rotation.y = -angle
-		_update_arms()
 	if _own_steer:   # (the model's own steering wheel turns about its column)
 		_own_steer.transform = _own_steer_base * Transform3D(Basis(Vector3.BACK, -angle), Vector3.ZERO)
 
 
 ## Seen from inside (the cockpit camera) or from outside. A car with an interior of its own shows it from outside, and the
-## driver's view (build_interior: the working gauges, the hands on the wheel) only from inside.
+## driver's view (build_interior: the working gauges and the wheel) only from inside.
 func set_inside(on: bool) -> void:
 	if not _own_cabin or _inside == on:
 		return
@@ -4212,25 +4181,6 @@ func set_inside(on: bool) -> void:
 
 
 var _inside := true
-
-
-## Upper arm from the shoulder to an elbow below and outside, forearm to the glove.
-func _update_arms() -> void:
-	for i in _hands.size():
-		var hand: Vector3 = _body.to_local(_hands[i].global_position)
-		var sh: Vector3 = _shoulders[i]
-		var sd := -1.0 if i == 0 else 1.0
-		var elbow: Vector3 = sh.lerp(hand, 0.52) + Vector3(sd * 0.07, -0.13, 0.02)
-		_segment(_arms[i][1], sh, elbow)
-		_segment(_arms[i][0], elbow, hand)
-
-
-func _segment(mi: MeshInstance3D, a: Vector3, b: Vector3) -> void:
-	var d := b - a
-	var y := d.normalized()
-	var x := y.cross(Vector3.FORWARD if absf(y.z) < 0.9 else Vector3.RIGHT).normalized()
-	var z := x.cross(y)
-	mi.transform = Transform3D(Basis(x, y * d.length(), z), (a + b) / 2.0)
 
 
 var _bar_l: MeshInstance3D

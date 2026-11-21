@@ -42,12 +42,15 @@ const SETTING_DEFAULTS := {
 	"mirror_pos": [],
 	"gfx": "",                    # high, medium or low; empty until the first launch picks one
 	"fps_cap": 60,                # most frames a second to draw: 60 or 30, or 0 = as often as the screen refreshes (hot on a 90 or 120 Hz phone)
-	"fps_cap_ver": 1,             # (internal) 1 once a save from before the default became 60 has been moved to it
+	"fps_cap_ver": 1,
+	"vol_music": 1.0,             # how loud the chase songs are, 0 to 1
+	"vol_sfx": 1.0,               # how loud the driving is (engine, tyres, crashes, scoring, menu ticks), 0 to 1             # (internal) 1 once a save from before the default became 60 has been moved to it
 	# developer tools
 	"dev_lives": false,           # infinite lives
 	"dev_fps": false,             # frame-rate counter
 	"dev_hitbox": false,          # draw every car's hit box
-	"dev_hitch": false,           # say on screen when a frame takes much longer than the others, and what the game was doing in it
+	"dev_hitch": false,
+	"dev_drift": false,           # every run with the drift tune (the rare boss reward) fitted from the start           # say on screen when a frame takes much longer than the others, and what the game was doing in it
 }
 
 

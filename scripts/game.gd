@@ -92,7 +92,10 @@ class Run:
 	var stage_dist := 0.0
 	var stage_score := 0
 	var lives := 3
-	var mods := {"accel": 1.0, "brake": 1.0, "handling": 1.0, "top": 1.0, "score": 1.0, "traffic": 1.0, "eco": 1.0}
+	var mods := {"accel": 1.0, "brake": 1.0, "handling": 1.0, "top": 1.0, "score": 1.0, "traffic": 1.0, "eco": 1.0,
+		"miss": 1.0, "mult": 1.0, "speed": 1.0, "fuel_price": 1.0, "mileage": 1.0, "density": 1.0, "dmg": 1.0, "wear_fx": 1.0, "rival": 1.0}
+	var taken: Array = []    # the upgrades chosen in this run (a "once" upgrade is not offered again)
+	var clean_m := 0.0       # metres driven since the last hit (Clean licence)
 	var shield := 0          # hits the crumple zone will absorb
 	var armour := 0.0        # extra seconds of protection after a hit
 	var radar := false       # the radar jammer is fitted: it warns of a police speed check SpeedTrap.WARN metres ahead
@@ -496,6 +499,7 @@ func _ready() -> void:
 	music.enabled = Save.data.sound
 	music.forced = _forced_song
 	add_child(music)
+	EngineAudio.set_volumes(float(Save.setting("vol_music")), float(Save.setting("vol_sfx")))
 	if autotest:
 		music.started.connect(func(i: int) -> void:
 			print("[autotest] chase music: %s (song %d of %d, from %.1f s)" % [BossMusic.SONGS[i].name, i + 1, BossMusic.SONGS.size(), float(BossMusic.SONGS[i].start)]))
@@ -897,7 +901,8 @@ func _set_player_car() -> void:
 func _compute_stats() -> void:
 	var c := Data.car_by_id(Save.data.selected)
 	var m: Dictionary = run.mods if run else {}
-	st = CarStats.compute(c, _perm_levels(), m, Save.wear(String(c.id)))  # worse damage, worse car
+	var wear_fx: float = float(run.mods.wear_fx) if run else 1.0   # (Mechanic on call: damage slows the car half as much)
+	st = CarStats.compute(c, _perm_levels(), m, Save.wear(String(c.id)) * wear_fx)  # worse damage, worse car
 	player.mass = float(st.mass)
 
 
@@ -950,6 +955,8 @@ func _lane_free(lane: int, z: float, ahead: float, behind: float) -> bool:
 func _try_spawn(z: float, lane_hint := -1, v_override := 0.0) -> bool:
 	if _steer_test != "":
 		return false  # an empty road for the steering test
+	if run and float(run.mods.density) < 1.0 and randf() > float(run.mods.density):
+		return false  # (Quiet roads: fewer cars)
 	var lane := lane_hint if lane_hint >= 0 else randi() % 4
 	if not _lane_free(lane, z, 28.0, 28.0):
 		return false
@@ -1931,7 +1938,7 @@ func _boss_score(b: Vehicle, dt: float, sk: float) -> void:
 	var mult := _boss_mult(sk)
 	# style points; scaled so the harder-driving bosses keep the same targets
 	# (about 6k for the first boss up to about 20k for the last over 2 km)
-	var flair := (lerpf(0.85, 1.25, minf(sk, 1.0)) + maxf(0.0, sk - 1.0) * 0.4) * lerpf(0.8, 0.55, minf(sk, 1.0)) * run.b_edge
+	var flair := (lerpf(0.85, 1.25, minf(sk, 1.0)) + maxf(0.0, sk - 1.0) * 0.4) * lerpf(0.8, 0.55, minf(sk, 1.0)) * run.b_edge * float(run.mods.rival)
 	if run.b_drip > 0.0:  # the rest of what its driving is worth (Data.boss_style) comes in smoothly, not in the pop-ups
 		var give := minf(run.b_drip, maxf(run.b_drip * dt * 1.5, 2.0 * dt))
 		run.b_drip -= give
@@ -2026,7 +2033,7 @@ func _end_battle() -> void:
 		run.bosses += 1
 		if run.stage == Data.BOSSES.size():
 			_route_cleared()
-		run.cash_bonus += 200 * run.stage
+		run.cash_bonus += _boss_prize()
 		if autotest:
 			_econ_line(true)
 		var unlocked_new := false
@@ -2071,7 +2078,7 @@ func _notify(text: String, kind := "", pts := 0) -> void:
 
 
 func _mult() -> float:
-	return minf(8.0, 1.0 + run.combo * 0.35) if run else 1.0
+	return minf(8.0, 1.0 + run.combo * 0.35 * float(run.mods.mult)) if run else 1.0
 
 
 func _add_score(base: float, label: String, combo: int, kind := "") -> void:
@@ -2089,7 +2096,8 @@ func _add_score(base: float, label: String, combo: int, kind := "") -> void:
 			hud.mult_up()
 	elif run.combo > 0:
 		run.combo_t = minf(run.combo_time, run.combo_t + 0.6)
-	var pts := _bank(roundi(base * _mult() * run.mods.score))
+	var od := 1.25 if run.taken.has("overdrive") and player.v > 44.4 else 1.0   # (Overdrive: above 160 km/h)
+	var pts := _bank(roundi(base * _mult() * run.mods.score * od))
 	if label != "":
 		_notify("%s +%s" % [label, Fmt.num(pts)], kind, pts)
 
@@ -2098,6 +2106,7 @@ func _award(kind: String, c: Vehicle, clr: float) -> void:
 	if run == null or state != S.PLAY or run.dying > 0.0 or c.hit:
 		return
 	var sf := pow(maxf(player.v, 12.0) / 25.0, 1.5)
+	clr /= float(run.mods.miss)  # (the Spotter: a pass counts from further out)
 	if kind == "pass":
 		if clr < 0.35:
 			_add_score(25.0 * sf + 220.0 * sf, "RAZOR PASS", 2, "hot")
@@ -2186,8 +2195,9 @@ func _hit(reason: String, other: Vehicle = null, ct := {}) -> void:
 	if side == 0.0:
 		side = 1.0 if randf() < 0.5 else -1.0
 	run.invuln = 2.4 + run.armour
-	run.combo = 0
-	run.combo_t = 0.0
+	run.combo = run.combo / 2 if run.taken.has("cool_head") else 0   # (Cool head keeps half of it)
+	run.combo_t = run.combo_time if run.combo > 0 else 0.0
+	run.clean_m = 0.0
 	if run.drift and run.drift_pts > 0.0:
 		_notify("DRIFT LOST", "bad")   # (a slide that ends in a crash is worth nothing)
 	run.drift_pts = 0.0
@@ -2333,6 +2343,8 @@ func _damage_hit(v: Vehicle, b: Wreck, pt: Vector2, push: Vector2, strength: flo
 ## The same, on a car's own model: `p` is where it was hit in the car's space and `dir` the way the shell was
 ## shoved. (`v` is the vehicle it belongs to, when there is one: a wheel needs its speed to fly off.)
 func _damage_model(m: CarModel, p: Vector3, dir: Vector3, strength: float, v: Vehicle = null, push := Vector2.ZERO) -> void:
+	if v == player and run:
+		strength *= float(run.mods.dmg)  # (Armoured panels)
 	var d := m.damage()
 	d.hit(p, dir, strength)  # (it puts the car on CarDamage.active, which _damage_work steps)
 	var l: float = m.shape.l
@@ -3136,7 +3148,7 @@ func _start_run() -> void:
 	_set_player_car()
 	run = Run.new()
 	_drift_s = DriftModel.state()
-	run.drift = _test_drift
+	run.drift = _test_drift or bool(Save.setting("dev_drift"))   # (Settings › Dev › Drift mode)
 	run.lives = 3 + Save.perm_level("lives")
 	run.radar = _test_radar
 	station = {}
@@ -3236,6 +3248,8 @@ func _show_pick(bi: Dictionary, unlocked_new: bool) -> void:
 			continue  # (one jammer is all a car needs)
 		if b.get("rare", false):
 			continue  # (a rare one is never in the shuffle: see below)
+		if b.get("once", false) and run.taken.has(b.id):
+			continue  # (it does all it does the first time)
 		pool.append(b)
 	pool.shuffle()
 	# a rare upgrade turns up now and then (with its own coin, so the run's random numbers do not move)
@@ -3259,7 +3273,7 @@ func _show_pick(bi: Dictionary, unlocked_new: bool) -> void:
 		line = "The %s is now for sale in the Garage. " % boss_car.name + line
 	elif not Save.is_unlocked(bi.car) and Data.car_unlock_route(boss_car) >= 0:
 		line = "The %s goes on sale when you clear %s. " % [boss_car.name, Data.route_info(Data.car_unlock_route(boss_car)).title] + line
-	hud.show_pick("%s beaten · +$%s prize" % [bi.full, Fmt.num(200 * run.stage)], line, opts)
+	hud.show_pick("%s beaten · +$%s prize" % [bi.full, Fmt.num(_boss_prize())], line, opts)
 	if autotest and _test_hold_pick:
 		print("[autotest] beat %s, holding the pick screen (frame %d)" % [bi.full, _frame])
 	if autotest and not _test_hold_pick:
@@ -3306,6 +3320,7 @@ func _apply_boon(id: String) -> void:
 		return
 	if Deals.is_deal(id):
 		_take_deal(id)
+	run.taken.append(id)
 	match id:
 		"accel": run.mods.accel *= 1.15
 		"brake": run.mods.brake *= 1.2
@@ -3330,6 +3345,22 @@ func _apply_boon(id: String) -> void:
 		"cash":
 			run.cash_bonus += 400 * run.stage
 			_notify("SPONSOR DEAL · +$%s" % Fmt.num(400 * run.stage), "hot")
+		"nitrous":
+			run.mods.accel *= 1.1
+			run.mods.top *= 1.03
+		"aero":
+			run.mods.handling *= 1.08
+			run.mods.top *= 1.02
+		"spotter": run.mods.miss = 1.3
+		"showman": run.mods.mult = 1.3
+		"speed_demon": run.mods.speed = 1.5
+		"fuel_card": run.mods.fuel_price = 0.7
+		"mileage": run.mods.mileage = 2.0
+		"quiet": run.mods.density = 0.8
+		"panels": run.mods.dmg = 0.5
+		"patch": run.mods.wear_fx = 0.5
+		"psych": run.mods.rival = 0.85
+		"clean": run.clean_m = 0.0
 		"drift":
 			run.drift = true
 			_drift_s = DriftModel.state()
@@ -3358,7 +3389,7 @@ var _overlaps := 0      # test aid: frames in which two cars on the road were mo
 var _tb := {"steps": 0, "braking": 0, "hard": 0, "slams": 0, "snaps": 0, "stops": 0, "worst": 0.0, "jerk": 0.0}  # test aid: how the traffic brakes (see _brake_stats)
 var _cop_reach := -1.0  # test aid: seconds into the pursuit when the cop first came within 12 m
 var _cop_held := 0.0    # test aid: seconds the cop had a car in its way less than 25 m ahead
-const COP_TIME := 40.0    # seconds to survive to escape
+const COP_TIME := 40.0    # seconds to survive to escape (_cop_time: less with the Police scanner)
 const COP_CLOSE := 9.0    # the most the police car gains on you, m/s (it was 16: on an open road it was on you in 4 s)
 const COP_ACCEL := 6.0    # how hard it accelerates, m/s² (was 10.5)
 const COP_GAP := 80.0     # how far behind you it starts, m
@@ -3448,7 +3479,7 @@ func _start_cop(gap := COP_GAP, from_trap := false) -> void:
 	run.cop_trap = from_trap
 	if not from_trap:
 		run.cop_due = true
-	hud.banner("POLICE PURSUIT", "DON'T GET RAMMED FOR %d S · ESCAPE FOR +1 LIFE" % int(COP_TIME), "alert")
+	hud.banner("POLICE PURSUIT", "DON'T GET RAMMED FOR %d S · ESCAPE FOR +1 LIFE" % int(_cop_time()), "alert")
 	if autotest:
 		print("[autotest] police pursuit stage %d%s" % [run.stage, " (from a speed check: it starts %.0f m behind you)" % (player.z - boss.z) if from_trap else ""])
 	if _test_block != "":
@@ -4034,6 +4065,12 @@ func _update_run(dt: float) -> void:
 	run.invuln = maxf(0.0, run.invuln - dt)
 	var d := player.v * dt
 	run.dist += d
+	if run.taken.has("clean"):
+		run.clean_m += d
+		if run.clean_m >= 1000.0:
+			run.clean_m -= 1000.0
+			run.cash_bonus += 150
+			_notify("CLEAN KILOMETRE · +$150", "hot")
 	run.time += dt
 	if autotest and _odo_every > 0.0 and run.dist >= _odo_next:
 		_odo_next += _odo_every
@@ -4044,8 +4081,9 @@ func _update_run(dt: float) -> void:
 			run.combo = 0
 	if run.drift:
 		_drift_score(dt)
-	if player.v > 33.0:
-		run.speed_acc += (player.v - 33.0) * 1.3 * dt * _mult() * run.mods.score
+	var sv := 27.8 if run.taken.has("speed_demon") else 33.0   # (the speed bonus: from 120 km/h, or 100 with Speed demon)
+	if player.v > sv:
+		run.speed_acc += (player.v - sv) * 1.3 * dt * _mult() * run.mods.score * float(run.mods.speed)
 		if run.speed_acc >= 1.0:
 			var n := int(run.speed_acc)
 			run.speed_acc -= n
@@ -4087,9 +4125,12 @@ func _update_run(dt: float) -> void:
 		if run.siren_t <= 0.0:
 			run.siren_t = 1.1
 			sound.play("siren", 1.0, -4.0)
-		if run.cop_t >= COP_TIME:
+		if run.cop_t >= _cop_time():
 			run.lives = mini(Data.MAX_LIVES, run.lives + 1)
 			_notify("ESCAPED · +1 LIFE", "hot")
+			if run.taken.has("bribe"):
+				run.cash_bonus += 500
+				_notify("FRIENDS IN BLUE · +$500", "hot")
 			if autotest:
 				print("[autotest] cop ESCAPED, traffic pulled over %d times" % _yields)
 			hud.banner("ESCAPED", "+1 LIFE", "good")
@@ -4770,9 +4811,9 @@ func _update_hud() -> void:
 	}
 	if run.phase == "cop":
 		var gp: float = maxf(0.0, player.z - (boss.z + boss.l)) if boss else 99.0
-		d.merge({"title": "POLICE PURSUIT", "sub": "ESCAPE IN %d S" % ceili(maxf(0.0, COP_TIME - run.cop_t)),
-			"l1": "ESCAPE", "l2": "GAP", "f1": run.cop_t / COP_TIME, "f2": clampf(gp / 60.0, 0.0, 1.0),
-			"v1": "%d/%d s" % [int(run.cop_t), int(COP_TIME)], "v2": "%d m" % int(gp), "done1": false, "done2": gp > 30.0})
+		d.merge({"title": "POLICE PURSUIT", "sub": "ESCAPE IN %d S" % ceili(maxf(0.0, _cop_time() - run.cop_t)),
+			"l1": "ESCAPE", "l2": "GAP", "f1": run.cop_t / _cop_time(), "f2": clampf(gp / 60.0, 0.0, 1.0),
+			"v1": "%d/%d s" % [int(run.cop_t), int(_cop_time())], "v2": "%d m" % int(gp), "done1": false, "done2": gp > 30.0})
 	elif run.phase == "incoming":
 		var bi := Data.boss_info(run.stage)
 		d.merge({"title": ("POLICE" if run.inc_cop else String(bi.full).to_upper()) + " · %d" % ceili(maxf(run.inc_t, 0.0)),
@@ -5508,6 +5549,8 @@ func _on_act(action: String, arg: String) -> void:
 		"set":
 			var kv := arg.split("=")
 			Save.data.settings[kv[0]] = float(kv[1])
+			if kv[0] == "vol_music" or kv[0] == "vol_sfx":
+				EngineAudio.set_volumes(float(Save.setting("vol_music")), float(Save.setting("vol_sfx")))
 			if kv[0] == "pedal_scale" or kv[0] == "mirror_scale":
 				hud.layout_pedals()
 			hud.render_settings()
@@ -5544,6 +5587,11 @@ func _on_act(action: String, arg: String) -> void:
 					_apply_gfx()
 				_:
 					Save.data.settings[arg] = not Save.setting(arg)
+					if arg == "dev_drift" and run:  # (at once, in the run going on too; a drift tune won from a boss stays)
+						var want := bool(Save.setting("dev_drift")) or run.taken.has("drift") or _test_drift
+						if want != run.drift:
+							run.drift = want
+							_drift_s = DriftModel.state()
 			Save.persist()
 			hud.render_settings()
 		"dev":
@@ -6194,7 +6242,7 @@ func _clear_station_for(span: float) -> void:
 
 
 func _gross_earnings() -> int:
-	return run.cash_pts / 40 + int(run.dist / 50.0) + run.cash_bonus   # (the points without the drift tune's x100)
+	return run.cash_pts / 40 + int(run.dist / 50.0 * float(run.mods.mileage)) + run.cash_bonus   # (the points without the drift tune's x100)
 
 
 ## Points earned: into the run's score (Data.DRIFT_SCORE times over with the drift tune), and as they are into what
@@ -6400,7 +6448,7 @@ func _open_refuel() -> void:
 
 func _pump_frame(dt: float) -> void:
 	pump.t += dt
-	var price: float = station.prices[st.grade]
+	var price: float = _fuel_price()
 	if pump.on:
 		var room: float = st.tank - run.fuel
 		var afford: float = (float(_funds().total) - float(pump.bill)) / price
@@ -6423,9 +6471,24 @@ func _pump_frame(dt: float) -> void:
 			_pay_and_go()
 
 
+## What a litre costs this run at this stop: the price on the sign, less the Fuel card's discount.
+func _fuel_price() -> float:
+	return float(station.prices[st.grade]) * (float(run.mods.fuel_price) if run else 1.0)
+
+
+## How long a police pursuit lasts before you have escaped it (shorter with the Police scanner).
+func _cop_time() -> float:
+	return COP_TIME * (0.75 if run and run.taken.has("scanner") else 1.0)
+
+
+## The prize for beating this stage's boss (double for a Bounty hunter).
+func _boss_prize() -> int:
+	return 200 * run.stage * (2 if run.taken.has("bounty") else 1)
+
+
 func _refuel_view() -> Dictionary:
 	var f := _funds()
-	var price: float = station.prices[st.grade]
+	var price: float = _fuel_price()
 	return {"name": station.name, "grade": st.grade, "prices": station.prices, "rise": station.rise, "fuel": run.fuel, "tank": st.tank,
 		"litres": pump.litres, "bill": pump.bill, "pumping": pump.on, "bank": f.bank, "run": f.run, "total": f.total,
 		"to_fill": (st.tank - run.fuel) * price, "price": price, "msg": pump.msg,

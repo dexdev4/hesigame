@@ -76,13 +76,35 @@ var _squeal_k := 0.0
 var _rng := RandomNumberGenerator.new()  # the sound's own noise: how much of it is made must never change the game's random numbers
 
 
+## The two buses the player sets the loudness of (Settings › Display › Audio): "Music" (the chase songs) and "SFX"
+## (everything you hear of the driving: the engine, the tyres, the crashes, the score and the menus' ticks).
+static func ensure_buses() -> void:
+	for n in ["Music", "SFX"]:
+		if AudioServer.get_bus_index(n) < 0:
+			var i := AudioServer.bus_count
+			AudioServer.add_bus(i)
+			AudioServer.set_bus_name(i, n)
+			AudioServer.set_bus_send(i, "Master")
+
+
+## How loud each is, 0 (silent) to 1 (full).
+static func set_volumes(music: float, sfx: float) -> void:
+	ensure_buses()
+	for pair in [["Music", music], ["SFX", sfx]]:
+		var i := AudioServer.get_bus_index(String(pair[0]))
+		var v := clampf(float(pair[1]), 0.0, 1.0)
+		AudioServer.set_bus_mute(i, v <= 0.001)
+		AudioServer.set_bus_volume_db(i, linear_to_db(maxf(v, 0.001)))
+
+
 func _ready() -> void:
+	ensure_buses()
 	_bus = AudioServer.get_bus_index("Engine")
 	if _bus < 0:
 		_bus = AudioServer.bus_count
 		AudioServer.add_bus(_bus)
 		AudioServer.set_bus_name(_bus, "Engine")
-		AudioServer.set_bus_send(_bus, "Master")
+		AudioServer.set_bus_send(_bus, "SFX")
 		var eq := AudioEffectEQ6.new()
 		eq.set_band_gain_db(0, 3.0)    # 32 Hz: chest thump
 		eq.set_band_gain_db(1, 6.0)    # 100 Hz: exhaust body
@@ -109,6 +131,7 @@ func _ready() -> void:
 	else:
 		_dist = AudioServer.get_bus_effect(_bus, 1) as AudioEffectDistortion
 		_lp = AudioServer.get_bus_effect(_bus, 2) as AudioEffectLowPassFilter
+	AudioServer.set_bus_send(_bus, "SFX")  # (the engine is part of the driving's loudness)
 
 	var gen := AudioStreamGenerator.new()
 	gen.mix_rate = RATE
@@ -122,6 +145,7 @@ func _ready() -> void:
 	_pb = _player.get_stream_playback() as AudioStreamGeneratorPlayback
 	for i in 6:
 		var p := AudioStreamPlayer.new()
+		p.bus = "SFX"
 		add_child(p)
 		_players.append(p)
 	_sfx["whoosh"] = _make_whoosh()
@@ -136,6 +160,7 @@ func _ready() -> void:
 	_squeal = AudioStreamPlayer.new()
 	_squeal.stream = _make_squeal()
 	_squeal.volume_db = -60.0
+	_squeal.bus = "SFX"
 	add_child(_squeal)
 	if _eng.is_empty():
 		set_car(Data.CARS[0])

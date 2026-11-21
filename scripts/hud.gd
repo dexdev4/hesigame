@@ -1,22 +1,25 @@
 class_name Hud
 extends CanvasLayer
 ## All 2D UI, built in code: the driving HUD, the pedals and every menu screen.
-## Menus are styled as green highway guide signs. Button presses are reported
-## through the `act` signal; the game script owns all logic.
+## Menus are dark graphite glass: deep blue-black panels with a hairline edge, a
+## soft shadow under them and an amber accent, captions in spaced capitals, the
+## main action a lit amber key and the rest quiet light or glass keys. Button
+## presses are reported through the `act` signal; the game script owns all logic.
 
 signal act(action: String, arg: String)
 
-const SIGN := Color("#0d6a42")
-const SIGN_DEEP := Color("#08482c")
-const LINE := Color("#f3f5ef")
+const SIGN := Color("#121821")        # a panel (the name is from when the menus were green guide signs)
+const SIGN_DEEP := Color("#0a0e14")   # a well inside a panel, and the ink on light keys
+const LINE := Color("#f2f4f7")
 const AMBER := Color("#f5b52e")
 const AMBER_INK := Color("#1d1503")
 const TAIL := Color("#ff3b2a")
-const MUTED := Color("#b5c4ba")
-const RED_SIGN := Color("#5a1717")
-const RARE_BG := Color("#3a2a06")   # a rare upgrade's card (with an amber edge)
+const MUTED := Color("#97a2b0")
+const HAIR := Color(1, 1, 1, 0.11)    # the hairline round a panel or a key
+const RED_SIGN := Color("#3b1418")
+const RARE_BG := Color("#2b2008")   # a rare upgrade's card (with an amber edge)
 const LANE_GREEN := Color("#5bd68b")
-const SCRIM := Color(0.03, 0.04, 0.05, 0.62)
+const SCRIM := Color(0.015, 0.02, 0.03, 0.72)
 
 var display_font: Font   # (the game's typefaces: see Fonts)
 var mono_font: Font
@@ -165,16 +168,18 @@ func _flat(c: Color, radius := 10, border := Color.TRANSPARENT, bw := 0) -> Styl
 	return sb
 
 
+## A panel: dark glass with a hairline edge and a deep, soft shadow.
 func _sign_style(bg: Color) -> StyleBoxFlat:
-	var sb := _flat(bg, 26, LINE, 5)
+	var sb := _flat(Color(bg, 0.94 * bg.a), 24, HAIR, 2)
+	sb.corner_detail = 12
 	sb.expand_margin_left = 10
 	sb.expand_margin_right = 10
 	sb.expand_margin_top = 10
 	sb.expand_margin_bottom = 10
 	sb.set_content_margin_all(30)
-	sb.shadow_color = Color(0, 0, 0, 0.5)
-	sb.shadow_size = 24
-	sb.shadow_offset = Vector2(0, 14)
+	sb.shadow_color = Color(0, 0, 0, 0.6)
+	sb.shadow_size = 40
+	sb.shadow_offset = Vector2(0, 18)
 	return sb
 
 
@@ -197,9 +202,21 @@ func _wrap(text: String, size: int, color := LINE) -> Label:
 
 
 func _eyebrow(text: String) -> Label:
-	var l := _label(text.to_upper(), 18, MUTED, mono_font)
+	var l := _label(text.to_upper(), 17, MUTED, _spaced())
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	return l
+
+
+var _spaced_font: FontVariation
+
+
+## The caption face: the mono font with its letters spaced out a little (spaced capitals read as engraved, not shouted).
+func _spaced() -> Font:
+	if _spaced_font == null and mono_font:
+		_spaced_font = FontVariation.new()
+		_spaced_font.base_font = mono_font
+		_spaced_font.spacing_glyph = 2
+	return _spaced_font if _spaced_font else mono_font
 
 
 func _button(text: String, kind: String, action: String, arg := "") -> Button:
@@ -207,26 +224,37 @@ func _button(text: String, kind: String, action: String, arg := "") -> Button:
 	b.text = text
 	b.add_theme_font_override("font", display_font)
 	b.add_theme_font_size_override("font_size", 34)
-	var bg := LINE
+	var bg := Color("#e9edf2")
 	var fg := SIGN_DEEP
-	if kind == "amber":
+	var glow := Color(0, 0, 0, 0.35)
+	if kind == "amber":   # the main thing to do: a lit key
 		bg = AMBER
 		fg = AMBER_INK
+		glow = Color(AMBER, 0.32)
 	elif kind == "red":   # (the repair button: what needs doing first)
 		bg = REPAIR_RED
 		fg = LINE
-	var normal := _flat(bg, 12)
-	if kind == "ghost":
-		normal = _flat(Color.TRANSPARENT, 12, LINE, 3)
+		glow = Color(REPAIR_RED, 0.35)
+	var normal := _flat(bg, 14)
+	normal.corner_detail = 10
+	if kind == "ghost":   # a quiet glass key with a hairline edge
+		normal = _flat(Color(1, 1, 1, 0.05), 14, Color(1, 1, 1, 0.24), 2)
 		fg = LINE
+		glow = Color(0, 0, 0, 0.0)
+	normal.shadow_color = glow
+	normal.shadow_size = 12 if glow.a > 0.0 else 0
+	normal.shadow_offset = Vector2(0, 5)
 	normal.set_content_margin_all(16)
 	var hover := normal.duplicate() as StyleBoxFlat
-	hover.bg_color = bg.lightened(0.12) if kind != "ghost" else Color(1, 1, 1, 0.08)
+	hover.bg_color = bg.lightened(0.1) if kind != "ghost" else Color(1, 1, 1, 0.1)
 	var press := normal.duplicate() as StyleBoxFlat
-	press.bg_color = bg.darkened(0.15) if kind != "ghost" else Color(1, 1, 1, 0.16)
+	press.bg_color = bg.darkened(0.14) if kind != "ghost" else Color(1, 1, 1, 0.16)
+	press.shadow_size = 4
+	press.shadow_offset = Vector2(0, 2)
 	var dis := normal.duplicate() as StyleBoxFlat
-	dis.bg_color = Color(bg, 0.35) if kind != "ghost" else Color.TRANSPARENT
-	var focus := _flat(Color.TRANSPARENT, 14, AMBER, 4)
+	dis.bg_color = Color(bg, 0.3) if kind != "ghost" else Color.TRANSPARENT
+	dis.shadow_size = 0
+	var focus := _flat(Color.TRANSPARENT, 16, AMBER, 3)
 	focus.expand_margin_left = 4
 	focus.expand_margin_right = 4
 	focus.expand_margin_top = 4
@@ -258,8 +286,11 @@ func _juice(b: Button) -> void:
 
 func _stat(value: String, caption: String, value_color := LINE) -> Array:
 	var p := PanelContainer.new()
-	var sb := _flat(SIGN_DEEP, 12)
+	var sb := _flat(Color(SIGN_DEEP, 0.9), 14, HAIR, 2)
 	sb.set_content_margin_all(14)
+	sb.shadow_color = Color(0, 0, 0, 0.35)
+	sb.shadow_size = 14
+	sb.shadow_offset = Vector2(0, 6)
 	p.add_theme_stylebox_override("panel", sb)
 	p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var vb := VBoxContainer.new()
@@ -267,7 +298,7 @@ func _stat(value: String, caption: String, value_color := LINE) -> Array:
 	var v := _label(value, 30, value_color, mono_font)
 	v.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vb.add_child(v)
-	vb.add_child(_label(caption.to_upper(), 15, MUTED, mono_font))
+	vb.add_child(_label(caption.to_upper(), 14, MUTED, _spaced()))
 	return [p, v]
 
 
@@ -284,7 +315,7 @@ func _bar(fill: StyleBoxFlat, height := 10) -> ProgressBar:
 	pb.max_value = 1.0
 	pb.step = 0.0
 	pb.custom_minimum_size.y = height
-	pb.add_theme_stylebox_override("background", _flat(Color(0, 0, 0, 0.35), 6))
+	pb.add_theme_stylebox_override("background", _flat(Color(1, 1, 1, 0.07), 6))
 	pb.add_theme_stylebox_override("fill", fill)
 	pb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	pb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -552,7 +583,7 @@ func _build_play() -> void:
 	_goal.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_goal.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	_goal.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var gs := _flat(Color(SIGN, 0.88), 10, LINE, 2)
+	var gs := _flat(Color(SIGN, 0.86), 12, HAIR, 2)
 	gs.set_content_margin_all(6)
 	gs.content_margin_left = 10
 	gs.content_margin_right = 10
@@ -2022,7 +2053,7 @@ func _swatch(col: Color, caption: String, on: bool, action: String, arg: String,
 
 func _card() -> Array:
 	var p := PanelContainer.new()
-	var sb := _flat(SIGN_DEEP, 14)
+	var sb := _flat(Color(SIGN_DEEP, 0.92), 16, HAIR, 2)
 	sb.set_content_margin_all(16)
 	p.add_theme_stylebox_override("panel", sb)
 	var vb := VBoxContainer.new()
@@ -2032,10 +2063,10 @@ func _card() -> Array:
 
 
 func _style_tab(b: Button, on: bool) -> void:
-	var sb := _flat(LINE if on else Color(0, 0, 0, 0.28), 12)
+	var sb := _flat(Color("#e9edf2") if on else Color(1, 1, 1, 0.04), 12, Color(1, 1, 1, 0.0) if on else HAIR, 0 if on else 2)
 	sb.set_content_margin_all(10)
 	var hover := sb.duplicate() as StyleBoxFlat
-	hover.bg_color = LINE.lightened(0.1) if on else Color(1, 1, 1, 0.1)
+	hover.bg_color = Color("#ffffff") if on else Color(1, 1, 1, 0.09)
 	for k in ["normal", "pressed", "focus"]:
 		b.add_theme_stylebox_override(k, sb)
 	b.add_theme_stylebox_override("hover", hover)
@@ -2824,9 +2855,9 @@ func _make_slider(key: String, action: String, save_action: String) -> HSlider:
 	sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	sl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	sl.custom_minimum_size.y = 48
-	var track := _flat(Color(0, 0, 0, 0.35), 6)
-	track.content_margin_top = 5
-	track.content_margin_bottom = 5
+	var track := _flat(Color(1, 1, 1, 0.09), 6)
+	track.content_margin_top = 4
+	track.content_margin_bottom = 4
 	sl.add_theme_stylebox_override("slider", track)
 	sl.add_theme_stylebox_override("grabber_area", _flat(AMBER, 6))
 	sl.add_theme_stylebox_override("grabber_area_highlight", _flat(AMBER, 6))
@@ -2880,10 +2911,10 @@ func _option_row(parent: Control, key: String, title: String, hint: String) -> v
 	b.add_theme_font_size_override("font_size", 24)
 	b.custom_minimum_size = Vector2(220, 58)
 	b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	var sb := _flat(SIGN_DEEP, 12, Color(LINE, 0.25), 2)
+	var sb := _flat(Color(1, 1, 1, 0.045), 12, Color(1, 1, 1, 0.16), 2)
 	sb.set_content_margin_all(12)
 	var sh := sb.duplicate() as StyleBoxFlat
-	sh.bg_color = SIGN_DEEP.lightened(0.08)
+	sh.bg_color = Color(1, 1, 1, 0.1)
 	b.add_theme_stylebox_override("normal", sb)
 	b.add_theme_stylebox_override("hover", sh)
 	b.add_theme_stylebox_override("pressed", sh)
@@ -2904,9 +2935,11 @@ func _group(parent: Control, title: String) -> void:
 	var sp := Control.new()
 	sp.custom_minimum_size.y = 4
 	parent.add_child(sp)
-	parent.add_child(_eyebrow(title))
+	var eb := _eyebrow(title)
+	eb.add_theme_color_override("font_color", AMBER.lerp(LINE, 0.12))   # (a section's caption carries the accent)
+	parent.add_child(eb)
 	var line := ColorRect.new()
-	line.color = Color(LINE, 0.18)
+	line.color = Color(LINE, 0.09)
 	line.custom_minimum_size.y = 2
 	parent.add_child(line)
 
@@ -2922,7 +2955,7 @@ func _modal(name: String, max_w: float) -> Dictionary:
 	scr.set_meta("max_w", max_w)
 	scr.visible = false
 	var scrim := ColorRect.new()
-	scrim.color = Color(0.03, 0.04, 0.05, 0.5)
+	scrim.color = Color(0.015, 0.02, 0.03, 0.6)
 	scrim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	scr.add_child(scrim)
 	var panel := PanelContainer.new()
@@ -3067,7 +3100,10 @@ func _build_settings() -> void:
 	_option_row(pd, "mirror", "Mirror", "Move it with Edit on-screen layout (Controls).")
 	_slider_row(pd, "mirror_scale", "set", "save")
 	_group(pd, "Audio")
-	_option_row(pd, "sound", "Engine and effects", "")
+	_option_row(pd, "sound", "Sound", "All of the game's sound on or off.")
+	pd.add_child(_wrap("How loud each part is. Music: the boss and police chase songs. Gameplay: the engine, tyres, wind, crashes, scoring and menus.", 17, MUTED))
+	_slider_row(pd, "vol_music", "set", "save")
+	_slider_row(pd, "vol_sfx", "set", "save")
 
 	# --- developer tools
 	var pdev: VBoxContainer = pages.dev
@@ -3077,6 +3113,7 @@ func _build_settings() -> void:
 	_option_row(pdev, "dev_fps", "FPS counter", "")
 	_option_row(pdev, "dev_hitch", "Hitch log", "While you drive, says in the corner when the game stops for a moment: how long, and what it was doing. Say what it shows.")
 	_option_row(pdev, "dev_hitbox", "Show hit boxes", "")
+	_option_row(pdev, "dev_drift", "Drift mode", "Every run starts with the drift tune fitted: rear-drive drift setup with the drift assist, every point x%d. Takes effect at once, mid-run too." % Data.DRIFT_SCORE)
 	var dev := GridContainer.new()
 	dev.columns = 2
 	dev.add_theme_constant_override("h_separation", 12)
@@ -3107,6 +3144,8 @@ func render_settings() -> void:
 		"steer_sens": ["Sensitivity", 0.4, 2.0, 0.05, "x%.2f", 1.0],
 		"pedal_scale": ["Pedal size", 0.7, 1.4, 0.05, "x%.2f", 1.0],
 		"mirror_scale": ["Mirror size", 0.6, 1.8, 0.05, "x%.2f", 1.0],
+		"vol_music": ["Music", 0.0, 1.0, 0.05, "%.0f%%", 100.0],
+		"vol_sfx": ["Gameplay", 0.0, 1.0, 0.05, "%.0f%%", 100.0],
 		"dz_tilt": ["Tilt", 0.0, 6.0, 0.1, "%.1f°", 1.0],
 		"dz_stick": ["Stick", 0.0, 0.3, 0.005, "%.1f%%", 100.0],
 		"dz_wheel": ["Wheel", 0.0, 0.3, 0.005, "%.1f%%", 100.0],
@@ -3136,6 +3175,7 @@ func render_settings() -> void:
 		"mirror": "ON" if Save.setting("mirror") else "OFF",
 		"dev_lives": "ON" if Save.setting("dev_lives") else "OFF", "dev_fps": "ON" if Save.setting("dev_fps") else "OFF",
 		"dev_hitbox": "ON" if Save.setting("dev_hitbox") else "OFF", "dev_hitch": "ON" if Save.setting("dev_hitch") else "OFF",
+		"dev_drift": "ON" if Save.setting("dev_drift") else "OFF",
 	}
 	for key in states:
 		var b: Button = _set["t_" + key]
@@ -3369,6 +3409,8 @@ func update_refuel(d: Dictionary) -> void:
 		(row[0] as Control).modulate = Color(1, 1, 1, 1.0 if mine else 0.4)
 		(row[1] as Label).text = "YOUR CAR" if mine else ""
 		(row[2] as Label).text = "$%.2f /L" % float(p[g])
+		if mine and absf(float(d.price) - float(p[g])) > 0.005:
+			(row[2] as Label).text = "$%.2f /L  CARD" % float(d.price)   # (the Fuel card's price)
 	_rf.tank.value = clampf(float(d.fuel) / float(d.tank), 0.0, 1.0)
 	_rf.tank_l.text = "%.1f / %d L" % [d.fuel, int(d.tank)]
 	_rf.pump.text = "%5.1f L      $%s" % [d.litres, "%.2f" % float(d.bill)]

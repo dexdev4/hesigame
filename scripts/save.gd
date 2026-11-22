@@ -19,6 +19,7 @@ func defaults() -> Dictionary:
 		"perm_cars": {},  # car id -> {upgrade id: level}: each car is upgraded on its own
 		"sound": true, "assist": false, "free_steer": true, "looks": {},
 		"damage": {},  # car id -> {wear: 0..1, dents, glass, lamps, plate, wheels}: what crashes did to it, until it is repaired
+		"tutorial_done": false,  # the tutorial has been played or turned down: it is not offered at start again
 		"routes": 1, "route_sel": 0, "route_best": {},  # world map: highways open, chosen, best score on each
 		"cam": _cam_defaults(),
 		"settings": SETTING_DEFAULTS.duplicate(true),

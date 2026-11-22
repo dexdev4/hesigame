@@ -1,25 +1,25 @@
 class_name Hud
 extends CanvasLayer
 ## All 2D UI, built in code: the driving HUD, the pedals and every menu screen.
-## Menus are dark graphite glass: deep blue-black panels with a hairline edge, a
-## soft shadow under them and an amber accent, captions in spaced capitals, the
-## main action a lit amber key and the rest quiet light or glass keys. Button
+## Menus are green highway guide signs, kept clean and simple: a green panel with
+## a white edge and a soft shadow, captions in spaced capitals, one lit amber key
+## for the main thing to do and white or outlined keys for the rest. Button
 ## presses are reported through the `act` signal; the game script owns all logic.
 
 signal act(action: String, arg: String)
 
-const SIGN := Color("#121821")        # a panel (the name is from when the menus were green guide signs)
-const SIGN_DEEP := Color("#0a0e14")   # a well inside a panel, and the ink on light keys
-const LINE := Color("#f2f4f7")
+const SIGN := Color("#0d6a42")        # a panel: guide-sign green
+const SIGN_DEEP := Color("#08482c")   # a well inside a panel, and the ink on white keys
+const LINE := Color("#f3f5ef")
 const AMBER := Color("#f5b52e")
 const AMBER_INK := Color("#1d1503")
 const TAIL := Color("#ff3b2a")
-const MUTED := Color("#97a2b0")
-const HAIR := Color(1, 1, 1, 0.11)    # the hairline round a panel or a key
-const RED_SIGN := Color("#3b1418")
-const RARE_BG := Color("#2b2008")   # a rare upgrade's card (with an amber edge)
+const MUTED := Color("#b9cabf")
+const HAIR := Color(1, 1, 1, 0.16)    # the hairline round a well or a quiet key
+const RED_SIGN := Color("#5a1717")
+const RARE_BG := Color("#3a2a06")   # a rare upgrade's card (with an amber edge)
 const LANE_GREEN := Color("#5bd68b")
-const SCRIM := Color(0.015, 0.02, 0.03, 0.72)
+const SCRIM := Color(0.02, 0.03, 0.03, 0.62)
 
 var display_font: Font   # (the game's typefaces: see Fonts)
 var mono_font: Font
@@ -168,9 +168,9 @@ func _flat(c: Color, radius := 10, border := Color.TRANSPARENT, bw := 0) -> Styl
 	return sb
 
 
-## A panel: dark glass with a hairline edge and a deep, soft shadow.
+## A panel: a guide sign, green with a white edge, on a soft shadow.
 func _sign_style(bg: Color) -> StyleBoxFlat:
-	var sb := _flat(Color(bg, 0.94 * bg.a), 24, HAIR, 2)
+	var sb := _flat(bg, 24, LINE, 3)
 	sb.corner_detail = 12
 	sb.expand_margin_left = 10
 	sb.expand_margin_right = 10
@@ -224,9 +224,9 @@ func _button(text: String, kind: String, action: String, arg := "") -> Button:
 	b.text = text
 	b.add_theme_font_override("font", display_font)
 	b.add_theme_font_size_override("font_size", 34)
-	var bg := Color("#e9edf2")
+	var bg := LINE
 	var fg := SIGN_DEEP
-	var glow := Color(0, 0, 0, 0.35)
+	var glow := Color(0, 0, 0, 0.3)
 	if kind == "amber":   # the main thing to do: a lit key
 		bg = AMBER
 		fg = AMBER_INK
@@ -238,7 +238,7 @@ func _button(text: String, kind: String, action: String, arg := "") -> Button:
 	var normal := _flat(bg, 14)
 	normal.corner_detail = 10
 	if kind == "ghost":   # a quiet glass key with a hairline edge
-		normal = _flat(Color(1, 1, 1, 0.05), 14, Color(1, 1, 1, 0.24), 2)
+		normal = _flat(Color(1, 1, 1, 0.04), 14, Color(LINE, 0.7), 2)
 		fg = LINE
 		glow = Color(0, 0, 0, 0.0)
 	normal.shadow_color = glow
@@ -315,7 +315,7 @@ func _bar(fill: StyleBoxFlat, height := 10) -> ProgressBar:
 	pb.max_value = 1.0
 	pb.step = 0.0
 	pb.custom_minimum_size.y = height
-	pb.add_theme_stylebox_override("background", _flat(Color(1, 1, 1, 0.07), 6))
+	pb.add_theme_stylebox_override("background", _flat(Color(0, 0, 0, 0.3), 6))
 	pb.add_theme_stylebox_override("fill", fill)
 	pb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	pb.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -583,7 +583,7 @@ func _build_play() -> void:
 	_goal.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_goal.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	_goal.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var gs := _flat(Color(SIGN, 0.86), 12, HAIR, 2)
+	var gs := _flat(Color(SIGN, 0.88), 12, Color(LINE, 0.55), 2)
 	gs.set_content_margin_all(6)
 	gs.content_margin_left = 10
 	gs.content_margin_right = 10
@@ -842,7 +842,7 @@ func set_play_visible(on: bool) -> void:
 
 ## Which on-screen control a touch at `pos` lands on: "gas", "brake", "ui" or "".
 func role_at(pos: Vector2) -> String:
-	if not play_layer.visible:
+	if not play_layer.visible or on_tut_card(pos):
 		return "ui"
 	if gas.hit_rect().has_point(pos):
 		return "gas"
@@ -1464,8 +1464,11 @@ func _build_menu() -> void:
 		grid.add_child(sv)
 		_menu["l_" + k] = lab
 		_menu["b_" + k] = bar
-	_menu["start"] = _button("START RUN  →", "amber", "map")
+	_menu["start"] = _button("DRIVE  →", "amber", "map")
 	v.add_child(_menu.start)
+	_menu["start_hint"] = _label("Pick a highway on the map, then hit the road", 15, MUTED, mono_font)
+	_menu.start_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(_menu.start_hint)
 	# a car over REPAIR_SHOW worn: a button to have it fixed there and then, its price on it
 	_menu["repair"] = _button("REPAIR CAR", "red", "repair_now", "menu")
 	_menu.repair.add_theme_font_size_override("font_size", 28)
@@ -1476,13 +1479,25 @@ func _build_menu() -> void:
 	btns.add_theme_constant_override("h_separation", 10)
 	btns.add_theme_constant_override("v_separation", 10)
 	v.add_child(btns)
-	for bd in [["CARS", "garage", "cars"], ["WORKSHOP", "garage", "up"], ["SETTINGS", "settings", ""]]:
+	# (each key says what it is for, in a word under it)
+	for bd in [["CARS", "garage", "cars", "Buy · choose"], ["UPGRADE", "garage", "up", "Tune · paint · repair"], ["SETTINGS", "settings", "", "Controls · sound"]]:
+		var col := VBoxContainer.new()
+		col.add_theme_constant_override("separation", 4)
+		col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		var bt := _button(bd[0], "light", bd[1], bd[2])
 		bt.add_theme_font_size_override("font_size", 28)
-		btns.add_child(bt)
+		col.add_child(bt)
+		var cap := _label(String(bd[3]).to_upper(), 13, MUTED, _spaced())
+		cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		col.add_child(cap)
+		btns.add_child(col)
+	var lr := _row(10)
+	v.add_child(lr)
+	var tut := _button("TUTORIAL", "ghost", "tutorial")
 	var help := _button("HOW TO PLAY", "ghost", "help")
-	help.add_theme_font_size_override("font_size", 22)
-	v.add_child(help)
+	for lb in [tut, help]:
+		lb.add_theme_font_size_override("font_size", 22)
+		lr.add_child(lb)
 	v.add_child(_label("Drag to look around your car", 15, MUTED, mono_font))
 	_build_help()
 
@@ -1557,7 +1572,8 @@ func render_menu() -> void:
 	_menu.dmg.text = "WRECKED · 100% · REPAIR IT TO DRIVE" if wrecked else (("DAMAGED · %d%% WORN · SLOWER UNTIL IT IS REPAIRED" % roundi(wear * 100.0))
 		if wear > REPAIR_SHOW else ("DAMAGED · %d%% WORN · REPAIR IT IN THE WORKSHOP" % roundi(wear * 100.0)) if wear >= 0.02 else "")
 	_menu.dmg.visible = wear >= 0.02
-	(_menu.start as Button).text = "REPAIR YOUR CAR  →" if wrecked else "START RUN  →"
+	(_menu.start as Button).text = "REPAIR YOUR CAR  →" if wrecked else "DRIVE  →"
+	_menu.start_hint.text = "Your car is wrecked: repair it in the Upgrade screen first" if wrecked else "Pick a highway on the map, then hit the road"
 	_repair_button(_menu.repair)
 	var levels := {}
 	for k in CarStats.PERM_KEYS:
@@ -2063,7 +2079,7 @@ func _card() -> Array:
 
 
 func _style_tab(b: Button, on: bool) -> void:
-	var sb := _flat(Color("#e9edf2") if on else Color(1, 1, 1, 0.04), 12, Color(1, 1, 1, 0.0) if on else HAIR, 0 if on else 2)
+	var sb := _flat(LINE if on else Color(0, 0, 0, 0.22), 12, Color(1, 1, 1, 0.0) if on else HAIR, 0 if on else 2)
 	sb.set_content_margin_all(10)
 	var hover := sb.duplicate() as StyleBoxFlat
 	hover.bg_color = Color("#ffffff") if on else Color(1, 1, 1, 0.09)
@@ -2855,7 +2871,7 @@ func _make_slider(key: String, action: String, save_action: String) -> HSlider:
 	sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	sl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	sl.custom_minimum_size.y = 48
-	var track := _flat(Color(1, 1, 1, 0.09), 6)
+	var track := _flat(Color(0, 0, 0, 0.3), 6)
 	track.content_margin_top = 4
 	track.content_margin_bottom = 4
 	sl.add_theme_stylebox_override("slider", track)
@@ -2911,10 +2927,10 @@ func _option_row(parent: Control, key: String, title: String, hint: String) -> v
 	b.add_theme_font_size_override("font_size", 24)
 	b.custom_minimum_size = Vector2(220, 58)
 	b.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	var sb := _flat(Color(1, 1, 1, 0.045), 12, Color(1, 1, 1, 0.16), 2)
+	var sb := _flat(SIGN_DEEP, 12, Color(LINE, 0.25), 2)
 	sb.set_content_margin_all(12)
 	var sh := sb.duplicate() as StyleBoxFlat
-	sh.bg_color = Color(1, 1, 1, 0.1)
+	sh.bg_color = SIGN_DEEP.lightened(0.08)
 	b.add_theme_stylebox_override("normal", sb)
 	b.add_theme_stylebox_override("hover", sh)
 	b.add_theme_stylebox_override("pressed", sh)
@@ -2936,7 +2952,7 @@ func _group(parent: Control, title: String) -> void:
 	sp.custom_minimum_size.y = 4
 	parent.add_child(sp)
 	var eb := _eyebrow(title)
-	eb.add_theme_color_override("font_color", AMBER.lerp(LINE, 0.12))   # (a section's caption carries the accent)
+	eb.add_theme_color_override("font_color", AMBER.lerp(LINE, 0.2))   # (a section's caption carries the accent)
 	parent.add_child(eb)
 	var line := ColorRect.new()
 	line.color = Color(LINE, 0.09)
@@ -3191,6 +3207,8 @@ func render_settings() -> void:
 	var tilt: bool = Save.setting("steer_mode") == "tilt"
 	(_set.t_tilt_invert as Button).disabled = not tilt
 	(_set.r_tilt_invert as Control).modulate = Color(1, 1, 1, 1.0 if tilt else 0.45)
+	if screens.has("tutset") and screens.tutset.visible:
+		render_tut_settings(int(_ts.get("page", 0)))   # (the tour's buttons and sliders change the same settings)
 	for t in SETTINGS_TABS:
 		var on: bool = settings_tab == t[0]
 		if _set.has("page_" + t[0]):
@@ -3698,3 +3716,290 @@ func _input(event: InputEvent) -> void:
 			var p: Control = _drag.p
 			p.position = (e.position + _drag.off).clamp(Vector2(4, 4), vp - p.size - Vector2(4, 28))
 			get_viewport().set_input_as_handled()
+
+
+# ---------------------------------------------------------------- tutorial
+
+var _tw_card: Control        # the first launch's welcome card (over the main menu)
+var _tut_card: PanelContainer   # the lesson sign at the top of the screen while the tutorial drives
+var _tc := {}
+var _pulse_tw: Tween
+var _ts := {}                # the settings tour's sheet
+
+
+## The first time the game opens: an offer of the tutorial, over the main menu.
+func tut_welcome() -> void:
+	if _tw_card == null:
+		_tw_card = Control.new()
+		_tw_card.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_tw_card.mouse_filter = Control.MOUSE_FILTER_STOP
+		var scrim := ColorRect.new()
+		scrim.color = SCRIM
+		scrim.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_tw_card.add_child(scrim)
+		_solid.append(scrim)
+		var cc := CenterContainer.new()
+		cc.set_anchors_preset(Control.PRESET_FULL_RECT)
+		cc.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_tw_card.add_child(cc)
+		var panel := PanelContainer.new()
+		panel.add_theme_stylebox_override("panel", _sign_style(SIGN))
+		panel.custom_minimum_size.x = minf(get_viewport().get_visible_rect().size.x - 70.0, 600.0)
+		cc.add_child(panel)
+		var v := VBoxContainer.new()
+		v.add_theme_constant_override("separation", 16)
+		panel.add_child(v)
+		v.add_child(_eyebrow("First time here?"))
+		v.add_child(_label("WELCOME, DRIVER", 50, LINE, display_font))
+		v.add_child(_wrap("A three-minute tutorial shows you how to drive, weave through traffic and set up your controls: the steering method, where the pedals go and the mirror.", 21, LINE))
+		v.add_child(_button("START THE TUTORIAL  →", "amber", "tutorial"))
+		var no := _button("SKIP · I KNOW HOW TO PLAY", "ghost", "tut_decline")
+		no.add_theme_font_size_override("font_size", 22)
+		v.add_child(no)
+		v.add_child(_label("You can play it any time: TUTORIAL on the main menu.", 15, MUTED, mono_font))
+		root.add_child(_tw_card)
+	_tw_card.visible = true
+	_tw_card.modulate.a = 0.0
+	_tw_card.create_tween().tween_property(_tw_card, "modulate:a", 1.0, 0.25)
+
+
+func tut_welcome_hide() -> void:
+	if _tw_card:
+		_tw_card.visible = false
+
+
+func _build_tut_card() -> void:
+	_tut_card = PanelContainer.new()
+	var sb := _sign_style(SIGN)
+	sb.set_content_margin_all(18)
+	sb.expand_margin_left = 0
+	sb.expand_margin_right = 0
+	sb.expand_margin_top = 0
+	sb.expand_margin_bottom = 0
+	_tut_card.add_theme_stylebox_override("panel", sb)
+	_tut_card.anchor_left = 0.5
+	_tut_card.anchor_right = 0.5
+	_tut_card.mouse_filter = Control.MOUSE_FILTER_STOP
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 8)
+	_tut_card.add_child(v)
+	var top := _row(10)
+	v.add_child(top)
+	_tc["step"] = _eyebrow("")
+	_tc.step.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top.add_child(_tc.step)
+	var skip := Button.new()
+	skip.text = "SKIP TUTORIAL"
+	skip.flat = true
+	skip.add_theme_font_override("font", mono_font)
+	skip.add_theme_font_size_override("font_size", 15)
+	skip.add_theme_color_override("font_color", MUTED)
+	skip.add_theme_color_override("font_hover_color", LINE)
+	skip.pressed.connect(func() -> void: act.emit("tut", "skip"))
+	top.add_child(skip)
+	_tc["title"] = _label("", 34, LINE, display_font)
+	_tc.title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	v.add_child(_tc.title)
+	_tc["text"] = _wrap("", 20, LINE)
+	v.add_child(_tc.text)
+	var pr := _row(10)
+	v.add_child(pr)
+	_tc["pr"] = pr
+	_tc["bar"] = _bar(_fill_amber, 10)
+	pr.add_child(_tc.bar)
+	_tc["count"] = _label("", 18, AMBER, mono_font)
+	pr.add_child(_tc.count)
+	_tc["next"] = _button("NEXT  →", "amber", "tut", "next")
+	_tc.next.add_theme_font_size_override("font_size", 24)
+	v.add_child(_tc.next)
+	root.add_child(_tut_card)
+	root.move_child(_tut_card, play_layer.get_index() + 1)   # (over the driving controls, under every menu screen)
+
+
+## The lesson sign: {step, of, title, text, goal, n, next, next_text}.
+func tut_show(d: Dictionary) -> void:
+	if _tut_card == null:
+		_build_tut_card()
+	var vp := get_viewport().get_visible_rect().size
+	var w := minf(vp.x - 40.0, 640.0)
+	_tut_card.offset_left = -w / 2.0
+	_tut_card.offset_right = w / 2.0
+	_tut_card.offset_top = 92.0 + _top_inset()
+	var was: bool = _tut_card.visible and (_tc.title as Label).text == String(d.title)
+	_tc.step.text = ("TUTORIAL · STEP %d OF %d" % [d.step, d.of]) if int(d.step) > 0 else "TUTORIAL · SETTINGS"
+	_tc.title.text = d.title
+	_tc.text.text = d.text
+	var goal: int = d.goal
+	_tc.pr.visible = goal > 0
+	if goal > 0:
+		_tween_bar(_tc.bar, float(d.n) / float(goal))
+		_tc.count.text = "%d / %d" % [d.n, goal] if goal > 1 else ("DONE" if int(d.n) >= 1 else "")
+	_tc.next.visible = d.next
+	_tc.next.text = d.get("next_text", "NEXT  →")
+	_tut_card.visible = true
+	if not was:   # a new lesson: the sign drops in
+		_tut_card.modulate.a = 0.0
+		_tut_card.pivot_offset = Vector2(w / 2.0, 0.0)
+		_tut_card.scale = Vector2(0.96, 0.96)
+		var tw := _tut_card.create_tween().set_parallel(true)
+		tw.tween_property(_tut_card, "modulate:a", 1.0, 0.22)
+		tw.tween_property(_tut_card, "scale", Vector2.ONE, 0.3).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+
+func tut_hide() -> void:
+	if _tut_card:
+		_tut_card.visible = false
+
+
+## True if a touch at `pos` lands on the lesson sign (it does not steer).
+func on_tut_card(pos: Vector2) -> bool:
+	return _tut_card != null and _tut_card.visible and _tut_card.get_global_rect().has_point(pos)
+
+
+func _top_inset() -> float:
+	return float(_top_margin.get_theme_constant("margin_top")) if _top_margin else 0.0
+
+
+## Make a pedal glow and pulse, to show where it is ("gas", "brake"; "" stops it).
+func tut_pulse(which: String) -> void:
+	if _pulse_tw:
+		_pulse_tw.kill()
+	for p in [gas, brake]:
+		if p:
+			p.modulate = Color.WHITE
+	var p: Pedal = gas if which == "gas" else (brake if which == "brake" else null)
+	if p == null:
+		return
+	_pulse_tw = p.create_tween().set_loops()
+	_pulse_tw.tween_property(p, "modulate", Color(1.7, 1.35, 0.55), 0.45).set_trans(Tween.TRANS_SINE)
+	_pulse_tw.tween_property(p, "modulate", Color.WHITE, 0.45).set_trans(Tween.TRANS_SINE)
+
+
+## The settings tour: four pages over the paused drive.
+func _build_tut_settings() -> void:
+	var m := _modal("tutset", 760.0)
+	_ts["eyebrow"] = _eyebrow("")
+	(m.head as VBoxContainer).add_child(_ts.eyebrow)
+	_ts["title"] = _label("", 52, LINE, display_font)
+	_ts.title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	(m.head as VBoxContainer).add_child(_ts.title)
+	(m.scr as Control).set_meta("title", _ts.title)
+	var content: VBoxContainer = m.content
+	var pages := []
+	for i in 4:
+		var pg := VBoxContainer.new()
+		pg.add_theme_constant_override("separation", 14)
+		content.add_child(pg)
+		pages.append(pg)
+	_ts["pages"] = pages
+	# 1: the steering method
+	var p0: VBoxContainer = pages[0]
+	p0.add_child(_wrap("There are five ways to steer. Tap the button to switch between them, then try the one you like on the road. You can change it any time in Settings › Controls.", 20, LINE))
+	for row in [["SWIPE", "Slide a finger left or right anywhere on the screen."], ["STICK", "Touch anywhere: a stick appears under your thumb; push it left or right."],
+			["WHEEL", "Turn an on-screen steering wheel with your thumb."], ["BUTTONS", "Hold a left and a right arrow button."], ["TILT", "Tilt the phone like a steering wheel."]]:
+		var r := _row(12)
+		r.set_meta("mode", String(row[0]).to_lower())
+		_ts["rows"] = _ts.get("rows", []) + [r]
+		var k := _label(row[0], 20, AMBER, display_font)
+		k.custom_minimum_size.x = 120
+		r.add_child(k)
+		var t := _wrap(row[1], 18, MUTED)
+		t.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		r.add_child(t)
+		p0.add_child(r)
+	_ts["mode"] = _button("", "light", "toggle", "steer_mode")
+	p0.add_child(_ts.mode)
+	p0.add_child(_button("TRY IT ON THE ROAD  →", "amber", "tut", "try"))
+	# 2: the pedals
+	var p1: VBoxContainer = pages[1]
+	p1.add_child(_wrap("The GAS and BRAKE pedals can go anywhere on the screen, so they sit right under your thumbs. Tap REARRANGE, drag each pedal (and the mirror) where you want it, then tap DONE.", 20, LINE))
+	p1.add_child(_button("REARRANGE PEDALS AND MIRROR", "amber", "pedal_edit"))
+	var pr := _row(12)
+	p1.add_child(pr)
+	for b in [_button("SWAP SIDES", "ghost", "pedal_swap"), _button("RESET", "ghost", "pedal_reset")]:
+		b.add_theme_font_size_override("font_size", 24)
+		pr.add_child(b)
+	p1.add_child(_wrap("Pedal size: bigger is easier to hit, smaller leaves more road to see.", 18, MUTED))
+	_ts["pedal"] = _tut_slider(p1, "pedal_scale", "Pedals", 0.7, 1.4)
+	# 3: the mirror
+	var p2: VBoxContainer = pages[2]
+	p2.add_child(_wrap("The rear-view mirror at the top shows what is coming up behind you: the boss, the police, a car changing lanes. Make it bigger or smaller here, turn it off, or move it somewhere else on the screen.", 20, LINE))
+	_ts["mirror"] = _button("", "light", "toggle", "mirror")
+	p2.add_child(_ts.mirror)
+	_ts["msize"] = _tut_slider(p2, "mirror_scale", "Size", 0.6, 1.8)
+	var mv := _button("MOVE THE MIRROR", "ghost", "pedal_edit")
+	mv.add_theme_font_size_override("font_size", 24)
+	p2.add_child(mv)
+	# 4: done
+	var p3: VBoxContainer = pages[3]
+	p3.add_child(_wrap("That's everything. All of these settings, and more (camera, sound, graphics), are in SETTINGS on the main menu, and behind the pause button (top right) while you drive.", 20, LINE))
+	p3.add_child(_wrap("Your first run: pick a highway on the map, drive, pass cars close for points, and beat the boss at the end of each stage.", 20, MUTED))
+	p3.add_child(_button("START MY FIRST RUN  →", "amber", "tut", "run"))
+	var g := _button("GO TO THE GARAGE", "ghost", "tut", "garage")
+	g.add_theme_font_size_override("font_size", 24)
+	p3.add_child(g)
+	# footer: back, next and skip
+	var fr := _row(12)
+	(m.foot as VBoxContainer).add_child(fr)
+	_ts["prev"] = _button("←  BACK", "ghost", "tut", "prev")
+	_ts["next"] = _button("NEXT  →", "light", "tut", "next")
+	for b in [_ts.prev, _ts.next]:
+		b.add_theme_font_size_override("font_size", 28)
+		fr.add_child(b)
+	var skr := CenterContainer.new()   # (not a direct child of the footer: _layout_modal sizes those up)
+	(m.foot as VBoxContainer).add_child(skr)
+	var sk := Button.new()
+	sk.text = "SKIP THE REST OF THE TUTORIAL"
+	sk.flat = true
+	sk.add_theme_font_override("font", mono_font)
+	sk.add_theme_font_size_override("font_size", 16)
+	sk.add_theme_color_override("font_color", MUTED)
+	sk.pressed.connect(func() -> void: act.emit("tut", "skip"))
+	skr.add_child(sk)
+	_ts["skip"] = skr
+
+
+## A labelled slider for the tour (its own, apart from the settings sheet's).
+func _tut_slider(parent: Control, key: String, name: String, lo: float, hi: float) -> Dictionary:
+	var r := _row(12)
+	parent.add_child(r)
+	var nm := _label(name, 22, LINE)
+	nm.custom_minimum_size.x = 110
+	r.add_child(nm)
+	var sl := _make_slider(key, "set", "save")
+	sl.min_value = lo
+	sl.max_value = hi
+	sl.step = 0.05
+	r.add_child(sl)
+	var vl := _label("", 20, LINE, mono_font)
+	vl.custom_minimum_size.x = 80
+	vl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	r.add_child(vl)
+	return {"s": sl, "v": vl, "key": key}
+
+
+## Show page `page` (0..3) of the settings tour, with the settings as they are now.
+func render_tut_settings(page: int) -> void:
+	if _ts.is_empty():
+		_build_tut_settings()
+		_apply_safe_area()   # (it is sized like the other sheets)
+	_ts["page"] = page
+	var titles := ["CONTROL SYSTEMS", "THE PEDALS", "THE MIRROR", "YOU'RE READY"]
+	_ts.eyebrow.text = "TUTORIAL · SETTINGS %d OF 4" % (page + 1)
+	_ts.title.text = titles[page]
+	for i in 4:
+		(_ts.pages[i] as Control).visible = i == page
+	var mode := String(Save.setting("steer_mode"))
+	(_ts.mode as Button).text = "STEERING:  %s  ›" % mode.to_upper()
+	for r in _ts.get("rows", []):   # (the method in use stands out)
+		(r as Control).modulate = Color(1, 1, 1, 1.0 if String((r as Control).get_meta("mode")) == mode else 0.5)
+	(_ts.mirror as Button).text = "MIRROR:  %s  ›" % ("ON" if Save.setting("mirror") else "OFF")
+	_cam_lock = true
+	for sd in [_ts.pedal, _ts.msize]:
+		var val := float(Save.setting(String(sd.key)))
+		(sd.s as HSlider).set_value_no_signal(val)
+		(sd.v as Label).text = "x%.2f" % val
+	_cam_lock = false
+	(_ts.prev as Button).visible = page > 0
+	(_ts.next as Button).visible = page < 3
+	(_ts.skip as Control).visible = page < 3

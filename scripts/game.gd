@@ -294,6 +294,9 @@ var _shot_frames: Array = []  # [[frame, path], ...] from --shot-frame=FRAME:PAT
 var _state_log := 0         # --state-log=EVERY: print the simulation's state every EVERY frames, to compare builds exactly
 var show_hitboxes := false  # --hitboxes (or Settings > Developer): draw every car's hit box
 var _test_collide := ""     # --collide-at=SEC:KIND[:LIVES]: set up a real collision (see _collision_test)
+var tut := {}                # the tutorial, while it runs (empty otherwise): see _start_tutorial
+var _test_tut := false       # --tutorial: start with the tutorial (test aid; with --autotest the test driver plays it through)
+var _no_tut := false         # --no-tutorial: never offer the tutorial at start (screenshots of the menus)
 var _test_cam_swipe: Array = []  # --crash-swipe=SEC:DX:DY[:FLICK[:PINCH]]: fingers move the crash camera (see _crash_swipe_test)...
 var _test_touch_q: Array = []    # ...one touch event a frame
 var _test_collide_t := -1.0
@@ -437,6 +440,10 @@ func _ready() -> void:
 			var cp := a.substr(13).split(":")
 			_test_collide_t = float(cp[0])
 			_test_collide = ":".join(cp.slice(1))
+		if a == "--tutorial":
+			_test_tut = true
+		if a == "--no-tutorial":
+			_no_tut = true
 		if a.begins_with("--crash-swipe="):  # SEC:DX:DY[:FLICK[:PINCH]]: that far into a crash a finger drags the camera (test aid)
 			_test_cam_swipe = Array(a.substr(14).split(":"))
 		if a.begins_with("--steer-test="):  # a scripted hand drives the real steering: flick, lane (test aid)
@@ -522,7 +529,9 @@ func _ready() -> void:
 	_compute_stats()
 	_reset_world()
 	_go_menu()
-	if autotest or _steer_test != "":
+	if _test_tut:
+		_start_tutorial()
+	elif autotest or _steer_test != "":
 		_start_run()
 		if _steer_test != "":
 			player.v = _steer_test_v
@@ -553,6 +562,12 @@ func _ready() -> void:
 			var at := a.substr(10).split(":")
 			if at.size() > 1:
 				get_tree().create_timer(float(at[0])).timeout.connect(func() -> void: _on_act(at[1], at[2] if at.size() > 2 else ""))
+	# the first time the game is opened it offers the tutorial (until it has been played or turned down)
+	var opened := false
+	for a in args:
+		opened = opened or a.begins_with("--open")
+	if not Save.data.get("tutorial_done", false) and not (autotest or _test_tut or _no_tut or opened or _steer_test != "" or showroom != "" or idcolor):
+		hud.tut_welcome()
 
 
 func _build_showroom() -> void:
@@ -902,6 +917,8 @@ func _compute_stats() -> void:
 	var c := Data.car_by_id(Save.data.selected)
 	var m: Dictionary = run.mods if run else {}
 	var wear_fx: float = float(run.mods.wear_fx) if run else 1.0   # (Mechanic on call: damage slows the car half as much)
+	if not tut.is_empty():
+		wear_fx = 0.0   # (the tutorial's car drives as new)
 	st = CarStats.compute(c, _perm_levels(), m, Save.wear(String(c.id)) * wear_fx)  # worse damage, worse car
 	player.mass = float(st.mass)
 
@@ -957,6 +974,8 @@ func _try_spawn(z: float, lane_hint := -1, v_override := 0.0) -> bool:
 		return false  # an empty road for the steering test
 	if run and float(run.mods.density) < 1.0 and randf() > float(run.mods.density):
 		return false  # (Quiet roads: fewer cars)
+	if not tut.is_empty() and not tut.traffic:
+		return false  # (an empty road until the tutorial's traffic lesson)
 	var lane := lane_hint if lane_hint >= 0 else randi() % 4
 	if not _lane_free(lane, z, 28.0, 28.0):
 		return false
@@ -2107,6 +2126,10 @@ func _award(kind: String, c: Vehicle, clr: float) -> void:
 		return
 	var sf := pow(maxf(player.v, 12.0) / 25.0, 1.5)
 	clr /= float(run.mods.miss)  # (the Spotter: a pass counts from further out)
+	if not tut.is_empty() and kind == "pass":
+		tut.passes += 1
+		if clr < 1.0:
+			tut.near += 1
 	if kind == "pass":
 		if clr < 0.35:
 			_add_score(25.0 * sf + 220.0 * sf, "RAZOR PASS", 2, "hot")
@@ -2125,6 +2148,8 @@ func _live() -> bool:
 
 
 func _autopilot(dt: float) -> void:
+	if not tut.is_empty() and _tut_autopilot():
+		return
 	if _test_block != "" and run and run.phase == "cop":
 		ap_gas = false  # (--cop-block: sit still in this lane for the whole pursuit)
 		ap_brake = true
@@ -2184,7 +2209,7 @@ func _hit(reason: String, other: Vehicle = null, ct := {}) -> void:
 	if shielded:
 		run.shield -= 1
 		_notify("CRUMPLE ZONE SAVED YOU", "hot")
-	elif not (Save.setting("dev_lives") or godmode):
+	elif not (Save.setting("dev_lives") or godmode or not tut.is_empty()):
 		run.lives -= 1
 	var v0 := player.v
 	var side := 0.0  # which side the hit came from (+ = right)
@@ -2236,7 +2261,7 @@ func _hit(reason: String, other: Vehicle = null, ct := {}) -> void:
 		_start_crash()
 		_notify(reason, "bad")
 	else:
-		_notify(reason + (" · SAVED" if shielded else " · -1 LIFE"), "bad")
+		_notify(reason + (" · FREE IN THE TUTORIAL" if not tut.is_empty() else (" · SAVED" if shielded else " · -1 LIFE")), "bad")
 
 
 func _make_debris() -> CPUParticles3D:
@@ -2373,7 +2398,7 @@ func _damage_model(m: CarModel, p: Vector3, dir: Vector3, strength: float, v: Ve
 		_throw_wheel(v, m, m.nearest_wheel(p), push, strength)
 	if (d.level >= 0.55 and (d.front >= d.rear or nose)) or strength >= 8.0:
 		m.start_smoke(d.level >= 1.7 and v != player)  # (no flames in the player's face)
-	if m == player.model and run != null:
+	if m == player.model and run != null and tut.is_empty():   # (the tutorial's knocks are not kept)
 		# the player's car keeps what a knock did to it, and is slower for it, until it is repaired at the garage
 		# (one crash is several knocks in a couple of seconds, and wrecks the car only so far: a pile-up adds at most 0.25)
 		var now := Time.get_ticks_msec() / 1000.0
@@ -2394,7 +2419,7 @@ func _damage_model(m: CarModel, p: Vector3, dir: Vector3, strength: float, v: Ve
 ## The player's car has taken all the damage it can (100%): the run is over, whatever lives are left. The knock
 ## that did it carries on into the crash (see _hit and _update_run).
 func _check_wreck() -> void:
-	if run == null or run.wrecked or godmode:
+	if run == null or run.wrecked or godmode or not tut.is_empty():
 		return
 	var w := Save.wear(String(Save.data.selected))
 	if not Data.is_wrecked(w):
@@ -2775,7 +2800,7 @@ func _update_player(dt: float) -> void:
 
 ## True if the next hit takes the player's last life.
 func _fatal_next() -> bool:
-	return run != null and run.shield <= 0 and run.lives <= 1 and not (Save.setting("dev_lives") or godmode)
+	return run != null and run.shield <= 0 and run.lives <= 1 and not (Save.setting("dev_lives") or godmode or not tut.is_empty())
 
 
 ## Real steering (a bicycle model): the car can only change direction by
@@ -3132,9 +3157,11 @@ func _warm_finish() -> void:
 	_warm_step(1 << 40)
 
 
-func _start_run() -> void:
+func _start_run(tutorial := false) -> void:
 	_odo_next = _odo_every
-	if Save.wrecked(String(Save.data.selected)) and not godmode:
+	tut = {}
+	hud.tut_hide()
+	if Save.wrecked(String(Save.data.selected)) and not godmode and not tutorial:
 		if autotest:  # (the test driver starts runs by itself: its wreck is mended for nothing)
 			Save.repair(String(Save.data.selected))
 			print("[autotest] the wrecked %s was repaired for the next run" % Save.data.selected)
@@ -3142,7 +3169,7 @@ func _start_run() -> void:
 			return
 	_leave_garage()
 	_warm_finish()
-	_set_route(int(Save.data.get("route_sel", 0)))
+	_set_route(0 if tutorial else int(Save.data.get("route_sel", 0)))
 	_boss_music(false, 0.5)
 	_apply_time(_hour)
 	_set_player_car()
@@ -3153,18 +3180,32 @@ func _start_run() -> void:
 	run.radar = _test_radar
 	station = {}
 	last_station = {}
+	if tutorial:
+		run.phase = "tutorial"
+		run.drift = false
+		tut = {"i": 0, "t": 0.0, "n": 0, "lane": -1, "passes": 0, "near": 0, "phase": "drive", "page": 0, "traffic": false}
 	if _test_stage > 1:
 		run.stage = _test_stage
 	_compute_stats()
 	_reset_world()
 	_traps_reset()
 	run.fuel = st.tank * _test_fuel
-	_new_station(player.z)
+	if tutorial:
+		run.fuel = st.tank
+		_trap_site = 1 << 30   # (no speed checks in the tutorial)
+		player.v = 6.0          # (it starts slowly, so the first lesson is the gas pedal)
+		_send_stations_none()
+	else:
+		_new_station(player.z)
 	touches.clear()
 	_refresh_inputs()
 	state = S.PLAY
 	hud.show_screen("")
 	hud.set_play_visible(true)
+	if tutorial:
+		_tut_enter(0)
+		_calibrate_tilt()
+		return
 	var ri := Data.route_info(Data.route)
 	hud.banner(ri.name, "%s → %s · STAGE 1" % [String(ri.from).to_upper(), String(ri.to).to_upper()])
 	var wear := Save.wear(String(Save.data.selected))
@@ -4088,6 +4129,9 @@ func _update_run(dt: float) -> void:
 			var n := int(run.speed_acc)
 			run.speed_acc -= n
 			_bank(n)
+	if not tut.is_empty():
+		_tut_update(dt)   # (no fuel to buy, speed checks, bosses or police in the tutorial)
+		return
 	_update_fuel(dt)
 	if run == null:
 		return  # ran dry
@@ -4809,7 +4853,11 @@ func _update_hud() -> void:
 		"trk_pumps": _trk_pumps,
 		"clock": _hud_clock_s,
 	}
-	if run.phase == "cop":
+	if not tut.is_empty():
+		d.merge({"title": "TUTORIAL", "sub": "STEP %d OF %d" % [mini(int(tut.i) + 1, TUT_STEPS.size()), TUT_STEPS.size() + 1], "l1": "STEP", "l2": "PTS",
+			"f1": float(tut.i) / float(TUT_STEPS.size() + 1), "f2": clampf(run.score / 1500.0, 0.0, 1.0), "v1": "%d/%d" % [mini(int(tut.i) + 1, TUT_STEPS.size()), TUT_STEPS.size() + 1], "v2": Fmt.num(run.score),
+			"done1": false, "done2": false})
+	elif run.phase == "cop":
 		var gp: float = maxf(0.0, player.z - (boss.z + boss.l)) if boss else 99.0
 		d.merge({"title": "POLICE PURSUIT", "sub": "ESCAPE IN %d S" % ceili(maxf(0.0, _cop_time() - run.cop_t)),
 			"l1": "ESCAPE", "l2": "GAP", "f1": run.cop_t / _cop_time(), "f2": clampf(gp / 60.0, 0.0, 1.0),
@@ -5258,6 +5306,8 @@ func _go_back() -> void:
 		_pay_and_go()
 	elif hud.screens.pedals.visible:
 		_on_act("pedal_done", "")
+	elif hud.screens.has("tutset") and hud.screens.tutset.visible:
+		_on_act("tut", "prev")
 	elif hud.screens.camadj.visible:
 		_on_act("cam_done", "")
 	elif hud.screens.settings.visible:
@@ -5402,6 +5452,15 @@ func _on_act(action: String, arg: String) -> void:
 			_enter_garage()
 		"help":
 			hud.show_screen("help")
+		"tutorial":   # the main menu's TUTORIAL, or the first launch's welcome card
+			hud.tut_welcome_hide()
+			_start_tutorial()
+		"tut_decline":
+			hud.tut_welcome_hide()
+			Save.data["tutorial_done"] = true
+			Save.persist()
+		"tut":
+			_tut_act(arg)
 		"map":
 			if _wrecked_block():
 				return
@@ -5622,7 +5681,11 @@ func _on_act(action: String, arg: String) -> void:
 			hud.end_pedal_edit()
 			Save.persist()
 			hud.render_settings()
-			hud.show_screen("settings")
+			if not tut.is_empty() and tut.phase == "settings":
+				hud.show_screen("tutset")   # (back to the tutorial's settings tour)
+				hud.render_tut_settings(int(tut.page))
+			else:
+				hud.show_screen("settings")
 		"pedal_moved":
 			Save.persist()
 		"pedal_swap":
@@ -5692,7 +5755,9 @@ func _on_act(action: String, arg: String) -> void:
 		"resume":
 			_resume()
 		"quit":
-			if run:
+			if not tut.is_empty():
+				_end_tutorial("menu")   # (quitting the tutorial is skipping it)
+			elif run:
 				state = S.PLAY
 				hud.show_screen("")
 				_end_run("You ended the run")
@@ -6515,3 +6580,249 @@ func _pay_and_go() -> void:
 	hud.set_play_visible(true)
 	run.pit.step = "out"
 	run.dry_t = 0.0
+
+
+# ---------------------------------------------------------------- tutorial
+
+## The tutorial: a short drive on an empty highway, a lesson at a time on a sign at the top of the screen (Hud.tut_show),
+## then a tour of the settings that matter on a phone (the steering method, where the pedals go, the mirror). Nothing
+## in it costs anything: no lives are lost, the car is not damaged, there is no fuel to buy, and no boss, police car or
+## speed check turns up. Each lesson has a goal the game checks (`goal`, counted in tut.n); a lesson with none is read
+## and passed with NEXT. After TUT_SKIP_AFTER seconds on a lesson NEXT appears anyway, so nobody is ever stuck.
+const TUT_STEPS := [
+	{"id": "welcome", "title": "WELCOME TO REDLINE RUSH", "goal": 0,
+		"text": "A short drive to learn the controls. Do what this sign says; it ticks off each step as you do it."},
+	{"id": "gas", "title": "ACCELERATE", "goal": 1, "pulse": "gas",
+		"text": "Hold the GAS pedal (bottom right) to speed up. Get to %s."},
+	{"id": "steer", "title": "STEER", "goal": 2,
+		"text": "%s Change lanes twice."},
+	{"id": "brake", "title": "BRAKE", "goal": 1, "pulse": "brake",
+		"text": "Hold the BRAKE pedal (bottom left) to slow down. Get below %s."},
+	{"id": "traffic", "title": "WEAVE THROUGH TRAFFIC", "goal": 5, "traffic": true,
+		"text": "Cars ahead! Hold GAS and steer round them. Pass 5 cars without hitting them."},
+	{"id": "near", "title": "NEAR MISSES", "goal": 2, "traffic": true,
+		"text": "Passing close (under 1 m) is a NEAR MISS: big points. Chain them quickly and your multiplier (top left) climbs. Get 2."},
+	{"id": "rules", "title": "HOW A RUN WORKS", "goal": 0, "traffic": true,
+		"text": "Every hit costs a life (here it is free) and the run ends when they are gone. Drive far or score enough and a BOSS races you: beat it for cash and an upgrade. Fill up at the fuel stops on the right."},
+]
+const TUT_SKIP_AFTER := 14.0
+
+
+## Start the tutorial (the first launch's welcome card, or TUTORIAL on the main menu).
+func _start_tutorial() -> void:
+	if state == S.PLAY and run:
+		return
+	_start_run(true)
+	if autotest:
+		print("[autotest] tutorial started")
+
+
+func _send_stations_none() -> void:
+	scenery.set_stations([])
+
+
+## What a lesson's sign says, with the player's own speed unit and steering method in it.
+func _tut_text(i: int) -> String:
+	var st_: Dictionary = TUT_STEPS[i]
+	var text: String = st_.text
+	var mph: bool = Save.setting("units") == "mph"
+	match String(st_.id):
+		"gas":
+			text = text % ("62 mph" if mph else "100 km/h")
+		"brake":
+			text = text % ("37 mph" if mph else "60 km/h")
+		"steer":
+			text = text % _steer_how()
+	return text
+
+
+## How the chosen steering method is used, in one sentence.
+func _steer_how() -> String:
+	return {"swipe": "Swipe left or right anywhere on the screen to steer.", "stick": "Touch anywhere and push the stick that appears left or right to steer.",
+		"wheel": "Turn the on-screen wheel with your thumb to steer.", "buttons": "Hold the left and right arrow buttons to steer.",
+		"tilt": "Tilt your phone left or right, like a steering wheel, to steer."}.get(Save.setting("steer_mode"), "Swipe left or right to steer.")
+
+
+## Go to lesson `i` (past the last: the settings tour).
+func _tut_enter(i: int) -> void:
+	tut.i = i
+	tut.t = 0.0
+	tut.n = 0
+	tut.passes = 0
+	tut.near = 0
+	tut.lane = Data.nearest_lane(player.x)
+	if i >= TUT_STEPS.size():
+		_tut_settings(0)
+		return
+	var st_: Dictionary = TUT_STEPS[i]
+	var had_traffic: bool = tut.traffic
+	tut.traffic = st_.get("traffic", false)
+	if tut.traffic and not had_traffic:
+		for k in 6:  # (a few cars ahead to start the lesson with, in different lanes)
+			_try_spawn(player.z + 70.0 + k * 38.0, k % 4)
+	hud.tut_pulse(String(st_.get("pulse", "")))
+	_tut_show()
+	if i > 0:
+		sound.play("ding", 1.3, -6.0)
+	if autotest:
+		print("[autotest] tutorial step %d: %s" % [i + 1, st_.id])
+
+
+func _tut_show() -> void:
+	var i: int = tut.i
+	var st_: Dictionary = TUT_STEPS[i]
+	var goal: int = st_.goal
+	hud.tut_show({"step": i + 1, "of": TUT_STEPS.size() + 1, "title": st_.title, "text": _tut_text(i),
+		"goal": goal, "n": mini(int(tut.n), goal), "next": goal == 0 or float(tut.t) > TUT_SKIP_AFTER,
+		"next_text": "NEXT  →" if goal == 0 else "SKIP THIS STEP  →"})
+
+
+## Each frame of the drive: check the lesson's goal.
+func _tut_update(dt: float) -> void:
+	if tut.phase == "settings":
+		return
+	tut.t += dt
+	var kmh := player.v * 3.6
+	var n0: int = tut.n
+	if tut.phase == "try":   # trying a new steering method out, from the settings tour
+		var ln := Data.nearest_lane(player.x)
+		if ln != int(tut.lane):
+			tut.lane = ln
+			tut.n += 1
+		if int(tut.n) != n0:
+			hud.tut_show({"step": 0, "of": 0, "title": "TRY YOUR NEW CONTROLS", "text": _steer_how() + " Change lanes twice.", "goal": 2, "n": mini(int(tut.n), 2), "next": true, "next_text": "BACK TO THE TOUR  →"})
+		if int(tut.n) >= 2:
+			sound.play("chime", 1.2, -4.0)
+			_tut_settings(1)
+		return
+	var st_: Dictionary = TUT_STEPS[int(tut.i)]
+	match String(st_.id):
+		"gas":
+			tut.n = 1 if kmh >= 100.0 else 0
+		"steer":
+			var ln := Data.nearest_lane(player.x)
+			if ln != int(tut.lane) and absf(player.x - Data.LANES[ln]) < 0.6:
+				tut.lane = ln
+				tut.n += 1
+		"brake":
+			tut.n = 1 if kmh < 60.0 else 0
+		"traffic":
+			tut.n = tut.passes
+		"near":
+			tut.n = tut.near
+	var goal: int = st_.goal
+	if goal > 0 and int(tut.n) >= goal:
+		sound.play("chime", 1.2, -4.0)
+		_tut_enter(int(tut.i) + 1)
+		return
+	if int(tut.n) != n0 or (float(tut.t) > TUT_SKIP_AFTER and float(tut.t) - dt <= TUT_SKIP_AFTER):
+		_tut_show()
+	if autotest and ((goal == 0 and float(tut.t) > 2.5) or float(tut.t) > TUT_SKIP_AFTER + 1.0):
+		_tut_act("next")   # (the test driver reads quickly, and takes SKIP THIS STEP when it is offered)
+
+
+## The test driver's hands in the tutorial: what each lesson asks for. Returns false to drive as usual (in traffic).
+func _tut_autopilot() -> bool:
+	if tut.phase == "try":
+		ap_gas = player.v < 22.0
+		ap_brake = false
+		if absf(player.x - target_x) < 0.4:
+			target_x = Data.LANES[1] if absf(target_x - Data.LANES[2]) < 0.1 else Data.LANES[2]
+		return true
+	match String(TUT_STEPS[int(tut.i)].id):
+		"welcome", "rules":
+			ap_gas = false
+			ap_brake = false
+			return true
+		"gas":
+			ap_gas = true
+			ap_brake = false
+			return true
+		"steer":
+			ap_gas = player.v < 28.0
+			ap_brake = false
+			if absf(player.x - target_x) < 0.4:
+				target_x = Data.LANES[1] if absf(target_x - Data.LANES[2]) < 0.1 else Data.LANES[2]
+			return true
+		"brake":
+			ap_gas = false
+			ap_brake = true
+			return true
+	return false
+
+
+## The settings tour: a sheet over the paused game, page by page (Hud.render_tut_settings).
+func _tut_settings(page: int) -> void:
+	tut.phase = "settings"
+	tut.page = page
+	hud.tut_pulse("")
+	hud.tut_hide()
+	state = S.PAUSED
+	touches.clear()
+	key_gas = false
+	key_brake = false
+	_refresh_inputs()
+	hud.render_tut_settings(page)
+	hud.show_screen("tutset")
+	if autotest:
+		print("[autotest] tutorial settings page %d" % (page + 1))
+		get_tree().create_timer(3.0).timeout.connect(func() -> void:
+			if not tut.is_empty() and tut.phase == "settings" and int(tut.page) == page:
+				_tut_act("try" if page == 0 and not tut.has("tried") else ("garage" if page >= 3 else "next")))
+
+
+## The tutorial's buttons: next, skip, and in the settings tour prev, try (drive with the new steering), run, garage.
+func _tut_act(what: String) -> void:
+	if tut.is_empty():
+		return
+	match what:
+		"next":
+			if tut.phase == "settings":
+				_tut_settings(mini(int(tut.page) + 1, 3))
+			elif tut.phase == "try":
+				_tut_settings(1)
+			else:
+				_tut_enter(int(tut.i) + 1)
+		"prev":
+			if tut.phase == "settings" and int(tut.page) > 0:
+				_tut_settings(int(tut.page) - 1)
+		"try":
+			tut.phase = "try"
+			tut.tried = true
+			tut.n = 0
+			tut.lane = Data.nearest_lane(player.x)
+			target_x = player.x
+			state = S.PLAY
+			hud.show_screen("")
+			hud.set_play_visible(true)
+			hud.layout_pedals()
+			_calibrate_tilt()
+			hud.tut_show({"step": 0, "of": 0, "title": "TRY YOUR NEW CONTROLS", "text": _steer_how() + " Change lanes twice.", "goal": 2, "n": 0, "next": true, "next_text": "BACK TO THE TOUR  →"})
+		"skip":
+			_end_tutorial("menu")
+		"run":
+			_end_tutorial("run")
+		"garage":
+			_end_tutorial("menu")
+
+
+## The tutorial is over (finished or skipped): it is not offered at start again, and the game goes on to `then`
+## ("run": the player's first real run, "menu": the garage).
+func _end_tutorial(then: String) -> void:
+	Save.data["tutorial_done"] = true
+	Save.persist()
+	if autotest:
+		print("[autotest] tutorial over: %s" % then)
+	tut = {}
+	hud.tut_hide()
+	hud.tut_pulse("")
+	_end_crash()
+	run = null
+	_remove_boss()
+	_trap_clear()
+	finish_z = -1.0
+	_compute_stats()
+	if then == "run":
+		_start_run()
+	else:
+		_go_menu()

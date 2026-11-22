@@ -502,6 +502,8 @@ func _ready() -> void:
 		DirAccess.make_dir_recursive_absolute(_save_sfx_dir)
 		for k in sound._sfx:
 			(sound._sfx[k] as AudioStreamWAV).save_to_wav("%s/%s.wav" % [_save_sfx_dir, k])
+		for pl in [sound._squeal, sound._scrub]:   # (the tyres' loops too)
+			(pl.stream as AudioStreamWAV).save_to_wav("%s/%s.wav" % [_save_sfx_dir, "tyre_screech" if pl == sound._squeal else "tyre_scrub"])
 	music = BossMusic.new()
 	music.enabled = Save.data.sound
 	music.forced = _forced_song
@@ -2880,7 +2882,7 @@ var _drift_drive := false   # --drift-drive: the test driver drives the drift tu
 func _drive_drift(dt: float, gas: bool, brk: bool) -> void:
 	if _drift_s.is_empty():
 		_drift_s = DriftModel.state()
-	var cmd := _steer_val
+	var cmd := _steer_cmd   # (the hand as it is, without the quick-flick boost the ordinary steering adds: in a slide that boost overshoots)
 	if autotest and _drift_drive:
 		var auto := _drift_autopilot(dt)
 		cmd = float(auto[0])
@@ -2930,7 +2932,7 @@ var _drift_marked := false
 
 
 func _drift_marks(k: float, dt: float) -> void:
-	sound.set_squeal(k, dt)
+	sound.set_squeal(k, dt, player.v)
 	if k < 0.05:
 		smoke.emitting = false
 		if _drift_marked:

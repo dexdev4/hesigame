@@ -116,5 +116,47 @@ func _initialize() -> void:
 	_check(r.drift_t > 2.0, "the throttle holds a drift (%.1f s past 15 degrees)" % r.drift_t)
 	_check(r.max_course < deg_to_rad(35.0), "...and the driver keeps it going down the road")
 	_check(not r.spun, "...without spinning")
+	# 7. controllable: thrown in with the handbrake, then GAS held and hands off, the assist holds a steady drift (it does
+	# not swing in and out, nor pin itself at the limit), and nothing in it jolts
+	var c7 := Car.new()
+	c7.v = 28.0
+	var s7 := DriftModel.state()
+	var t7 := 0.0
+	var lo := 99.0
+	var hi := 0.0
+	var jolt := 0.0
+	var last_r := 0.0
+	while t7 < 6.0:
+		var hb := t7 < 0.35
+		DriftModel.drive(c7, 1.0 / 60.0, st, 2.6, 0.75 if hb else 0.0, not hb, hb, true, s7)
+		if t7 > 0.6:
+			jolt = maxf(jolt, absf(c7.yaw_rate - last_r) * 60.0)
+		last_r = c7.yaw_rate
+		t7 += 1.0 / 60.0
+		if t7 > 3.0:
+			var b7 := absf(rad_to_deg(DriftModel.angle(c7)))
+			lo = minf(lo, b7)
+			hi = maxf(hi, b7)
+	print("  thrown in, then GAS held and hands off: from 3 s to 6 s the angle stays between %.0f and %.0f deg; the hardest yaw jolt %.1f rad/s2" % [lo, hi, jolt])
+	_check(lo > 20.0 and hi < 50.0 and hi - lo < 8.0, "holding GAS, the assist holds a steady drift (20 to 50 degrees, steady within 8)")
+	_check(jolt < 6.0, "no jolts: the yaw never changes faster than 6 rad/s2 (%.1f)" % jolt)
+	# 8. braking in a slide does not snap the car round: the footbrake moves the weight forward and the angle grows a little
+	var c8 := Car.new()
+	c8.v = 28.0
+	var s8 := DriftModel.state()
+	var t8 := 0.0
+	var b_before := 0.0
+	var b_max := 0.0
+	while t8 < 4.0:
+		var hb8 := t8 < 0.35
+		var brk8 := hb8 or (t8 > 2.0 and t8 < 2.6)
+		DriftModel.drive(c8, 1.0 / 60.0, st, 2.6, 0.75 if hb8 else 0.0, not brk8, brk8, true, s8)
+		t8 += 1.0 / 60.0
+		if absf(t8 - 2.0) < 0.01:
+			b_before = absf(rad_to_deg(DriftModel.angle(c8)))
+		if t8 > 2.0 and t8 < 3.2:
+			b_max = maxf(b_max, absf(rad_to_deg(DriftModel.angle(c8))))
+	print("  braking for 0.6 s in a %.0f deg drift: the angle goes no further than %.0f deg" % [b_before, b_max])
+	_check(b_max < b_before + 15.0 and b_max < 60.0, "braking in a slide does not snap the car round")
 	print("== %d checks, %d failed" % [_checks, _fails])
 	quit(1 if _fails > 0 else 0)

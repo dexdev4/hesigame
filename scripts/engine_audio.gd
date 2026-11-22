@@ -71,8 +71,10 @@ var _st_i := 0
 
 var _sfx := {}
 var _players: Array[AudioStreamPlayer] = []
-var _squeal: AudioStreamPlayer   # tyres sliding (the drift tune): a loop whose loudness and pitch follow the slide
+var _squeal: AudioStreamPlayer   # tyres sliding (the drift tune): the screech of rubber at the edge of its grip...
+var _scrub: AudioStreamPlayer    # ...and the rougher roar of a tyre fully sideways or spinning
 var _squeal_k := 0.0
+var _flutter := 0.0              # a slow random waver on the loudness, so the loops never sound like loops
 var _rng := RandomNumberGenerator.new()  # the sound's own noise: how much of it is made must never change the game's random numbers
 
 
@@ -162,6 +164,11 @@ func _ready() -> void:
 	_squeal.volume_db = -60.0
 	_squeal.bus = "SFX"
 	add_child(_squeal)
+	_scrub = AudioStreamPlayer.new()
+	_scrub.stream = _make_scrub()
+	_scrub.volume_db = -60.0
+	_scrub.bus = "SFX"
+	add_child(_scrub)
 	if _eng.is_empty():
 		set_car(Data.CARS[0])
 
@@ -248,20 +255,34 @@ func set_interior(on: bool) -> void:
 	_interior = on
 
 
-## How hard the tyres are sliding, 0 (gripping) .. 1 (fully sideways, or spinning): the squeal fades in and climbs a
-## little in pitch with it, and stops when they grip again.
-func set_squeal(k: float, dt: float) -> void:
-	_squeal_k = move_toward(_squeal_k, clampf(k, 0.0, 1.0), dt * 6.0)
+## How hard the tyres are sliding, 0 (gripping) .. 1 (fully sideways, or spinning), at `v` m/s. A tyre screeches most
+## around the edge of its grip and less as it goes fully sideways, where the scrub of rubber dragged over the road takes
+## over; both are louder and higher the faster the car is going, and both stop when the tyres grip again.
+func set_squeal(k: float, dt: float, v := 25.0) -> void:
+	_squeal_k = move_toward(_squeal_k, clampf(k, 0.0, 1.0), dt * (8.0 if k > _squeal_k else 4.0))
 	if _squeal == null:
 		return
 	if _squeal_k < 0.02:
-		if _squeal.playing:
-			_squeal.stop()
+		for pl in [_squeal, _scrub]:
+			if pl.playing:
+				pl.stop()
 		return
-	if not _squeal.playing:
-		_squeal.play()
-	_squeal.volume_db = linear_to_db(_squeal_k * 0.55)
-	_squeal.pitch_scale = 0.88 + 0.22 * _squeal_k
+	_flutter = lerpf(_flutter, _rng.randf_range(-1.0, 1.0), minf(1.0, dt * 3.0))
+	var sp := clampf(v / 35.0, 0.25, 1.15)
+	var screech := smoothstep(0.03, 0.35, _squeal_k) * (1.0 - 0.35 * smoothstep(0.6, 1.0, _squeal_k)) * sp
+	var scrub := smoothstep(0.35, 1.0, _squeal_k) * sp
+	for pair in [[_squeal, screech * (0.62 + 0.08 * _flutter)], [_scrub, scrub * (0.55 + 0.06 * _flutter)]]:
+		var pl: AudioStreamPlayer = pair[0]
+		var vol: float = pair[1]
+		if vol < 0.01:
+			if pl.playing:
+				pl.stop()
+			continue
+		if not pl.playing:
+			pl.play(_rng.randf() * 1.5)   # (from somewhere in the loop: never the same start twice)
+		pl.volume_db = linear_to_db(vol)
+	_squeal.pitch_scale = 0.9 + 0.12 * _squeal_k + 0.1 * (sp - 0.7) + 0.015 * _flutter
+	_scrub.pitch_scale = 0.75 + 0.35 * sp
 
 
 ## Called every frame with the player's speed and pedals.
@@ -571,33 +592,109 @@ static func ping_pitch(n: int) -> float:
 ## Tyres sliding on tarmac: a cluster of close, wavering tones (the rubber's stick-slip) over a rough hiss, a loop of
 ## 1.2 s whose tones each fit a whole number of cycles into it, so it repeats without a click.
 func _make_squeal() -> AudioStreamWAV:
-	var T := 1.2
-	var n := int(RATE * T)
-	var m := int(RATE * 0.03)   # (made 30 ms long, and that end blended into the start: the noise in it joins up too)
+	# A tyre's screech is not a note: the tread sticks and slips against the road hundreds of times a second, never
+	# evenly, and that rough chatter rings the tyre and the road in bands that wander. So: a train of stick-slip clicks at
+	# irregular intervals (about 650 a second, each a different size) plus a little hiss, rung through three resonances
+	# around 1, 1.7 and 2.6 kHz whose pitches drift slowly and shake a little, with a random chatter on the loudness.
+	var rate := 32000.0   # (its bands are under 3 kHz: this rate is plenty, and it is made quicker as the game starts)
+	var T := 1.7
+	var n := int(rate * T)
+	var m := int(rate * 0.08)   # (made 80 ms longer, and that end blended into the start)
 	var out := PackedFloat32Array()
 	out.resize(n + m)
-	var parts := [[1180.0, 0.32, 7.0], [1265.0, 0.24, 5.0], [1410.0, 0.16, 9.0], [2390.0, 0.07, 6.0], [905.0, 0.12, 4.0]]
-	for p in parts:   # (whole numbers of cycles in the loop: the tone, and the waver on it)
-		p[0] = roundf(float(p[0]) * T) / T
-		p[2] = roundf(float(p[2]) * T) / T
-	var band := 0.0
-	var low := 0.0
+	var res := [[980.0, 9.0, 1.0], [1690.0, 11.0, 0.75], [2620.0, 8.0, 0.4]]   # centre, Q, level
+	var st := []
+	for r_ in res:
+		st.append([0.0, 0.0, 0.0, 0.0])   # (low, band, drift, shake)
+	var next_click := 0.0
+	var click := 0.0
+	var chatter := 1.0
+	var chat_s := 1.0
+	var chat_t := 0.0
+	var hiss_lp := 0.0
+	var peak := 0.0
 	for i in n + m:
-		var t := float(i) / RATE
-		var s := 0.0
-		for p in parts:
-			var wav := 1.0 + 0.012 * sin(TAU * float(p[2]) * t)
-			s += sin(TAU * float(p[0]) * t * wav) * float(p[1]) * (0.75 + 0.25 * sin(TAU * float(p[2]) * 1.7 * t))
+		# the stick-slip: a click now and then, sometimes a short burst of them
+		next_click -= 1.0
+		var x := 0.0
+		if next_click <= 0.0:
+			click = _rng.randf_range(0.3, 1.0) * (1.0 if _rng.randf() < 0.85 else 1.8)
+			next_click = rate / 650.0 * _rng.randf_range(0.45, 1.6)
+			x = click
 		var nz := _rng.randf() * 2.0 - 1.0
-		var f := 2.0 * sin(PI * 1800.0 / RATE)
-		low += f * band
-		band += f * (nz - low - 0.6 * band)
-		out[i] = (s * 0.8 + band * 0.35) * 0.7
+		hiss_lp += 0.35 * (nz - hiss_lp)
+		x += (nz - hiss_lp) * 0.22
+		# the loudness chatters (the tyre loading and unloading, 6-16 times a second)
+		chat_t -= 1.0
+		if chat_t <= 0.0:
+			chat_t = rate / _rng.randf_range(6.0, 16.0)
+			chatter = _rng.randf_range(0.6, 1.0)
+		var sig := 0.0
+		for k in res.size():
+			var r_: Array = res[k]
+			var s_: Array = st[k]
+			s_[2] = lerpf(float(s_[2]), _rng.randf_range(-1.0, 1.0), 0.00004)   # the slow drift of the band...
+			s_[3] = lerpf(float(s_[3]), _rng.randf_range(-1.0, 1.0), 0.004)     # ...and its shake
+			var fc := float(r_[0]) * (1.0 + 2.2 * float(s_[2]) * 0.06 + float(s_[3]) * 0.02)
+			var f := 2.0 * sin(PI * fc / rate)
+			var q := 1.0 / float(r_[1])
+			s_[0] = float(s_[0]) + f * float(s_[1])
+			s_[1] = float(s_[1]) + f * (x - float(s_[0]) - q * float(s_[1]))
+			sig += float(s_[1]) * float(r_[2])
+		chat_s += (chatter - chat_s) * 0.0015   # (eased, so the chatter never clicks)
+		var y := sig * chat_s
+		out[i] = y
+		peak = maxf(peak, absf(y))
+	for i in m:
+		var k2 := float(i) / float(m)
+		out[i] = out[i] * k2 + out[n + i] * (1.0 - k2)
+	out.resize(n)
+	var g := 0.85 / maxf(peak, 0.0001)
+	for i in n:
+		out[i] = clampf(out[i] * g, -1.0, 1.0)
+	var w := _wav(out, rate)
+	w.loop_mode = AudioStreamWAV.LOOP_FORWARD
+	w.loop_begin = 0
+	w.loop_end = n
+	return w
+
+
+## The scrub: a tyre dragged sideways over the road, or spinning, roars more than it screeches: a broad rumble of
+## rubber on grit (noise between about 120 and 900 Hz), grainy, with a slow surge in it.
+func _make_scrub() -> AudioStreamWAV:
+	var rate := SFX_RATE
+	var T := 2.0
+	var n := int(rate * T)
+	var m := int(rate * 0.08)
+	var out := PackedFloat32Array()
+	out.resize(n + m)
+	var lp1 := 0.0
+	var lp2 := 0.0
+	var hp := 0.0
+	var surge := 0.0
+	var grain := 0.0
+	var peak := 0.0
+	for i in n + m:
+		var nz := _rng.randf() * 2.0 - 1.0
+		lp1 += 0.11 * (nz - lp1)       # (about 900 Hz)
+		lp2 += 0.11 * (lp1 - lp2)
+		hp += 0.017 * (lp2 - hp)       # (less of what is below about 120 Hz)
+		var band := lp2 - hp
+		surge = lerpf(surge, _rng.randf_range(0.55, 1.0), 0.00008)
+		if _rng.randf() < 0.004:
+			grain = _rng.randf_range(0.6, 1.4)   # (bits of grit)
+		grain = lerpf(grain, 1.0, 0.002)
+		var y := band * surge * grain
+		out[i] = y
+		peak = maxf(peak, absf(y))
 	for i in m:
 		var k := float(i) / float(m)
 		out[i] = out[i] * k + out[n + i] * (1.0 - k)
 	out.resize(n)
-	var w := _wav(out)
+	var g := 0.8 / maxf(peak, 0.0001)
+	for i in n:
+		out[i] = clampf(out[i] * g, -1.0, 1.0)
+	var w := _wav(out, rate)
 	w.loop_mode = AudioStreamWAV.LOOP_FORWARD
 	w.loop_begin = 0
 	w.loop_end = n

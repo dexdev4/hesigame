@@ -16,13 +16,18 @@ extends RefCounted
 ##  - The pedals: GAS is the throttle (it comes in over a fifth of a second, not at once). BRAKE is the handbrake while
 ##    you throw the car in (steering, and not yet sliding much: it locks the rear wheels and the tail steps out), and
 ##    the footbrake otherwise (mostly on the front wheels, so braking in a slide moves the weight forward and the angle
-##    grows a little, as in a real car; it never snaps the car round).
-## The drift assist does what CarX Drift Racing's does, all of it gently: it counter-steers for you as the tail slides
-## (the front wheels follow where the front of the car is going, and your steering is added), it eases off the power
-## as the angle nears its limit so that holding GAS holds a steady drift, it leans on the car progressively past about
-## 46 degrees rather than snapping it back, it steadies the car as a slide ends, and while the car runs straight it
-## keeps the rear wheels from spinning up. You start a slide (the handbrake with the wheel turned, or power in a turn),
-## hold it with the throttle and steer the angle and the line.
+##    grows a little, as in a real car; in a slide more of the braking goes to the front, so it never snaps the car round).
+##    Steering against a slide with BRAKE held is the handbrake again: the flick into the next drift.
+## The drift assist does what CarX Drift Racing's does, all of it gently. As the tail slides it counter-steers for you
+## (the front wheels follow where the front of the car is going), and your hand no longer turns the wheels straight
+## through: in a slide it asks for an ANGLE. Hands off, the car holds about 36 degrees; steer into the slide and it asks
+## for up to 48, steer out of it and it asks for less, down to about 23, and further out the slide ends or (with the
+## brake) flicks into the other. Holding GAS holds that angle: it eases the power off as the angle nears it (looking at
+## where the angle is heading as well as where it is), and helps the car's yaw towards it, damped. It also keeps a held
+## drift running straight: it steers against the line curving away and draws it gently back to the road's direction.
+## Past about 46 degrees it leans on the car progressively rather than snapping it back, it steadies the car as a slide
+## ends, and while the car runs straight it keeps the rear wheels from spinning up. All of the holding lets go while
+## you steer hard the other way, so a flick from one drift into the other is yours.
 ## Kept apart from the game so it can be tested on its own (tools/drift_test.gd).
 
 const G := 9.81
@@ -44,12 +49,17 @@ const THROTTLE_OUT := 7.0   # ...and closes
 const MIN_V := 4.0          # m/s: slower than this the car is driven as an ordinary one (SteerModel)
 # the drift assist
 const ASSIST_CS := 0.9      # how much of the counter-steer it puts on (1: the front wheels point where the front is going)
-const ASSIST_HAND := 0.45   # how much of the hand's steering counts in a full slide (the rest is the assist's)
+const ASSIST_HAND := 0.3    # how much of the hand's steering turns the front wheels in a full slide (it also sets the angle: ANGLE_BASE)
 const MAX_ANGLE := 0.8      # rad (46 degrees): past this it leans on the car...
 const LIMIT_K := 14.0       # ...this hard (rad/s² for each radian past it, growing with it)
 const LIMIT_DAMP := 3.5     # ...and takes out the swing that is carrying it further, this much
-const HOLD_FROM := 0.55     # rad (32 degrees): from here it eases off the power...
-const HOLD_SPAN := 0.3      # ...down to a quarter of it this much further on
+const ANGLE_BASE := 0.62    # rad (36 degrees): the drift angle it holds with your hands off...
+const ANGLE_RANGE := 0.22   # ...more (up to 48) steering into the slide, less (down to 23) steering out of it
+const HOLD_SPAN := 0.18     # rad: it eases the power off over this much past the angle asked for
+const LINE_D := 0.18        # rad of steering for each rad/s the line is curving away: a held drift runs straight...
+const LINE_P := 0.06        # ...and is drawn gently back towards the road's direction (rad of steering per rad off it)
+const ANGLE_K := 10.0       # rad/s² for each rad short of the angle asked for, while GAS holds a slide: it helps hold it...
+const ANGLE_D := 1.2        # ...damped (per rad/s of the angle changing), so it settles rather than swings
 const HOLD_LEAD := 0.45     # s: ...looking this far ahead at the way the angle is going
 const TRACTION := 0.8       # running straight, it lets the rear tyres put down this share of their grip as drive
 const GRIP_SPAN := 1.6      # running straight, a full movement of the hand asks for this much more than the tyres hold
@@ -58,7 +68,8 @@ const SETTLE := 1.4         # 1/s of yaw damping it adds as a slide ends (no tan
 
 ## A fresh state for a car with the tune (what the model keeps between steps). wr < 0: the wheels' speed is not yet set.
 static func state() -> Dictionary:
-	return {"throttle": 0.0, "ax": 0.0, "spin": 0.0, "slide": 0.0, "beta": 0.0, "lat": 0.0, "handbrake": false, "hb_t": 9.0, "wr": -1.0, "bp": 0.0, "db": 0.0}
+	return {"throttle": 0.0, "ax": 0.0, "spin": 0.0, "slide": 0.0, "beta": 0.0, "lat": 0.0, "handbrake": false, "hb_t": 9.0, "wr": -1.0, "bp": 0.0, "db": 0.0,
+		"cp": 0.0, "dc": 0.0, "target": ANGLE_BASE}
 
 
 ## The drift angle: how far the car's direction of travel is from where its nose points (radians, + = sliding to its
@@ -104,7 +115,8 @@ static func drive(p: Object, dt: float, st: Dictionary, wheelbase: float, cmd: f
 	# the brake pedal: the handbrake to throw the car in (steering, at speed, not yet well into a slide); the footbrake
 	# otherwise
 	var beta0 := absf(angle(p))
-	var handbrake: bool = brk and float(p.v) > 6.0 and beta0 < 0.32 and (absf(cmd) > 0.3 or beta0 > 0.06)
+	var out := cmd * signf(angle(p)) > 0.3 and beta0 > 0.1   # (steering against the slide: the way into the next one)
+	var handbrake: bool = brk and float(p.v) > 6.0 and ((beta0 < 0.32 and (absf(cmd) > 0.3 or beta0 > 0.06)) or out)
 	s.hb_t = 0.0 if handbrake else float(s.hb_t) + dt
 	for _i in n:
 		var v: float = p.v
@@ -116,6 +128,11 @@ static func drive(p: Object, dt: float, st: Dictionary, wheelbase: float, cmd: f
 		var slide := smoothstep(0.08, 0.35, absf(beta))
 		s.db = lerpf(float(s.db), (beta - float(s.bp)) / h, minf(1.0, h / 0.08))   # (how fast the angle is changing, smoothed)
 		s.bp = beta
+		s.dc = lerpf(float(s.dc), wrapf(float(p.course) - float(s.cp), -PI, PI) / h, minf(1.0, h / 0.1))   # (and the line, curving)
+		s.cp = float(p.course)
+		# the angle asked for: steering into the slide (the way the nose points) asks for more, out of it for less
+		var into := -cmd * signf(beta)
+		s.target = clampf(ANGLE_BASE + ANGLE_RANGE * into, 0.4, MAX_ANGLE - 0.02)
 		# steering: the hand (speed-sensitive while the tyres grip, the full lock in a slide or at a crawl), and (assist)
 		# the counter-steer that points the front wheels where the front is going
 		var front_dir := atan2(vy + a * r, uu)
@@ -126,6 +143,8 @@ static func drive(p: Object, dt: float, st: Dictionary, wheelbase: float, cmd: f
 		var want := cmd * lerpf(span, LOCK, open)
 		if assist:
 			want = front_dir * ASSIST_CS * slide + want * lerpf(1.0, ASSIST_HAND, slide)
+			# the line: in a slide it steers against the line curving away, so a held drift runs straight down the road
+			want -= slide * (float(s.dc) * LINE_D + wrapf(float(p.course), -PI, PI) * LINE_P)
 		p.steer = move_toward(float(p.steer), clampf(want, -LOCK, LOCK), STEER_RATE * h)
 		var d: float = p.steer
 		# the weight on each axle (per unit mass, m/s²): more on the rear under power, on the front when slowing
@@ -138,9 +157,9 @@ static func drive(p: Object, dt: float, st: Dictionary, wheelbase: float, cmd: f
 		var wr: float = s.wr
 		var drive := float(s.throttle) * CarStats.thrust(st, maxf(wr, 0.0)) * POWER
 		if assist:
-			if slide > 0.0:   # it eases off as the angle nears its limit (where it is heading, not only where it is), so holding GAS holds the drift
+			if slide > 0.0:   # it eases off as the angle passes the one asked for (where it is heading, not only where it is): holding GAS holds the drift
 				var ahead := absf(beta) + signf(beta) * float(s.db) * HOLD_LEAD
-				drive *= clampf(1.0 - (ahead - HOLD_FROM) / HOLD_SPAN, 0.2, 1.0)
+				drive *= clampf(1.0 - (ahead - float(s.target)) / HOLD_SPAN, 0.15, 1.0)
 			if slide < 0.2 and absf(cmd) < 0.7 and float(s.hb_t) > 1.0:
 				drive = minf(drive, cap_r * TRACTION)   # (no drift asked for: no wheelspin on the straight)
 		# the brakes: the footbrake mostly on the front, the handbrake on the rear wheels
@@ -150,8 +169,9 @@ static func drive(p: Object, dt: float, st: Dictionary, wheelbase: float, cmd: f
 			brk_r = HANDBRAKE
 		elif brk:
 			var bk := CarStats.braking(st, v)
-			brk_f = bk * 0.65
-			brk_r = bk * 0.35
+			var rear := lerpf(0.35, 0.22, slide)   # (in a slide the brakes are balanced to the front: no snap)
+			brk_f = bk * (1.0 - rear)
+			brk_r = bk * rear
 		# the front tyres
 		var fx_f := -minf(brk_f, cap_f * 0.95) * signf(u)
 		var lat_f := sqrt(maxf(cap_f * cap_f - fx_f * fx_f, 0.0))
@@ -185,6 +205,10 @@ static func drive(p: Object, dt: float, st: Dictionary, wheelbase: float, cmd: f
 			if r * signf(beta) < 0.0:
 				dr -= r * LIMIT_DAMP * past
 			dr -= r * SETTLE * (1.0 - slide) * smoothstep(0.0, 0.1, absf(beta))
+			# holding the angle asked for while GAS holds the slide (the nose is turned towards it: + yaw lowers beta)
+			var hold := slide * float(s.throttle) * smoothstep(-0.75, -0.35, -cmd * signf(beta))   # (let go when the hand swings it the other way)
+			if hold > 0.0:
+				dr -= signf(beta) * (float(s.target) - absf(beta)) * ANGLE_K * hold - float(s.db) * ANGLE_D * hold
 		u += (fx + vy * r) * h
 		vy += (fy - u * r) * h
 		r += dr * h

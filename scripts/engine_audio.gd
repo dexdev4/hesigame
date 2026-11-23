@@ -592,22 +592,28 @@ static func ping_pitch(n: int) -> float:
 ## Tyres sliding on tarmac: a cluster of close, wavering tones (the rubber's stick-slip) over a rough hiss, a loop of
 ## 1.2 s whose tones each fit a whole number of cycles into it, so it repeats without a click.
 func _make_squeal() -> AudioStreamWAV:
-	# A tyre's screech is not a note: the tread sticks and slips against the road hundreds of times a second, never
-	# evenly, and that rough chatter rings the tyre and the road in bands that wander. So: a train of stick-slip clicks at
-	# irregular intervals (about 650 a second, each a different size) plus a little hiss, rung through three resonances
-	# around 1, 1.7 and 2.6 kHz whose pitches drift slowly and shake a little, with a random chatter on the loudness.
+	# A tyre's screech is the tread sticking and slipping against the road, a self-excited judder of the tread blocks:
+	# nearly regular (so it has a pitch, about 0.85 to 1.1 kHz, with its overtones), but never quite, so the pitch warbles
+	# and wanders and the overtones are rough, and now and then the tread slips clean (a skipped beat or a short burst).
+	# So: a train of stick-slip clicks whose spacing follows that wandering pitch with a jitter on each one, plus a little
+	# hiss, rung through three resonances near the first three overtones (the tyre and the road ringing), with a random
+	# chatter on the loudness as the tyre loads and unloads.
 	var rate := 32000.0   # (its bands are under 3 kHz: this rate is plenty, and it is made quicker as the game starts)
 	var T := 1.7
 	var n := int(rate * T)
 	var m := int(rate * 0.08)   # (made 80 ms longer, and that end blended into the start)
 	var out := PackedFloat32Array()
 	out.resize(n + m)
-	var res := [[980.0, 9.0, 1.0], [1690.0, 11.0, 0.75], [2620.0, 8.0, 0.4]]   # centre, Q, level
+	var res := [[960.0, 6.0, 1.0], [1930.0, 7.0, 0.6], [2900.0, 6.0, 0.3]]   # centre, Q, level
 	var st := []
 	for r_ in res:
 		st.append([0.0, 0.0, 0.0, 0.0])   # (low, band, drift, shake)
 	var next_click := 0.0
 	var click := 0.0
+	var f0 := 960.0        # the judder's pitch...
+	var f0_aim := 960.0    # ...wandering towards this
+	var f0_t := 0.0
+	var warble := 0.0      # (a phase: the pitch shakes 5-9 times a second)
 	var chatter := 1.0
 	var chat_s := 1.0
 	var chat_t := 0.0
@@ -617,9 +623,17 @@ func _make_squeal() -> AudioStreamWAV:
 		# the stick-slip: a click now and then, sometimes a short burst of them
 		next_click -= 1.0
 		var x := 0.0
+		f0_t -= 1.0
+		if f0_t <= 0.0:
+			f0_t = rate * _rng.randf_range(0.12, 0.4)
+			f0_aim = _rng.randf_range(850.0, 1100.0)
+		f0 += (f0_aim - f0) * 0.0003
+		warble += TAU * _rng.randf_range(5.0, 9.0) / rate
 		if next_click <= 0.0:
-			click = _rng.randf_range(0.3, 1.0) * (1.0 if _rng.randf() < 0.85 else 1.8)
-			next_click = rate / 650.0 * _rng.randf_range(0.45, 1.6)
+			var slip := _rng.randf()
+			click = _rng.randf_range(0.55, 1.0) * (1.6 if slip < 0.06 else 1.0)
+			var pitch := f0 * (1.0 + 0.035 * sin(warble))
+			next_click = rate / pitch * (1.0 + _rng.randfn(0.0, 0.07)) * (2.0 if slip > 0.97 else 1.0)
 			x = click
 		var nz := _rng.randf() * 2.0 - 1.0
 		hiss_lp += 0.35 * (nz - hiss_lp)
@@ -635,7 +649,7 @@ func _make_squeal() -> AudioStreamWAV:
 			var s_: Array = st[k]
 			s_[2] = lerpf(float(s_[2]), _rng.randf_range(-1.0, 1.0), 0.00004)   # the slow drift of the band...
 			s_[3] = lerpf(float(s_[3]), _rng.randf_range(-1.0, 1.0), 0.004)     # ...and its shake
-			var fc := float(r_[0]) * (1.0 + 2.2 * float(s_[2]) * 0.06 + float(s_[3]) * 0.02)
+			var fc := float(r_[0]) * (f0 / 960.0) * (1.0 + float(s_[2]) * 0.05 + float(s_[3]) * 0.015)
 			var f := 2.0 * sin(PI * fc / rate)
 			var q := 1.0 / float(r_[1])
 			s_[0] = float(s_[0]) + f * float(s_[1])

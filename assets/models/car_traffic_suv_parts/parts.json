@@ -1,0 +1,85 @@
+{
+ "wheels": [
+  {
+   "file": "wheel_fl.mesh",
+   "pos": [
+    -0.8,
+    0.36,
+    -3.722
+   ]
+  },
+  {
+   "file": "wheel_fr.mesh",
+   "pos": [
+    0.8,
+    0.36,
+    -3.722
+   ]
+  },
+  {
+   "file": "wheel_rl.mesh",
+   "pos": [
+    -0.8,
+    0.36,
+    -1.022
+   ]
+  },
+  {
+   "file": "wheel_rr.mesh",
+   "pos": [
+    0.8,
+    0.36,
+    -1.022
+   ]
+  }
+ ],
+ "calipers": [
+  {
+   "file": "caliper_fl.mesh",
+   "pos": [
+    -0.8,
+    0.36,
+    -3.722
+   ]
+  },
+  {
+   "file": "caliper_fr.mesh",
+   "pos": [
+    0.8,
+    0.36,
+    -3.722
+   ]
+  },
+  {
+   "file": "caliper_rl.mesh",
+   "pos": [
+    -0.8,
+    0.36,
+    -1.022
+   ]
+  },
+  {
+   "file": "caliper_rr.mesh",
+   "pos": [
+    0.8,
+    0.36,
+    -1.022
+   ]
+  }
+ ],
+ "cabin": "interior.mesh",
+ "steer": {
+  "file": "steeringwheel.mesh",
+  "pos": [
+   -0.37,
+   1.03,
+   -2.462
+  ],
+  "rot": [
+   -0.20791169081775931,
+   0.0,
+   0.0,
+   0.9781476007338057
+  ]
+ }
+}

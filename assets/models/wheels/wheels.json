@@ -1,0 +1,105 @@
+{
+ "size": {
+  "r": 0.33,
+  "rim": 0.2286,
+  "width": 0.235
+ },
+ "designs": [
+  {
+   "id": "steel",
+   "name": "Steel"
+  },
+  {
+   "id": "5spoke",
+   "name": "5-spoke"
+  },
+  {
+   "id": "multi",
+   "name": "Multi-spoke"
+  },
+  {
+   "id": "mesh",
+   "name": "Mesh"
+  },
+  {
+   "id": "turbine",
+   "name": "Turbine"
+  },
+  {
+   "id": "double",
+   "name": "Double-spoke"
+  },
+  {
+   "id": "split",
+   "name": "Split-spoke"
+  },
+  {
+   "id": "blade",
+   "name": "Blade"
+  },
+  {
+   "id": "aero",
+   "name": "Aero"
+  },
+  {
+   "id": "wire",
+   "name": "Wire"
+  },
+  {
+   "id": "tri",
+   "name": "Tri-spoke"
+  },
+  {
+   "id": "star",
+   "name": "Star"
+  },
+  {
+   "id": "vent",
+   "name": "Vented disc"
+  },
+  {
+   "id": "deep",
+   "name": "Deep dish"
+  },
+  {
+   "id": "y5",
+   "name": "Y-spoke"
+  },
+  {
+   "id": "twist10",
+   "name": "Twisted 10"
+  },
+  {
+   "id": "classic",
+   "name": "Classic 5"
+  },
+  {
+   "id": "pepper",
+   "name": "Pepper-pot"
+  },
+  {
+   "id": "forged",
+   "name": "Forged twin"
+  },
+  {
+   "id": "rally",
+   "name": "Rally"
+  },
+  {
+   "id": "hubcap",
+   "name": "Steel & cap"
+  },
+  {
+   "id": "mono12",
+   "name": "Monoblock 12"
+  },
+  {
+   "id": "directional",
+   "name": "Directional"
+  },
+  {
+   "id": "track7",
+   "name": "Track 7"
+  }
+ ]
+}
